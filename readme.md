@@ -1,51 +1,62 @@
 - [ ] **Milestone 1: Backend Foundation & Core Data Model**
-    - [ ] **PR #1: `feat(supabase): initialize project and define core schema`**
-        - [ ] `Commit: feat: create supabase project and add initial schema for bills, profiles, and reactions`
-            - Create the Supabase project via the dashboard.
-            - Write and apply the SQL script defining the `bills`, `profiles`, and `reactions` tables.
-            - Add a `README.md` to the `supabase/` directory explaining project setup.
-        - [ ] `Commit: feat: enable row-level security and define initial access policies`
-            - Write and apply the SQL script to enable RLS and set default policies (public read for bills, user-locked writes for reactions).
-    - [ ] **PR #2: `feat(functions): create data ingestion and summarization edge function`**
-        - [ ] `Commit: feat: scaffold ingest-and-summarize edge function`
+    - [ ] **PR #1: `Supabase: initialize project and define core schema`**
+        - [ ] `Commit: Create supabase project (See Schema Below)'
+        - [ ] 'Commit 'bills''
+        - [ ] 'Commit 'profiles''
+        - [ ] 'Commit 'reactions''
+        - [ ] 'Commit 'bookmarks''
+        - [ ] `Commit: enable row-level security and define initial access policies`
+#
+    - [ ] **PR #2: `(functions): Create data intake and summarization features`**
+        - [ ] `Commit: scaffold ingest-and-summarize edge function`
             - Initialize the Supabase CLI and create the `ingest-and-summarize` function boilerplate.
         - [ ] `Commit: build: implement legiscan and openai api clients`
             - Add logic to fetch bill data from the LegiScan API.
             - Add logic to call the OpenAI API for summarization.
-        - [ ] `Commit: feat: implement data persistence logic to upsert bills`
+        - [ ] `Commit: implement data persistence logic to upsert bills`
             - Add the final step to use the Supabase admin client to write data into the `bills` table.
             - Update the `README.md` to list required secrets (`OPENAI_API_KEY`, etc.).
 - [ ] **Milestone 2: Mobile App Core & First End-to-End Feature**
-    - [ ] **PR #3: `feat(mobile): scaffold expo app and configure supabase client`**
-        - [ ] `Commit: feat: initialize expo project with expo-router`
+    - [ ] **PR #3: `(mobile version): scaffold expo app and configure supabase client`**
+        - [ ] `Commit: feat: createe expo project with expo-router`
             - Run `create-expo-app` to create the project structure.
             - Set up basic tab-based navigation.
+                - [ ] Commit: Create a _layout.js file
+                - import Tabs from expo-router
         - [ ] `Commit: feat: install and configure supabase-js client`
             - Install `@supabase/supabase-js` and dependencies.
             - Create `src/lib/supabase.ts` for the client instance.
             - Set up the `.env` file for Supabase credentials.
-    - [ ] **PR #4: `feat(mobile): display list of bills from supabase`**
+                - Get from Settings menu of Supabase in API submenu.
+                    - ADD ENV TO GITIGNORE!
+    - [ ] **PR #4: `(mobile version): display list of bills from supabase`**
         - [ ] `Commit: feat: create bill list screen`
-            - Build the UI for the home screen to display a list of bills.
+            - Reuse suitable UI elements and find improvements for the home screen to display a list of bills.
         - [ ] `Commit: feat: implement data fetching for bills on home screen`
-            - Replace placeholder data with a `useEffect` hook to call `supabase.from('bills').select()`.
-            - Add basic loading and error states.
+            - Replace Hello World placeholder with a `useEffect` hook to call `supabase.from('bills').select()`.
+            - Add basic loading and error messages and handling.
         - [ ] `Commit: refactor: create reusable Bill component`
             - Extract the bill display logic into `src/components/Bill.tsx`.
+            - This will be the template that bills are rendered with rather than individually rendering each one.
     - [ ] **PR #5: `feat(mobile): create bill details screen`**
-        - [ ] `Commit: feat: add details screen and implement navigation`
+        - [ ] `Commit: feat: add details screen and define the navigation logic`
             - Create `app/(tabs)/details.tsx` and configure the router to navigate to it with a `billId`.
         - [ ] `Commit: feat: fetch and display single bill data`
             - On the details screen, use the `billId` from route params to fetch a single record from the `bills` table.
             - Display the title, description, and all three summary levels.
 - [ ] **Milestone 3: User Interaction & Authentication**
-    - [ ] **PR #6: `feat(auth): implement user authentication flow`**
-        - [ ] `Commit: feat: create login and signup screens UI`
-            - Build the UI components for the authentication forms.
-        - [ ] `Commit: feat: integrate supabase.auth for signup and login`
-            - Wire up forms to call `supabase.auth.signUp()` and `supabase.auth.signInWithPassword()`.
-        - [ ] `Commit: feat: add auth state listener and protected routes`
-            - Create a global Auth context or hook to manage the user session.
+- [ ] **PR #6: `feat(auth): implement anonymous user authentication`**
+    - [ ] **Commit: `feat: implement anonymous sign-in on app launch`**
+            - Create a global "Auth Provider" for the app.
+            - In this provider, write a `useEffect` hook that checks if a user session already exists on the device.
+            - If **no session exists** (i.e., it's a new user or they re-installed the app), automatically call `supabase.auth.signInAnonymously()`.
+            - This ensures every user has a valid, anonymous identity the moment they open the app.
+    - [ ] **Commit: `refactor: provide user session throughout the app`**
+            - The Auth Provider's job is to make the user's session data (especially `user.id`) available to any component that needs it.
+            - This allows the "Reactions" and "Bookmarks" components to easily get the current user's ID when they need to save an action to the database.
+            - **Delete any and all login/signup UI files.** They are no longer needed.
+    - [ ] **Commit: `docs: update auth flow in documentation`**
+            - Briefly update the project's `README.md` to explain that the app uses anonymous authentication and does not require user registration.
     - [ ] **PR #7: `feat(mobile): implement user reactions`**
         - [ ] `Commit: feat: add engagement toolbar UI to bill component`
             - Build the UI for the upvote, downvote, and reaction buttons.
@@ -67,10 +78,57 @@
         - [ ] `Commit: feat: implement full-text search for bills`
             - Use Supabase's built-in full-text search (`.textSearch()`) on the `bills` table.
             - Wire this functionality to the search bar component.
-    - [ ] **PR #10: `chore(repo): final cleanup and documentation update`**
-        - [ ] `Commit: docs: update README with final setup and run instructions`
-            - Ensure documentation is simple and reflects the new architecture.
-        - [ ] `Commit: chore: remove all dead code and placeholder files`
-            - Perform a final sweep to delete any unused components or utilities.
-        - [ ] `Commit: refactor: add consistent error handling across the app`
-            - Ensure all API calls have `.catch()` blocks and display user-friendly error messages.
+
+
+## Schema
+
+
+### **`bills`**
+
+| Column Name | Data Type | Description / Constraints |
+| :--- | :--- | :--- |
+| **`id`** | `BIGINT` | **Primary Key.** The LegiScan bill ID. |
+| `bill_number` | `TEXT` | Not Null. The official bill number (e.g., "SB376"). |
+| `title` | `TEXT` | Not Null. The official title of the bill. |
+| `description` | `TEXT` | The short description of the bill's purpose. |
+| `status` | `TEXT` | The current legislative status (e.g., "Introduced", "Passed"). |
+| `state_link` | `TEXT` | A URL to the official government page for the bill. |
+| `summary_simple` | `TEXT` | AI-generated summary for a simple reading level. |
+| `summary_medium`| `TEXT` | AI-generated summary for a medium reading level. |
+| `summary_complex`| `TEXT` | AI-generated summary for a complex reading level. |
+| `panel_review` | `JSONB` | A single object for all panel feedback, e.g., `{"pros": [], "cons": [], "thoughts": []}`. |
+| `is_verified` | `BOOLEAN` | Default: `false`. A flag indicating if the `panel_review` is complete. |
+| `created_at` | `TIMESTAMPTZ` | The timestamp when the bill was first added to the database. |
+
+---
+
+### **`profiles`**
+
+| Column Name | Data Type | Description / Constraints |
+| :--- | :--- | :--- |
+| **`id`** | `UUID` | **Primary Key.** Foreign Key to `auth.users.id`. |
+| `username` | `TEXT` | Unique. A public-facing username. |
+| `updated_at` | `TIMESTAMPTZ` | The timestamp when the profile was last updated. |
+
+---
+
+### **`reactions`**
+
+| Column Name | Data Type | Description / Constraints |
+| :--- | :--- | :--- |
+| **`bill_id`** | `BIGINT` | **Composite Primary Key.** Foreign Key to `bills.id`. |
+| **`user_id`** | `UUID` | **Composite Primary Key.** Foreign Key to `profiles.id`. |
+| `reaction_type` | `TEXT` | Not Null. Stores values like `'upvote'`, `'downvote'`, `'love'`, `'sad'`. |
+| `created_at` | `TIMESTAMPTZ`| The timestamp when the reaction was created or last updated. |
+
+---
+
+### **`bookmarks`**
+
+| Column Name | Data Type | Description / Constraints |
+| :--- | :--- | :--- |
+| **`bill_id`** | `BIGINT` | **Composite Primary Key.** Foreign Key to `bills.id`. |
+| **`user_id`** | `UUID` | **Composite Primary Key.** Foreign Key to `profiles.id`. |
+| `created_at` | `TIMESTAMPTZ`| The timestamp when the bookmark was created. |
+
+---
