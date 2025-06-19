@@ -1,1 +1,76 @@
-Hi Lorenzo
+- [ ] **Milestone 1: Backend Foundation & Core Data Model**
+    - [ ] **PR #1: `feat(supabase): initialize project and define core schema`**
+        - [ ] `Commit: feat: create supabase project and add initial schema for bills, profiles, and reactions`
+            - Create the Supabase project via the dashboard.
+            - Write and apply the SQL script defining the `bills`, `profiles`, and `reactions` tables.
+            - Add a `README.md` to the `supabase/` directory explaining project setup.
+        - [ ] `Commit: feat: enable row-level security and define initial access policies`
+            - Write and apply the SQL script to enable RLS and set default policies (public read for bills, user-locked writes for reactions).
+    - [ ] **PR #2: `feat(functions): create data ingestion and summarization edge function`**
+        - [ ] `Commit: feat: scaffold ingest-and-summarize edge function`
+            - Initialize the Supabase CLI and create the `ingest-and-summarize` function boilerplate.
+        - [ ] `Commit: build: implement legiscan and openai api clients`
+            - Add logic to fetch bill data from the LegiScan API.
+            - Add logic to call the OpenAI API for summarization.
+        - [ ] `Commit: feat: implement data persistence logic to upsert bills`
+            - Add the final step to use the Supabase admin client to write data into the `bills` table.
+            - Update the `README.md` to list required secrets (`OPENAI_API_KEY`, etc.).
+- [ ] **Milestone 2: Mobile App Core & First End-to-End Feature**
+    - [ ] **PR #3: `feat(mobile): scaffold expo app and configure supabase client`**
+        - [ ] `Commit: feat: initialize expo project with expo-router`
+            - Run `create-expo-app` to create the project structure.
+            - Set up basic tab-based navigation.
+        - [ ] `Commit: feat: install and configure supabase-js client`
+            - Install `@supabase/supabase-js` and dependencies.
+            - Create `src/lib/supabase.ts` for the client instance.
+            - Set up the `.env` file for Supabase credentials.
+    - [ ] **PR #4: `feat(mobile): display list of bills from supabase`**
+        - [ ] `Commit: feat: create bill list screen`
+            - Build the UI for the home screen to display a list of bills.
+        - [ ] `Commit: feat: implement data fetching for bills on home screen`
+            - Replace placeholder data with a `useEffect` hook to call `supabase.from('bills').select()`.
+            - Add basic loading and error states.
+        - [ ] `Commit: refactor: create reusable Bill component`
+            - Extract the bill display logic into `src/components/Bill.tsx`.
+    - [ ] **PR #5: `feat(mobile): create bill details screen`**
+        - [ ] `Commit: feat: add details screen and implement navigation`
+            - Create `app/(tabs)/details.tsx` and configure the router to navigate to it with a `billId`.
+        - [ ] `Commit: feat: fetch and display single bill data`
+            - On the details screen, use the `billId` from route params to fetch a single record from the `bills` table.
+            - Display the title, description, and all three summary levels.
+- [ ] **Milestone 3: User Interaction & Authentication**
+    - [ ] **PR #6: `feat(auth): implement user authentication flow`**
+        - [ ] `Commit: feat: create login and signup screens UI`
+            - Build the UI components for the authentication forms.
+        - [ ] `Commit: feat: integrate supabase.auth for signup and login`
+            - Wire up forms to call `supabase.auth.signUp()` and `supabase.auth.signInWithPassword()`.
+        - [ ] `Commit: feat: add auth state listener and protected routes`
+            - Create a global Auth context or hook to manage the user session.
+    - [ ] **PR #7: `feat(mobile): implement user reactions`**
+        - [ ] `Commit: feat: add engagement toolbar UI to bill component`
+            - Build the UI for the upvote, downvote, and reaction buttons.
+        - [ ] `Commit: feat: implement reaction persistence to supabase`
+            - On user interaction, get the `user_id` from `supabase.auth` and `upsert` the action into the `reactions` table.
+        - [ ] `Commit: feat: display aggregate reaction counts`
+            - Create a Postgres function `get_reaction_counts(bill_id)` in Supabase.
+            - Call the function using `.rpc()` in the app to get vote counts.
+    - [ ] **PR #8: `feat(mobile): enable realtime updates for reactions`**
+        - [ ] `Commit: feat: subscribe to reaction changes using supabase realtime`
+            - Refactor the `Bill` component to subscribe to the `reactions` table for that specific `bill_id`.
+        - [ ] `Commit: refactor: update UI in realtime on new reactions`
+            - When a new event is received, re-fetch the reaction counts to update the UI instantly.
+- [ ] **Milestone 4: Polish and Final Features**
+    - [ ] **PR #9: `feat(mobile): implement saved bills and search functionality`**
+        - [ ] `Commit: feat: implement "save for later" functionality`
+            - Add a `saved_bills` table or extend `reactions`.
+            - Create a "Saved" tab that filters bills based on the user's saved list.
+        - [ ] `Commit: feat: implement full-text search for bills`
+            - Use Supabase's built-in full-text search (`.textSearch()`) on the `bills` table.
+            - Wire this functionality to the search bar component.
+    - [ ] **PR #10: `chore(repo): final cleanup and documentation update`**
+        - [ ] `Commit: docs: update README with final setup and run instructions`
+            - Ensure documentation is simple and reflects the new architecture.
+        - [ ] `Commit: chore: remove all dead code and placeholder files`
+            - Perform a final sweep to delete any unused components or utilities.
+        - [ ] `Commit: refactor: add consistent error handling across the app`
+            - Ensure all API calls have `.catch()` blocks and display user-friendly error messages.
