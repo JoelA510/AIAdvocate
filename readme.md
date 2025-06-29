@@ -1,21 +1,22 @@
-- [ ] **Milestone 1: Backend Foundation & Core Data Model**
-    - [ ] **PR #1: `Supabase: initialize project and define core schema`**
-        - [ ] `Commit: Create supabase project (See Schema Below)'
-        - [ ] 'Commit 'bills''
-        - [ ] 'Commit 'profiles''
-        - [ ] 'Commit 'reactions''
-        - [ ] 'Commit 'bookmarks''
-        - [ ] `Commit: enable row-level security and define initial access policies`
+- [X] **Milestone 1: Backend Foundation & Core Data Model**
+    - [X] **PR #1: `Supabase: initialize project and define core schema`**
+        - [X] `Commit: Create supabase project (See Schema Below)'
+        - [X] 'Commit 'bills''
+        - [X] 'Commit 'profiles''
+        - [X] 'Commit 'reactions''
+        - [X] 'Commit 'bookmarks''
+        - [X] `Commit: enable row-level security and define initial access policies`
 #
-    - [ ] **PR #2: `(functions): Create data intake and summarization features`**
-        - [ ] `Commit: scaffold ingest-and-summarize edge function`
+    - [X] **PR #2: `(functions): Create data intake and summarization features`**
+        - [X] `Commit: scaffold ingest-and-summarize edge function`
             - Initialize the Supabase CLI and create the `ingest-and-summarize` function boilerplate.
-        - [ ] `Commit: build: implement legiscan and openai api clients`
+        - [X] `Commit: build: implement legiscan and openai api clients`
             - Add logic to fetch bill data from the LegiScan API.
             - Add logic to call the OpenAI API for summarization.
-        - [ ] `Commit: implement data persistence logic to upsert bills`
+            - Saved in a backup file for now, moved to mock data approach.
+        - [X] `Commit: implement data persistence logic to upsert bills`
             - Add the final step to use the Supabase admin client to write data into the `bills` table.
-            - Update the `README.md` to list required secrets (`OPENAI_API_KEY`, etc.).
+            - Identify required secrets (`OPENAI_API_KEY`, etc.).
 - [ ] **Milestone 2: Mobile App Core & First End-to-End Feature**
     - [ ] **PR #3: `(mobile version): scaffold expo app and configure supabase client`**
         - [ ] `Commit: feat: createe expo project with expo-router`
