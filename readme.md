@@ -46,6 +46,10 @@
             - On the details screen, use the `billId` from route params to fetch a single record from the `bills` table.
             - Display the title, description, and all three summary levels.
 - [ ] **Milestone 3: User Interaction & Authentication**
+
+## Authentication Flow
+
+This application utilizes anonymous authentication via Supabase. Upon the first launch, if no user session exists, the app automatically signs in the user anonymously. This ensures every user has a unique, persistent identity without requiring explicit registration or login. User IDs are then used for features like reactions and bookmarks.
 - [ ] **PR #6: `feat(auth): implement anonymous user authentication`**
     - [ ] **Commit: `feat: implement anonymous sign-in on app launch`**
             - Create a global "Auth Provider" for the app.
