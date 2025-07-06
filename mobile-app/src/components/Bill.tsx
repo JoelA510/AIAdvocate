@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Pressable, Alert } from 'react-native';
 import { ThemedText } from '@/components/ThemedText';
 import { Link } from 'expo-router';
@@ -22,6 +22,27 @@ type BillProps = {
 export default function BillComponent({ bill }: BillProps) {
   const { session } = useAuth();
   const userId = session?.user?.id;
+  const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
+
+  const fetchReactionCounts = async () => {
+    try {
+      const { data, error } = await supabase.rpc('get_reaction_counts', { bill_id_param: bill.id });
+      if (error) {
+        throw error;
+      }
+      const counts: Record<string, number> = {};
+      data.forEach((item: { reaction_type: string; count: number }) => {
+        counts[item.reaction_type] = item.count;
+      });
+      setReactionCounts(counts);
+    } catch (error: any) {
+      console.error('Error fetching reaction counts:', error.message);
+    }
+  };
+
+  useEffect(() => {
+    fetchReactionCounts();
+  }, [bill.id]);
 
   const handleReaction = async (reactionType: string) => {
     if (!userId) {
@@ -40,6 +61,7 @@ export default function BillComponent({ bill }: BillProps) {
         throw error;
       }
       Alert.alert('Success', `You ${reactionType}d this bill!`);
+      fetchReactionCounts(); // Refresh counts after a reaction
     } catch (error: any) {
       Alert.alert('Error', `Failed to record reaction: ${error.message}`);
     }
@@ -53,13 +75,13 @@ export default function BillComponent({ bill }: BillProps) {
           <ThemedText>{bill.title}</ThemedText>
           <View style={styles.toolbar}>
             <Pressable style={styles.button} onPress={() => handleReaction('upvote')}>
-              <ThemedText>👍 Upvote</ThemedText>
+              <ThemedText>👍 Upvote ({reactionCounts.upvote || 0})</ThemedText>
             </Pressable>
             <Pressable style={styles.button} onPress={() => handleReaction('downvote')}>
-              <ThemedText>👎 Downvote</ThemedText>
+              <ThemedText>👎 Downvote ({reactionCounts.downvote || 0})</ThemedText>
             </Pressable>
             <Pressable style={styles.button} onPress={() => handleReaction('love')}>
-              <ThemedText>❤️ Love</ThemedText>
+              <ThemedText>❤️ Love ({reactionCounts.love || 0})</ThemedText>
             </Pressable>
           </View>
         </View>
