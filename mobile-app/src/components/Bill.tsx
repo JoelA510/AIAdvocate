@@ -1,11 +1,15 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Pressable } from 'react-native';
 import { ThemedText } from '@/components/ThemedText';
+import { Link } from 'expo-router';
 
 export type Bill = {
   id: number;
   bill_number: string;
   title: string;
+  summary_simple: string;
+  summary_medium: string;
+  summary_complex: string;
   // Add other bill properties here as needed
 };
 
@@ -15,10 +19,14 @@ type BillProps = {
 
 export default function BillComponent({ bill }: BillProps) {
   return (
-    <View style={styles.billContainer}>
-      <ThemedText type="subtitle">{bill.bill_number}</ThemedText>
-      <ThemedText>{bill.title}</ThemedText>
-    </View>
+    <Link href={`/bill/${bill.id}`} asChild>
+      <Pressable>
+        <View style={styles.billContainer}>
+          <ThemedText type="subtitle">{bill.bill_number}</ThemedText>
+          <ThemedText>{bill.title}</ThemedText>
+        </View>
+      </Pressable>
+    </Link>
   );
 }
 
