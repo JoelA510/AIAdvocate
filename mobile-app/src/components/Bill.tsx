@@ -42,6 +42,22 @@ export default function BillComponent({ bill }: BillProps) {
 
   useEffect(() => {
     fetchReactionCounts();
+
+    const channel = supabase
+      .channel(`bill_reactions:${bill.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reactions', filter: `bill_id=eq.${bill.id}` },
+        (payload) => {
+          console.log('Change received!', payload);
+          fetchReactionCounts(); // Re-fetch counts on any change
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [bill.id]);
 
   const handleReaction = async (reactionType: string) => {
@@ -61,7 +77,7 @@ export default function BillComponent({ bill }: BillProps) {
         throw error;
       }
       Alert.alert('Success', `You ${reactionType}d this bill!`);
-      fetchReactionCounts(); // Refresh counts after a reaction
+      // No need to call fetchReactionCounts() here, as realtime will handle it
     } catch (error: any) {
       Alert.alert('Error', `Failed to record reaction: ${error.message}`);
     }
