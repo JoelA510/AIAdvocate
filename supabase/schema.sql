@@ -10,6 +10,7 @@
 -- 1. Table Definitions: Creates the `bills`, `profiles`, `reactions`, and `bookmarks` tables.
 -- 2. Auth Helper Function: Automates profile creation for new users.
 -- 3. Row-Level Security Policies: Secures the database tables.
+-- 4. Database Functions (RPC): Creates utility functions callable from the app.
 -- ===============================================================================================
 
 
@@ -102,8 +103,6 @@ ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
 -- Rule: Anyone can read bill information.
 CREATE POLICY "Public can view all bills" ON public.bills
   FOR SELECT USING (true);
--- Note: No policy for INSERT, UPDATE, or DELETE means these actions are denied by default.
--- Only server-side functions using the 'service_role' key can write to this table.
 
 -- RLS POLICIES FOR 'profiles'
 -- Rule: Anyone can see that user profiles exist.
@@ -114,17 +113,51 @@ CREATE POLICY "Public can view profiles" ON public.profiles
 -- Rule: Anyone can see all the reactions that have been submitted.
 CREATE POLICY "Public can view reactions" ON public.reactions
   FOR SELECT USING (true);
--- Rule: You can only create, change, or delete YOUR OWN reaction.
--- `auth.uid()` is a special Supabase function that returns the ID of the currently logged-in user.
+-- Rule: An authenticated user can manage (insert, update, delete) their own reaction.
 CREATE POLICY "Users can manage their own reactions" ON public.reactions
   FOR ALL USING (auth.uid() = user_id);
 
 -- RLS POLICIES FOR 'bookmarks'
--- Rule: You can only see YOUR OWN bookmarks. This keeps them private.
+-- Rule: A user can only see their own bookmarks. This keeps them private.
 CREATE POLICY "Users can view their own bookmarks" ON public.bookmarks
   FOR SELECT USING (auth.uid() = user_id);
--- Rule: You can only create or delete YOUR OWN bookmark.
+-- Rule: A user can only create or delete their own bookmark.
 CREATE POLICY "Users can manage their own bookmarks" ON public.bookmarks
   FOR ALL USING (auth.uid() = user_id);
--- Note: The policies above ensure that users can only interact with their own data,
--- while still allowing public read access to bills and reactions.
+
+
+-- ===============================================================================================
+-- SECTION 4: DATABASE FUNCTIONS (RPC)
+-- ===============================================================================================
+
+-- Function to aggregate reaction counts for a given bill into a single JSON object.
+-- This function is written in PL/pgSQL to match the Supabase UI default.
+-- NOTE: In the Supabase UI, the argument type `bigint` is represented as `int8`.
+CREATE OR REPLACE FUNCTION public.get_reaction_counts(bill_id_param bigint)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY INVOKER
+AS $$
+BEGIN
+  RETURN (
+    SELECT
+      jsonb_object_agg(reaction_type, count)
+    FROM (
+      SELECT
+        r.reaction_type,
+        COUNT(*) AS count
+      FROM
+        public.reactions AS r
+      WHERE
+        r.bill_id = bill_id_param
+      GROUP BY
+        r.reaction_type
+    ) AS reaction_counts
+  );
+END;
+$$;
+
+
+-- ===============================================================================================
+-- End of script
+-- ===============================================================================================
