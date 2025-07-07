@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { StyleSheet, View, FlatList } from 'react-native';
+import { StyleSheet, View, FlatList, TextInput } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
@@ -9,11 +9,19 @@ export default function HomeScreen() {
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
     const fetchBills = async () => {
       try {
-        const { data, error } = await supabase.from('bills').select('*');
+        let query = supabase.from('bills').select('*');
+
+        if (searchQuery) {
+          query = query.textSearch('title,description', searchQuery);
+        }
+
+        const { data, error } = await query;
+
         if (error) {
           throw error;
         }
@@ -26,7 +34,7 @@ export default function HomeScreen() {
     };
 
     fetchBills();
-  }, []);
+  }, [searchQuery]);
 
   if (loading) {
     return (
@@ -46,6 +54,12 @@ export default function HomeScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <TextInput
+        style={styles.searchInput}
+        placeholder="Search bills..."
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+      />
       <FlatList
         data={bills}
         keyExtractor={(item) => item.id.toString()}
@@ -59,5 +73,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
+  },
+  searchInput: {
+    height: 40,
+    borderColor: 'gray',
+    borderWidth: 1,
+    marginBottom: 16,
+    paddingHorizontal: 8,
+    borderRadius: 8,
   },
 });

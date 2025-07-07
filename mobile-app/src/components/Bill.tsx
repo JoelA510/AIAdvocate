@@ -77,9 +77,29 @@ export default function BillComponent({ bill }: BillProps) {
         throw error;
       }
       Alert.alert('Success', `You ${reactionType}d this bill!`);
-      // No need to call fetchReactionCounts() here, as realtime will handle it
     } catch (error: any) {
       Alert.alert('Error', `Failed to record reaction: ${error.message}`);
+    }
+  };
+
+  const handleBookmark = async () => {
+    if (!userId) {
+      Alert.alert('Authentication Required', 'Please sign in to bookmark.');
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('bookmarks').upsert({
+        bill_id: bill.id,
+        user_id: userId,
+      });
+
+      if (error) {
+        throw error;
+      }
+      Alert.alert('Success', 'Bill bookmarked!');
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to bookmark bill: ${error.message}`);
     }
   };
 
@@ -98,6 +118,9 @@ export default function BillComponent({ bill }: BillProps) {
             </Pressable>
             <Pressable style={styles.button} onPress={() => handleReaction('love')}>
               <ThemedText>❤️ Love ({reactionCounts.love || 0})</ThemedText>
+            </Pressable>
+            <Pressable style={styles.button} onPress={handleBookmark}>
+              <ThemedText>🔖 Bookmark</ThemedText>
             </Pressable>
           </View>
         </View>
