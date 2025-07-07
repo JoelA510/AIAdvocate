@@ -18,9 +18,10 @@ type IconSymbolName = keyof typeof MAPPING;
  */
 const MAPPING = {
   "house.fill": "home",
-  "paperplane.fill": "send",
+  // MODIFIED: Removed the paperplane icon as it's no longer in use.
   "chevron.left.forwardslash.chevron.right": "code",
   "chevron.right": "chevron-right",
+  "bookmark.fill": "bookmark", // NEW: Added mapping for the saved icon
 } as IconMapping;
 
 /**
