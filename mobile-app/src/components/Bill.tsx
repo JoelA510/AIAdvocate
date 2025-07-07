@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { StyleSheet, View, Pressable, Alert } from "react-native";
-import { ThemedText } from "@/components/ThemedText";
 import { Link } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
+import { Pressable, StyleSheet, View } from "react-native";
+// NEW: Import Toast
+import Toast from "react-native-toast-message";
+
+import { ThemedText } from "@/components/ThemedText";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/AuthProvider";
 
-// The Bill type defines the shape of the bill data this component expects.
 export type Bill = {
   id: number;
   bill_number: string;
@@ -19,37 +21,62 @@ type BillProps = {
   bill: Bill;
 };
 
-export default function BillComponent({ bill }: BillProps) {
+function BillComponent({ bill }: BillProps) {
   const { session } = useAuth();
   const userId = session?.user?.id;
 
-  // State to hold the reaction counts fetched from the database.
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>(
     {},
   );
+  const [userReaction, setUserReaction] = useState<string | null>(null);
+  const [isBookmarked, setIsBookmarked] = useState(false);
+
+  const fetchReactionCounts = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.rpc("get_reaction_counts", {
+        bill_id_param: bill.id,
+      });
+      if (error) throw error;
+      setReactionCounts(data || {});
+    } catch (error: any) {
+      console.error("Error fetching reaction counts:", error.message);
+    }
+  }, [bill.id]);
 
   useEffect(() => {
-    // This function is now defined inside the useEffect hook to prevent
-    // it from being recreated on every render, fixing the dependency array warning.
-    const fetchReactionCounts = async () => {
-      try {
-        const { data, error } = await supabase.rpc("get_reaction_counts", {
-          bill_id_param: bill.id,
-        });
+    if (!userId) return;
 
-        if (error) throw error;
+    const fetchUserInteractions = async () => {
+      const { data: reactionData, error: reactionError } = await supabase
+        .from("reactions")
+        .select("reaction_type")
+        .eq("bill_id", bill.id)
+        .eq("user_id", userId)
+        .single();
 
-        // The RPC function returns a single JSON object, which is simpler to handle.
-        setReactionCounts(data || {});
-      } catch (error: any) {
-        console.error("Error fetching reaction counts:", error.message);
+      if (reactionData) setUserReaction(reactionData.reaction_type);
+      if (reactionError && reactionError.code !== "PGRST116") {
+        console.error("Error fetching user reaction:", reactionError);
+      }
+
+      const { data: bookmarkData, error: bookmarkError } = await supabase
+        .from("bookmarks")
+        .select("bill_id")
+        .eq("bill_id", bill.id)
+        .eq("user_id", userId)
+        .single();
+
+      setIsBookmarked(!!bookmarkData);
+      if (bookmarkError && bookmarkError.code !== "PGRST116") {
+        console.error("Error fetching user bookmark:", bookmarkError);
       }
     };
 
-    // Fetch initial counts when the component first loads.
-    fetchReactionCounts();
+    fetchUserInteractions();
+  }, [userId, bill.id]);
 
-    // Set up a real-time subscription to the 'reactions' table.
+  useEffect(() => {
+    fetchReactionCounts();
     const channel = supabase
       .channel(`bill-reactions:${bill.id}`)
       .on(
@@ -60,69 +87,99 @@ export default function BillComponent({ bill }: BillProps) {
           table: "reactions",
           filter: `bill_id=eq.${bill.id}`,
         },
-        (payload) => {
-          console.log(`Realtime change received for bill #${bill.id}`, payload);
-          // When any change occurs (insert, update, delete), re-fetch the aggregate counts.
+        () => {
           fetchReactionCounts();
         },
       )
       .subscribe();
 
-    // Clean up the subscription when the component is unmounted.
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [bill.id]); // The hook only needs to re-run if the bill.id itself changes.
+  }, [bill.id, fetchReactionCounts]);
 
   const handleReaction = async (reactionType: string) => {
     if (!userId) {
-      Alert.alert("Authentication Error", "Could not identify user session.");
+      // MODIFIED: Replaced Alert with Toast
+      Toast.show({
+        type: "error",
+        text1: "Authentication Error",
+        text2: "Could not identify user session.",
+      });
       return;
     }
 
     try {
-      // Upsert the user's reaction. This will create or update their reaction.
-      const { error } = await supabase.from("reactions").upsert({
-        bill_id: bill.id,
-        user_id: userId,
-        reaction_type: reactionType,
-      });
+      if (userReaction === reactionType) {
+        const { error } = await supabase
+          .from("reactions")
+          .delete()
+          .match({ bill_id: bill.id, user_id: userId });
 
-      if (error) throw error;
+        if (error) throw error;
+        setUserReaction(null);
+      } else {
+        const { error } = await supabase.from("reactions").upsert({
+          bill_id: bill.id,
+          user_id: userId,
+          reaction_type: reactionType,
+        });
 
-      Alert.alert("Success", `Your reaction has been recorded!`);
-      // NOTE: We no longer need to optimistically update the state here,
-      // because the real-time subscription will trigger a re-fetch automatically.
+        if (error) throw error;
+        setUserReaction(reactionType);
+      }
     } catch (error: any) {
-      Alert.alert("Error", `Failed to record reaction: ${error.message}`);
+      // MODIFIED: Replaced Alert with Toast
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: `Failed to record reaction: ${error.message}`,
+      });
     }
   };
 
   const handleBookmark = async () => {
     if (!userId) {
-      Alert.alert("Authentication Error", "Could not identify user session.");
+      // MODIFIED: Replaced Alert with Toast
+      Toast.show({
+        type: "error",
+        text1: "Authentication Error",
+        text2: "Could not identify user session.",
+      });
       return;
     }
 
     try {
-      // Upsert into bookmarks. If the user has already bookmarked it,
-      // this does nothing, which is fine. To add un-bookmarking, this would
-      // need to be changed to a check-then-delete flow.
-      const { error } = await supabase.from("bookmarks").upsert({
-        bill_id: bill.id,
-        user_id: userId,
-      });
+      if (isBookmarked) {
+        const { error } = await supabase
+          .from("bookmarks")
+          .delete()
+          .match({ bill_id: bill.id, user_id: userId });
 
-      if (error) throw error;
-
-      Alert.alert("Success", "Bill bookmarked!");
+        if (error) throw error;
+        // MODIFIED: Replaced Alert with Toast
+        Toast.show({ type: "success", text1: "Bookmark removed" });
+      } else {
+        const { error } = await supabase.from("bookmarks").upsert({
+          bill_id: bill.id,
+          user_id: userId,
+        });
+        if (error) throw error;
+        // MODIFIED: Replaced Alert with Toast
+        Toast.show({ type: "success", text1: "Bill bookmarked!" });
+      }
+      setIsBookmarked(!isBookmarked);
     } catch (error: any) {
-      Alert.alert("Error", `Failed to bookmark bill: ${error.message}`);
+      // MODIFIED: Replaced Alert with Toast
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: `Failed to update bookmark: ${error.message}`,
+      });
     }
   };
 
   return (
-    // Link component handles navigation to the bill details screen.
     <Link href={`/bill/${bill.id}`} asChild>
       <Pressable>
         <View style={styles.billContainer}>
@@ -130,13 +187,19 @@ export default function BillComponent({ bill }: BillProps) {
           <ThemedText>{bill.title}</ThemedText>
           <View style={styles.toolbar}>
             <Pressable
-              style={styles.button}
+              style={[
+                styles.button,
+                userReaction === "upvote" && styles.buttonActive,
+              ]}
               onPress={() => handleReaction("upvote")}
             >
               <ThemedText>👍 Upvote ({reactionCounts.upvote || 0})</ThemedText>
             </Pressable>
             <Pressable
-              style={styles.button}
+              style={[
+                styles.button,
+                userReaction === "downvote" && styles.buttonActive,
+              ]}
               onPress={() => handleReaction("downvote")}
             >
               <ThemedText>
@@ -144,13 +207,21 @@ export default function BillComponent({ bill }: BillProps) {
               </ThemedText>
             </Pressable>
             <Pressable
-              style={styles.button}
+              style={[
+                styles.button,
+                userReaction === "love" && styles.buttonActive,
+              ]}
               onPress={() => handleReaction("love")}
             >
               <ThemedText>❤️ Love ({reactionCounts.love || 0})</ThemedText>
             </Pressable>
-            <Pressable style={styles.button} onPress={handleBookmark}>
-              <ThemedText>🔖 Bookmark</ThemedText>
+            <Pressable
+              style={[styles.button, isBookmarked && styles.buttonActive]}
+              onPress={handleBookmark}
+            >
+              <ThemedText>
+                {isBookmarked ? "🔖 Saved" : "🔖 Bookmark"}
+              </ThemedText>
             </Pressable>
           </View>
         </View>
@@ -171,11 +242,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     marginTop: 10,
+    flexWrap: "wrap",
+    gap: 8,
   },
   button: {
     padding: 8,
     backgroundColor: "#eee",
     borderRadius: 5,
+  },
+  buttonActive: {
+    backgroundColor: "#aaddff",
+    borderColor: "#0a7ea4",
+    borderWidth: 1,
   },
 });
 
