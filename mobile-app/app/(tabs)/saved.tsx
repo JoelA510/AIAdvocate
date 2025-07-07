@@ -2,13 +2,13 @@ import { useFocusEffect } from "expo-router";
 import React, { useState, useCallback } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 
-import BillComponent, { Bill } from "@/components/Bill";
-import BillSkeleton from "@/components/BillSkeleton";
-import EmptyState from "@/components/EmptyState";
-import { ThemedText } from "@/components/ThemedText";
-import { ThemedView } from "@/components/ThemedView";
-import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/providers/AuthProvider";
+import { ThemedText } from "../../components/ThemedText";
+import { ThemedView } from "../../components/ThemedView";
+import BillComponent, { Bill } from "../../src/components/Bill";
+import BillSkeleton from "../../src/components/BillSkeleton";
+import EmptyState from "../../src/components/EmptyState";
+import { supabase } from "../../src/lib/supabase";
+import { useAuth } from "../../src/providers/AuthProvider";
 
 export default function SavedBillsScreen() {
   const { session } = useAuth();
@@ -56,9 +56,6 @@ export default function SavedBillsScreen() {
     }
   }, [userId]);
 
-  // useFocusEffect will re-run the fetch logic every time the screen comes into view.
-  // This is crucial for when a user bookmarks a bill on another screen and then
-  // navigates back to this one.
   useFocusEffect(
     useCallback(() => {
       fetchSavedBills();
@@ -123,7 +120,7 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 16,
-    paddingTop: 60, // Add safe area padding
+    paddingTop: 60,
     borderBottomWidth: 1,
     borderBottomColor: "#ddd",
   },

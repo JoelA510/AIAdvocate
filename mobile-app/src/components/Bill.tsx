@@ -1,12 +1,11 @@
 import { Link } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-// NEW: Import Toast
 import Toast from "react-native-toast-message";
 
-import { ThemedText } from "@/components/ThemedText";
-import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/providers/AuthProvider";
+import { ThemedText } from "../../components/ThemedText";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../providers/AuthProvider";
 
 export type Bill = {
   id: number;
@@ -100,7 +99,6 @@ function BillComponent({ bill }: BillProps) {
 
   const handleReaction = async (reactionType: string) => {
     if (!userId) {
-      // MODIFIED: Replaced Alert with Toast
       Toast.show({
         type: "error",
         text1: "Authentication Error",
@@ -129,7 +127,6 @@ function BillComponent({ bill }: BillProps) {
         setUserReaction(reactionType);
       }
     } catch (error: any) {
-      // MODIFIED: Replaced Alert with Toast
       Toast.show({
         type: "error",
         text1: "Error",
@@ -140,7 +137,6 @@ function BillComponent({ bill }: BillProps) {
 
   const handleBookmark = async () => {
     if (!userId) {
-      // MODIFIED: Replaced Alert with Toast
       Toast.show({
         type: "error",
         text1: "Authentication Error",
@@ -157,7 +153,6 @@ function BillComponent({ bill }: BillProps) {
           .match({ bill_id: bill.id, user_id: userId });
 
         if (error) throw error;
-        // MODIFIED: Replaced Alert with Toast
         Toast.show({ type: "success", text1: "Bookmark removed" });
       } else {
         const { error } = await supabase.from("bookmarks").upsert({
@@ -165,12 +160,10 @@ function BillComponent({ bill }: BillProps) {
           user_id: userId,
         });
         if (error) throw error;
-        // MODIFIED: Replaced Alert with Toast
         Toast.show({ type: "success", text1: "Bill bookmarked!" });
       }
       setIsBookmarked(!isBookmarked);
     } catch (error: any) {
-      // MODIFIED: Replaced Alert with Toast
       Toast.show({
         type: "error",
         text1: "Error",

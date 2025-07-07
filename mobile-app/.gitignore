@@ -40,3 +40,7 @@ app-example
 
 # Supabase environment variables
 .env
+
+# Yarn package manager files
+# Since we are now using Yarn, ignore the npm lock file to prevent conflicts.
+package-lock.json

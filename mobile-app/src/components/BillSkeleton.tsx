@@ -1,8 +1,8 @@
 import React from "react";
 import { StyleSheet, View } from "react-native";
 
-import { ThemedView } from "@/components/ThemedView";
-import { useThemeColor } from "@/hooks/useThemeColor";
+import { ThemedView } from "../../components/ThemedView";
+import { useThemeColor } from "../../hooks/useThemeColor";
 
 export default function BillSkeleton() {
   const placeholderColor = useThemeColor(

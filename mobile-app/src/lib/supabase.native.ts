@@ -1,14 +1,13 @@
 import "react-native-url-polyfill/auto";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-// Create a Supabase client without a custom storage option.
-// On the web, it will default to using localStorage, which is
-// what we want. This is safe for both client and server environments.
-export const supabase = createClient(supabaseUrl!, supabaseAnonKey!, {
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
+    storage: AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,

@@ -2,13 +2,17 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState, useEffect } from "react";
 import { StyleSheet, View, Pressable } from "react-native";
 
-import BillComponent from "@/components/Bill";
-import EmptyState from "@/components/EmptyState";
-import { ThemedText } from "@/components/ThemedText";
-import { ThemedView } from "@/components/ThemedView";
-import { IconSymbol } from "@/components/ui/IconSymbol";
-import { useThemeColor } from "@/hooks/useThemeColor";
-import { supabase } from "@/lib/supabase";
+import { ThemedText } from "../../components/ThemedText";
+import { ThemedView } from "../../components/ThemedView";
+import { IconSymbol } from "../../components/ui/IconSymbol";
+import { useThemeColor } from "../../hooks/useThemeColor";
+import BillComponent from "../../src/components/Bill";
+import EmptyState from "../../src/components/EmptyState";
+import { supabase } from "../../src/lib/supabase";
+
+// Note: The Bill type can be imported from the Bill component itself.
+// This avoids type duplication.
+import type { Bill } from "../../src/components/Bill";
 
 export default function BillDetailsScreen() {
   const { id } = useLocalSearchParams();
@@ -98,7 +102,6 @@ export default function BillDetailsScreen() {
       <ThemedText type="title">{bill.bill_number}</ThemedText>
       <ThemedText type="subtitle">{bill.title}</ThemedText>
 
-      {/* Pass the bill object to a single BillComponent to handle interactions */}
       <BillComponent bill={bill} />
 
       <View style={styles.summaryContainer}>

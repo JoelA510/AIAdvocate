@@ -1,10 +1,10 @@
 import React from "react";
 import { StyleSheet } from "react-native";
 
-import { ThemedText } from "@/components/ThemedText";
-import { ThemedView } from "@/components/ThemedView";
-import { IconSymbol } from "@/components/ui/IconSymbol";
-import { useThemeColor } from "@/hooks/useThemeColor";
+import { ThemedText } from "../../components/ThemedText";
+import { ThemedView } from "../../components/ThemedView";
+import { IconSymbol } from "../../components/ui/IconSymbol";
+import { useThemeColor } from "../../hooks/useThemeColor";
 
 type EmptyStateProps = {
   icon: React.ComponentProps<typeof IconSymbol>["name"];

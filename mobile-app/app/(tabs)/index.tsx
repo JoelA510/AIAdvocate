@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, TextInput, View } from "react-native";
 
-import BillComponent, { Bill } from "@/components/Bill";
-import BillSkeleton from "@/components/BillSkeleton";
-import EmptyState from "@/components/EmptyState";
-import { ThemedText } from "@/components/ThemedText";
-import { ThemedView } from "@/components/ThemedView";
-import { supabase } from "@/lib/supabase";
+import { ThemedText } from "../../components/ThemedText";
+import { ThemedView } from "../../components/ThemedView";
+import BillComponent, { Bill } from "../../src/components/Bill";
+import BillSkeleton from "../../src/components/BillSkeleton";
+import EmptyState from "../../src/components/EmptyState";
+import { supabase } from "../../src/lib/supabase";
 
 export default function HomeScreen() {
   const [bills, setBills] = useState<Bill[]>([]);
@@ -15,7 +15,6 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   useEffect(() => {
-    // Reset state and show loading skeletons on new search
     setLoading(true);
     const fetchBills = async () => {
       try {
@@ -25,7 +24,6 @@ export default function HomeScreen() {
           .order("id", { ascending: false });
 
         if (searchQuery.trim()) {
-          // Use textSearch for searching
           query = query.textSearch("title,bill_number", searchQuery, {
             type: "websearch",
           });
@@ -44,17 +42,15 @@ export default function HomeScreen() {
       }
     };
 
-    // Debounce the search query to avoid excessive API calls
     const searchTimeout = setTimeout(() => {
       fetchBills();
-    }, 300); // 300ms delay
+    }, 300);
 
     return () => clearTimeout(searchTimeout);
   }, [searchQuery]);
 
   const renderContent = () => {
     if (loading) {
-      // Show 5 skeleton placeholders while loading
       return (
         <FlatList
           data={Array.from({ length: 5 })}
@@ -94,7 +90,7 @@ export default function HomeScreen() {
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
-        contentContainerStyle={{ paddingBottom: 40 }} // Add padding for tab bar
+        contentContainerStyle={{ paddingBottom: 40 }}
       />
     );
   };
@@ -122,7 +118,7 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 16,
-    paddingTop: 60, // Add safe area padding
+    paddingTop: 60,
     borderBottomWidth: 1,
     borderBottomColor: "#ddd",
   },
