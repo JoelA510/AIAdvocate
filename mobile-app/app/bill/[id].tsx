@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
-import { supabase } from '@/lib/supabase';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
-import { Bill } from '@/components/Bill';
+import { useState, useEffect } from "react";
+import { StyleSheet, View } from "react-native";
+import { useLocalSearchParams } from "expo-router";
+import { supabase } from "@/lib/supabase";
+import { ThemedText } from "@/components/ThemedText";
+import { ThemedView } from "@/components/ThemedView";
+import { Bill } from "@/components/Bill";
 
 export default function BillDetailsScreen() {
   const { id } = useLocalSearchParams();
@@ -18,9 +18,9 @@ export default function BillDetailsScreen() {
     const fetchBill = async () => {
       try {
         const { data, error } = await supabase
-          .from('bills')
-          .select('*')
-          .eq('id', id)
+          .from("bills")
+          .select("*")
+          .eq("id", id)
           .single();
 
         if (error) {

@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, FlatList } from 'react-native';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
-import BillComponent, { Bill } from '@/components/Bill';
-import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/providers/AuthProvider';
+import React, { useState, useEffect } from "react";
+import { StyleSheet, FlatList } from "react-native";
+import { ThemedText } from "@/components/ThemedText";
+import { ThemedView } from "@/components/ThemedView";
+import BillComponent, { Bill } from "@/components/Bill";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/providers/AuthProvider";
 
 export default function SavedBillsScreen() {
   const { session } = useAuth();
@@ -16,16 +16,16 @@ export default function SavedBillsScreen() {
   useEffect(() => {
     if (!userId) {
       setLoading(false);
-      setError('User not authenticated.');
+      setError("User not authenticated.");
       return;
     }
 
     const fetchSavedBills = async () => {
       try {
         const { data: bookmarks, error: bookmarkError } = await supabase
-          .from('bookmarks')
-          .select('bill_id')
-          .eq('user_id', userId);
+          .from("bookmarks")
+          .select("bill_id")
+          .eq("user_id", userId);
 
         if (bookmarkError) {
           throw bookmarkError;
@@ -40,9 +40,9 @@ export default function SavedBillsScreen() {
         }
 
         const { data: bills, error: billsError } = await supabase
-          .from('bills')
-          .select('*')
-          .in('id', billIds);
+          .from("bills")
+          .select("*")
+          .in("id", billIds);
 
         if (billsError) {
           throw billsError;
