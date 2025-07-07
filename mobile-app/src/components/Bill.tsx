@@ -58,7 +58,7 @@ export default function BillComponent({ bill }: BillProps) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [bill.id]);
+  }, [bill.id, fetchReactionCounts]);
 
   const handleReaction = async (reactionType: string) => {
     if (!userId) {

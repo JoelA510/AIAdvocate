@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { StyleSheet, View, FlatList, TextInput } from 'react-native';
+import { StyleSheet, FlatList, TextInput } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
