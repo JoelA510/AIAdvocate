@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "firebase-admin/app": "npm:firebase-admin@11.0.1/app",
+    "firebase-admin/app-check": "npm:firebase-admin@11.0.1/app-check",
+    "std/": "https://deno.land/std@0.177.0/"
+  }
+}
