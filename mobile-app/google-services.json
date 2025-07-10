@@ -23,25 +23,6 @@
           "other_platform_oauth_client": []
         }
       }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:1022996508433:android:be707fbb16372deef9a6b0",
-        "android_client_info": {
-          "package_name": "com.joela510.aiadvocate_test"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyBsgeSYRvYQIjRxT-bNBed7E9IBzU_kRrI"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
     }
   ],
   "configuration_version": "1"

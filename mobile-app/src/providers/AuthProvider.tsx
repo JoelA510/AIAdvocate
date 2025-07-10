@@ -1,9 +1,9 @@
+import firebase from "@react-native-firebase/app";
+import appCheck from "@react-native-firebase/app-check";
 import { Session } from "@supabase/supabase-js";
 import React, { createContext, useState, useEffect, useContext } from "react";
 import Toast from "react-native-toast-message";
 import { supabase } from "../lib/supabase";
-import appCheck from "@react-native-firebase/app-check";
-import firebase from "@react-native-firebase/app";
 
 interface AuthContextType {
   session: Session | null;
@@ -20,29 +20,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Initialize Firebase and App Check when the provider mounts
     const initializeAppCheck = async () => {
-      if (firebase.apps.length === 0) {
-        await firebase.initializeApp();
-      }
-      const rnfbAppCheck = appCheck();
-      await rnfbAppCheck.activate(process.env.EXPO_PUBLIC_RECAPTCHA_SITE_KEY, true);
+      // The key is automatically read from google-services.json on Android
+      await appCheck().activate("ignored", true); 
     };
 
     initializeAppCheck();
 
-    const fetchSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    // Check for an existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
-    };
+    });
 
-    fetchSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
 
@@ -51,37 +44,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const signIn = async () => {
     try {
+      // 1. Get the App Check token from Firebase on the device
       const { token } = await appCheck().getToken(true);
-
-      const response = await fetch(process.env.EXPO_PUBLIC_SUPABASE_URL + "/functions/v1/verify-app-check", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Firebase-AppCheck": token,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error("App Check verification failed");
+      if (!token) {
+        throw new Error("Could not get App Check token.");
       }
 
-      const { error } = await supabase.auth.signInAnonymously();
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      Toast.show({
-        type: "success",
-        text1: "Verification successful!",
+      // 2. Call our Supabase Edge Function to verify the token
+      const { data, error: functionError } = await supabase.functions.invoke("verify-app-check", {
+        body: { appCheckToken: token },
       });
+
+      if (functionError || !data?.success) {
+        throw functionError || new Error("Edge function verification failed.");
+      }
+      
+      // 3. If the token is verified, sign in to Supabase anonymously
+      const { error: signInError } = await supabase.auth.signInAnonymously();
+      if (signInError) {
+        throw signInError;
+      }
+      
+      Toast.show({ type: "success", text1: "Verified!" });
+
     } catch (error) {
-      Toast.show({
-        type: "error",
-        text1: "Login Failed",
-        text2: error.message,
-      });
-      console.error("Error signing in:", error);
+      console.error("Sign-in process failed:", error);
+      Toast.show({ type: "error", text1: "Sign-In Failed", text2: error.message });
     }
   };
 
@@ -99,3 +87,5 @@ export const useAuth = () => {
   }
   return context;
 };
+
+export default AuthContext;

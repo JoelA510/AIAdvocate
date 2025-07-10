@@ -13,7 +13,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.JoelA510.AIAdvocateTest"
+      "package": "com.JoelA510.AIAdvocateTest",
+      "googleServicesFile": "./google-services.json"
     },
     "ios": {
       "supportsTablet": true
@@ -35,7 +36,9 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      "@react-native-firebase/app"
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "@react-native-firebase/app-check"
     ],
     "experiments": {
       "typedRoutes": true
@@ -47,27 +50,3 @@
     }
   }
 }
-
-// This file is used by Expo to configure the mobile app.
-// It includes metadata such as the app name, version, icon, and platform-specific settings.
-// The "plugins" section includes configurations for Expo Router, fonts, and splash screen.
-// The "extra" section contains the EAS project ID for building and submitting the app.
-// The "experiments" section enables typed routes in the Expo Router.
-// The "android" and "ios" sections specify platform-specific configurations, such as package names and tablet support.
-// The "web" section configures the web bundler and output settings, including the favicon.
-// The "version" field indicates the current version of the app, which is set to "1.0.0".
-// The "orientation" is set to "portrait", and the "userInterfaceStyle" is set to "automatic" to adapt to the user's preferences.
-// The "icon" and "adaptiveIcon" fields specify the app's icons for different platforms.
-// The "scheme" field defines a custom URL scheme for the app, allowing it to be opened via links with the "mobileapp" scheme.
-// The "supportsTablet" field indicates that the iOS version of the app supports tablet devices.
-// The "output" field in the "web" section specifies that the web app will be built using the Metro bundler and output as static files.
-// The "favicon" field specifies the favicon for the web app, which is used in browser tabs and bookmarks.
-// The "image" field in the "splash-screen" plugin configuration specifies the image to be displayed while the app is loading.
-// The "imageWidth" field specifies the width of the splash screen image, and the "resizeMode" field specifies how the image should be resized.
-// The "backgroundColor" field in the "splash-screen" plugin configuration specifies the background color of the splash screen, which is set to white (#ffffff).
-// The "adaptiveIcon" section in the "android" configuration specifies the foreground image and background color for the adaptive icon, which is used on Android devices to create a more dynamic icon that can adapt to different shapes and sizes.
-// The "package" field in the "android" configuration specifies the unique package name for the Android app, which is used to identify the app on the Google Play Store and on devices.
-// The "supportsTablet" field in the "ios" configuration
-// indicates that the iOS version of the app supports tablet devices, allowing it to run on both iPhones and iPads.
-// The "output" field in the "web" configuration specifies that the web app will be built using the Metro bundler and output as static files, which is suitable
-// for deployment on web servers.

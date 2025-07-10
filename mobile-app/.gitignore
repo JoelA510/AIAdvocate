@@ -42,5 +42,11 @@ app-example
 .env
 
 # Yarn package manager files
-# Since we are now using Yarn, ignore the npm lock file to prevent conflicts.
 package-lock.json
+
+# Ignore native directories managed by Prebuild/EAS Build
+/android
+/ios
+
+# Firebase Service Account Key
+service-account-file.json
