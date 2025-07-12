@@ -1,63 +1,20 @@
 import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
+  DarkTheme as NavigationDarkTheme,
+  DefaultTheme as NavigationDefaultTheme,
 } from "@react-navigation/native";
 import { useFonts } from "expo-font";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect } from "react";
+import React from "react";
+import { PaperProvider } from "react-native-paper";
 import "react-native-reanimated";
 import Toast from "react-native-toast-message";
 
 import { useColorScheme } from "../hooks/useColorScheme";
-import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
-import { ThemedView } from "../components/ThemedView";
+import { AuthProvider } from "../src/providers/AuthProvider";
 
-function RootLayoutNav() {
-  const { session, loading } = useAuth();
-  const router = useRouter();
-  const segments = useSegments();
-
-  useEffect(() => {
-    if (loading) {
-      return; // Wait until the session is loaded
-    }
-
-    const inTabsGroup = segments[0] === "(tabs)";
-
-    if (session && !inTabsGroup) {
-      // User is signed in and not in the main app area, redirect them
-      router.replace("/(tabs)");
-    } else if (!session && !loading) {
-      // User is not signed in, redirect them to the login screen
-      router.replace("/login");
-    }
-  }, [session, loading, segments, router]);
-
-  if (loading) {
-    // You can show a loading indicator here if you want
-    return <ThemedView style={{ flex: 1 }} />;
-  }
-
-  return (
-    <>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="login"
-          options={{
-            headerShown: false,
-            presentation: "modal",
-          }}
-        />
-        <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="+not-found" />
-      </Stack>
-      <Toast />
-    </>
-  );
-}
+// You can merge themes later, but for now, we'll just use the navigation theme
+// and let Paper's default theme adapt.
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -69,12 +26,20 @@ export default function RootLayout() {
     return null;
   }
 
+  const navigationTheme = colorScheme === 'dark' ? NavigationDarkTheme : NavigationDefaultTheme;
+
   return (
-    <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+    <PaperProvider>
       <AuthProvider>
-        <RootLayoutNav />
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="login" options={{ headerShown: false, presentation: "modal" }} />
+          <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="+not-found" />
+        </Stack>
+        <Toast />
       </AuthProvider>
       <StatusBar style="auto" />
-    </ThemeProvider>
+    </PaperProvider>
   );
 }

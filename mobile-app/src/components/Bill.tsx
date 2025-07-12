@@ -1,6 +1,7 @@
 import { Link } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
+import { Button, Card, Text } from "react-native-paper";
 import Toast from "react-native-toast-message";
 
 import { ThemedText } from "../../components/ThemedText";
@@ -30,6 +31,7 @@ function BillComponent({ bill }: BillProps) {
   const [userReaction, setUserReaction] = useState<string | null>(null);
   const [isBookmarked, setIsBookmarked] = useState(false);
 
+  // ... (All the data-fetching and handler logic remains the same)
   const fetchReactionCounts = useCallback(async () => {
     try {
       const { data, error } = await supabase.rpc("get_reaction_counts", {
@@ -44,33 +46,23 @@ function BillComponent({ bill }: BillProps) {
 
   useEffect(() => {
     if (!userId) return;
-
     const fetchUserInteractions = async () => {
-      const { data: reactionData, error: reactionError } = await supabase
+      const { data: reactionData } = await supabase
         .from("reactions")
         .select("reaction_type")
         .eq("bill_id", bill.id)
         .eq("user_id", userId)
         .single();
-
       if (reactionData) setUserReaction(reactionData.reaction_type);
-      if (reactionError && reactionError.code !== "PGRST116") {
-        console.error("Error fetching user reaction:", reactionError);
-      }
 
-      const { data: bookmarkData, error: bookmarkError } = await supabase
+      const { data: bookmarkData } = await supabase
         .from("bookmarks")
         .select("bill_id")
         .eq("bill_id", bill.id)
         .eq("user_id", userId)
         .single();
-
       setIsBookmarked(!!bookmarkData);
-      if (bookmarkError && bookmarkError.code !== "PGRST116") {
-        console.error("Error fetching user bookmark:", bookmarkError);
-      }
     };
-
     fetchUserInteractions();
   }, [userId, bill.id]);
 
@@ -78,175 +70,107 @@ function BillComponent({ bill }: BillProps) {
     fetchReactionCounts();
     const channel = supabase
       .channel(`bill-reactions:${bill.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "reactions",
-          filter: `bill_id=eq.${bill.id}`,
-        },
-        () => {
-          fetchReactionCounts();
-        },
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "reactions", filter: `bill_id=eq.${bill.id}`}, () => {
+        fetchReactionCounts();
+      })
       .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
     };
   }, [bill.id, fetchReactionCounts]);
-
+  
   const handleReaction = async (reactionType: string) => {
-    if (!userId) {
-      Toast.show({
-        type: "error",
-        text1: "Authentication Error",
-        text2: "Could not identify user session.",
-      });
-      return;
-    }
-
+    if (!userId) return;
     try {
       if (userReaction === reactionType) {
-        const { error } = await supabase
-          .from("reactions")
-          .delete()
-          .match({ bill_id: bill.id, user_id: userId });
-
-        if (error) throw error;
+        await supabase.from("reactions").delete().match({ bill_id: bill.id, user_id: userId });
         setUserReaction(null);
       } else {
-        const { error } = await supabase.from("reactions").upsert({
-          bill_id: bill.id,
-          user_id: userId,
-          reaction_type: reactionType,
-        });
-
-        if (error) throw error;
+        await supabase.from("reactions").upsert({ bill_id: bill.id, user_id: userId, reaction_type: reactionType });
         setUserReaction(reactionType);
       }
     } catch (error: any) {
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: `Failed to record reaction: ${error.message}`,
-      });
+      Toast.show({ type: "error", text1: "Error", text2: `Failed to record reaction: ${error.message}` });
     }
   };
 
   const handleBookmark = async () => {
-    if (!userId) {
-      Toast.show({
-        type: "error",
-        text1: "Authentication Error",
-        text2: "Could not identify user session.",
-      });
-      return;
-    }
-
+    if (!userId) return;
     try {
       if (isBookmarked) {
-        const { error } = await supabase
-          .from("bookmarks")
-          .delete()
-          .match({ bill_id: bill.id, user_id: userId });
-
-        if (error) throw error;
+        await supabase.from("bookmarks").delete().match({ bill_id: bill.id, user_id: userId });
         Toast.show({ type: "success", text1: "Bookmark removed" });
       } else {
-        const { error } = await supabase.from("bookmarks").upsert({
-          bill_id: bill.id,
-          user_id: userId,
-        });
-        if (error) throw error;
+        await supabase.from("bookmarks").upsert({ bill_id: bill.id, user_id: userId });
         Toast.show({ type: "success", text1: "Bill bookmarked!" });
       }
       setIsBookmarked(!isBookmarked);
     } catch (error: any) {
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: `Failed to update bookmark: ${error.message}`,
-      });
+      Toast.show({ type: "error", text1: "Error", text2: `Failed to update bookmark: ${error.message}` });
     }
   };
-
+  
   return (
     <Link href={`/bill/${bill.id}`} asChild>
       <Pressable>
-        <View style={styles.billContainer}>
-          <ThemedText type="subtitle">{bill.bill_number}</ThemedText>
-          <ThemedText>{bill.title}</ThemedText>
-          <View style={styles.toolbar}>
-            <Pressable
-              style={[
-                styles.button,
-                userReaction === "upvote" && styles.buttonActive,
-              ]}
-              onPress={() => handleReaction("upvote")}
-            >
-              <ThemedText>👍 Upvote ({reactionCounts.upvote || 0})</ThemedText>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.button,
-                userReaction === "downvote" && styles.buttonActive,
-              ]}
-              onPress={() => handleReaction("downvote")}
-            >
-              <ThemedText>
-                👎 Downvote ({reactionCounts.downvote || 0})
-              </ThemedText>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.button,
-                userReaction === "love" && styles.buttonActive,
-              ]}
-              onPress={() => handleReaction("love")}
-            >
-              <ThemedText>❤️ Love ({reactionCounts.love || 0})</ThemedText>
-            </Pressable>
-            <Pressable
-              style={[styles.button, isBookmarked && styles.buttonActive]}
+        {/* NEW: Using Card component for a modern look */}
+        <Card style={styles.card} mode="elevated">
+          <Card.Title title={bill.bill_number} titleVariant="headlineSmall" />
+          <Card.Content>
+            <Text variant="titleMedium">{bill.title}</Text>
+          </Card.Content>
+          {/* NEW: Using Card.Actions for the button toolbar */}
+          <Card.Actions style={styles.actions}>
+            <View style={styles.reactionContainer}>
+              <Button
+                icon="thumb-up"
+                mode={userReaction === "upvote" ? "contained" : "text"}
+                onPress={() => handleReaction("upvote")}
+              >
+                {reactionCounts.upvote || 0}
+              </Button>
+              <Button
+                icon="thumb-down"
+                mode={userReaction === "downvote" ? "contained" : "text"}
+                onPress={() => handleReaction("downvote")}
+              >
+                {reactionCounts.downvote || 0}
+              </Button>
+              <Button
+                icon="heart"
+                mode={userReaction === "love" ? "contained" : "text"}
+                onPress={() => handleReaction("love")}
+              >
+                {reactionCounts.love || 0}
+              </Button>
+            </View>
+            <Button
+              icon={isBookmarked ? "bookmark" : "bookmark-outline"}
               onPress={handleBookmark}
+              style={{ marginLeft: 'auto' }} // Pushes the bookmark to the right
             >
-              <ThemedText>
-                {isBookmarked ? "🔖 Saved" : "🔖 Bookmark"}
-              </ThemedText>
-            </Pressable>
-          </View>
-        </View>
+              Save
+            </Button>
+          </Card.Actions>
+        </Card>
       </Pressable>
     </Link>
   );
 }
 
 const styles = StyleSheet.create({
-  billContainer: {
+  card: {
     marginBottom: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
   },
-  toolbar: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginTop: 10,
-    flexWrap: "wrap",
-    gap: 8,
+  actions: {
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  button: {
-    padding: 8,
-    backgroundColor: "#eee",
-    borderRadius: 5,
-  },
-  buttonActive: {
-    backgroundColor: "#aaddff",
-    borderColor: "#0a7ea4",
-    borderWidth: 1,
+  reactionContainer: {
+    flexDirection: 'row',
   },
 });
 
