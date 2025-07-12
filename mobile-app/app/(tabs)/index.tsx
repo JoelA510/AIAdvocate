@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { StyleSheet, FlatList, TextInput, View } from "react-native";
+import { StyleSheet, FlatList, View } from "react-native";
+import { Searchbar, Text } from "react-native-paper";
 
-import { ThemedText } from "../../components/ThemedText";
-import { ThemedView } from "../../components/ThemedView";
 import BillComponent, { Bill } from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
+import { ThemedView } from "../../components/ThemedView";
 import { supabase } from "../../src/lib/supabase";
 
 export default function HomeScreen() {
@@ -31,9 +31,7 @@ export default function HomeScreen() {
 
         const { data, error } = await query;
 
-        if (error) {
-          throw error;
-        }
+        if (error) throw error;
         setBills(data);
       } catch (err: any) {
         setError(err.message);
@@ -42,6 +40,7 @@ export default function HomeScreen() {
       }
     };
 
+    // Use a timeout to debounce the search query
     const searchTimeout = setTimeout(() => {
       fetchBills();
     }, 300);
@@ -74,7 +73,7 @@ export default function HomeScreen() {
     if (bills.length === 0) {
       return (
         <EmptyState
-          icon="paperplane.fill"
+          icon="file-search-outline" // Using a Material Community Icon name
           title="No Bills Found"
           message={
             searchQuery
@@ -98,13 +97,16 @@ export default function HomeScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
-        <ThemedText type="title">Explore Bills</ThemedText>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by keyword or bill number..."
-          placeholderTextColor="#888"
-          value={searchQuery}
+        {/* Using Paper's Text component for consistent typography */}
+        <Text variant="headlineLarge" style={styles.title}>
+          Explore Bills
+        </Text>
+        {/* NEW: Using the Searchbar component */}
+        <Searchbar
+          placeholder="Search by keyword or bill..."
           onChangeText={setSearchQuery}
+          value={searchQuery}
+          style={styles.searchbar}
         />
       </View>
       <View style={styles.content}>{renderContent()}</View>
@@ -119,19 +121,16 @@ const styles = StyleSheet.create({
   header: {
     padding: 16,
     paddingTop: 60,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ddd",
+  },
+  title: {
+    fontWeight: "bold",
+    marginBottom: 16,
+  },
+  searchbar: {
+    // RNP Searchbar default styling is quite good, minimal overrides needed
   },
   content: {
     flex: 1,
-    padding: 16,
-  },
-  searchInput: {
-    height: 40,
-    backgroundColor: "#f0f0f0",
-    marginTop: 16,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    fontSize: 16,
+    paddingHorizontal: 16,
   },
 });

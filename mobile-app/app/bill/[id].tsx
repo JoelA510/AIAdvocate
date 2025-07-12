@@ -1,8 +1,8 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState, useEffect } from "react";
-import { StyleSheet, View, Pressable } from "react-native";
+import { StyleSheet, View, Pressable, ScrollView } from "react-native";
+import { Card, Divider, Text } from "react-native-paper";
 
-import { ThemedText } from "../../components/ThemedText";
 import { ThemedView } from "../../components/ThemedView";
 import { IconSymbol } from "../../components/ui/IconSymbol";
 import { useThemeColor } from "../../hooks/useThemeColor";
@@ -10,8 +10,6 @@ import BillComponent from "../../src/components/Bill";
 import EmptyState from "../../src/components/EmptyState";
 import { supabase } from "../../src/lib/supabase";
 
-// Note: The Bill type can be imported from the Bill component itself.
-// This avoids type duplication.
 import type { Bill } from "../../src/components/Bill";
 
 export default function BillDetailsScreen() {
@@ -20,26 +18,14 @@ export default function BillDetailsScreen() {
   const [bill, setBill] = useState<Bill | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const placeholderColor = useThemeColor(
-    { light: "#e0e0e0", dark: "#3a3a3a" },
-    "background",
-  );
   const backButtonColor = useThemeColor({ light: "#000", dark: "#fff" }, "text");
 
   useEffect(() => {
     if (!id) return;
-
     const fetchBill = async () => {
       try {
-        const { data, error } = await supabase
-          .from("bills")
-          .select("*")
-          .eq("id", id)
-          .single();
-
-        if (error) {
-          throw error;
-        }
+        const { data, error } = await supabase.from("bills").select("*").eq("id", id).single();
+        if (error) throw error;
         setBill(data);
       } catch (err: any) {
         setError(err.message);
@@ -47,42 +33,24 @@ export default function BillDetailsScreen() {
         setLoading(false);
       }
     };
-
     fetchBill();
   }, [id]);
 
-  const renderLoadingState = () => (
-    <ThemedView style={styles.container}>
-      <Pressable style={styles.backButton} onPress={() => router.back()}>
-        <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
-        <ThemedText type="link">Back</ThemedText>
-      </Pressable>
-      <View style={[styles.placeholder, { height: 32, width: '60%', backgroundColor: placeholderColor }]} />
-      <View style={[styles.placeholder, { height: 24, width: '80%', marginTop: 12, backgroundColor: placeholderColor }]} />
-      
-      <View style={styles.summaryContainer}>
-        <View style={[styles.placeholder, { height: 22, width: '40%', backgroundColor: placeholderColor }]} />
-        <View style={[styles.placeholder, { height: 20, width: '100%', marginTop: 10, backgroundColor: placeholderColor }]} />
-        <View style={[styles.placeholder, { height: 20, width: '95%', marginTop: 8, backgroundColor: placeholderColor }]} />
-      </View>
-      <View style={styles.summaryContainer}>
-        <View style={[styles.placeholder, { height: 22, width: '40%', backgroundColor: placeholderColor }]} />
-        <View style={[styles.placeholder, { height: 20, width: '100%', marginTop: 10, backgroundColor: placeholderColor }]} />
-        <View style={[styles.placeholder, { height: 20, width: '95%', marginTop: 8, backgroundColor: placeholderColor }]} />
-      </View>
-    </ThemedView>
-  );
-
   if (loading) {
-    return renderLoadingState();
+    // For now, a simple loading text is fine here.
+    return (
+      <ThemedView style={styles.container}>
+        <Text>Loading...</Text>
+      </ThemedView>
+    );
   }
 
   if (error || !bill) {
     return (
-      <ThemedView style={{flex: 1, paddingTop: 60}}>
+      <ThemedView style={{ flex: 1, paddingTop: 60 }}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-            <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
-            <ThemedText type="link">Back</ThemedText>
+          <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
+          <Text>Back</Text>
         </Pressable>
         <EmptyState
           icon="chevron.left.forwardslash.chevron.right"
@@ -94,33 +62,52 @@ export default function BillDetailsScreen() {
   }
 
   return (
-    <ThemedView style={styles.container}>
-      <Pressable style={styles.backButton} onPress={() => router.back()}>
-        <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
-        <ThemedText type="link">Back</ThemedText>
-      </Pressable>
-      <ThemedText type="title">{bill.bill_number}</ThemedText>
-      <ThemedText type="subtitle">{bill.title}</ThemedText>
+    <ScrollView style={styles.scrollView}>
+      <ThemedView style={styles.container}>
+        <Pressable style={styles.backButton} onPress={() => router.back()}>
+          <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
+          <Text style={{ fontSize: 16 }}>Back</Text>
+        </Pressable>
+        
+        {/* Use RNP components for the header */}
+        <Text variant="headlineMedium" style={styles.title}>{bill.bill_number}</Text>
+        <Text variant="titleLarge" style={styles.subtitle}>{bill.title}</Text>
+        
+        <Divider style={styles.divider} />
 
-      <BillComponent bill={bill} />
+        {/* The interaction component remains the same */}
+        <BillComponent bill={bill} />
 
-      <View style={styles.summaryContainer}>
-        <ThemedText type="defaultSemiBold">Simple Summary:</ThemedText>
-        <ThemedText>{bill.summary_simple}</ThemedText>
-      </View>
-      <View style={styles.summaryContainer}>
-        <ThemedText type="defaultSemiBold">Medium Summary:</ThemedText>
-        <ThemedText>{bill.summary_medium}</ThemedText>
-      </View>
-      <View style={styles.summaryContainer}>
-        <ThemedText type="defaultSemiBold">Complex Summary:</ThemedText>
-        <ThemedText>{bill.summary_complex}</ThemedText>
-      </View>
-    </ThemedView>
+        {/* NEW: Each summary is now in its own styled Card */}
+        <Card style={styles.summaryCard} mode="outlined">
+          <Card.Title title="Simple Summary" titleVariant="titleMedium" />
+          <Card.Content>
+            <Text variant="bodyLarge">{bill.summary_simple}</Text>
+          </Card.Content>
+        </Card>
+
+        <Card style={styles.summaryCard} mode="outlined">
+          <Card.Title title="Medium Summary" titleVariant="titleMedium" />
+          <Card.Content>
+            <Text variant="bodyLarge">{bill.summary_medium}</Text>
+          </Card.Content>
+        </Card>
+
+        <Card style={styles.summaryCard} mode="outlined">
+          <Card.Title title="Complex Summary" titleVariant="titleMedium" />
+          <Card.Content>
+            <Text variant="bodyLarge">{bill.summary_complex}</Text>
+          </Card.Content>
+        </Card>
+      </ThemedView>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollView: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     padding: 16,
@@ -135,11 +122,16 @@ const styles = StyleSheet.create({
   backIcon: {
     transform: [{ rotate: '180deg' }],
   },
-  summaryContainer: {
-    marginTop: 24,
-    gap: 8,
+  title: {
+    fontWeight: 'bold',
   },
-  placeholder: {
-    borderRadius: 4,
+  subtitle: {
+    marginBottom: 16,
+  },
+  divider: {
+    marginVertical: 16,
+  },
+  summaryCard: {
+    marginTop: 16,
   },
 });
