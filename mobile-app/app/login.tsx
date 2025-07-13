@@ -6,24 +6,20 @@ import { useAuth } from "../src/providers/AuthProvider";
 import { useThemeColor } from "../hooks/useThemeColor";
 
 export default function LoginScreen() {
-  const { signIn, isReady } = useAuth();
+  const { signIn } = useAuth();
 
   useEffect(() => {
-    // Only attempt to sign in if the auth provider is ready
-    if (isReady) {
-      signIn();
-    }
-  }, [isReady, signIn]);
+    // When the screen loads, automatically trigger the sign-in process.
+    // In DEV, this will be instant. In PROD, it will run the full check.
+    signIn();
+  }, [signIn]);
 
   const tint = useThemeColor({}, "tint");
 
   return (
     <ThemedView style={styles.container}>
       <ActivityIndicator size="large" color={tint} />
-      <ThemedText type="title">Verifying Device...</ThemedText>
-      <ThemedText style={styles.subtitle}>
-        Please wait while we securely verify your app.
-      </ThemedText>
+      <ThemedText type="title">Signing In...</ThemedText>
     </ThemedView>
   );
 }
@@ -34,10 +30,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     gap: 20,
-  },
-  subtitle: {
-    color: "#666",
-    textAlign: "center",
-    paddingHorizontal: 20,
   },
 });

@@ -37,7 +37,6 @@ export default function BillDetailsScreen() {
   }, [id]);
 
   if (loading) {
-    // For now, a simple loading text is fine here.
     return (
       <ThemedView style={styles.container}>
         <Text>Loading...</Text>
@@ -69,16 +68,13 @@ export default function BillDetailsScreen() {
           <Text style={{ fontSize: 16 }}>Back</Text>
         </Pressable>
         
-        {/* Use RNP components for the header */}
         <Text variant="headlineMedium" style={styles.title}>{bill.bill_number}</Text>
         <Text variant="titleLarge" style={styles.subtitle}>{bill.title}</Text>
         
         <Divider style={styles.divider} />
 
-        {/* The interaction component remains the same */}
         <BillComponent bill={bill} />
 
-        {/* NEW: Each summary is now in its own styled Card */}
         <Card style={styles.summaryCard} mode="outlined">
           <Card.Title title="Simple Summary" titleVariant="titleMedium" />
           <Card.Content>
@@ -133,5 +129,9 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     marginTop: 16,
+  },
+  summaryBody: {
+    fontSize: 16,
+    lineHeight: 24,
   },
 });

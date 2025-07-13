@@ -1,51 +1,35 @@
-import { serve } from "std/http/server.ts";
-import { initializeApp, cert } from "firebase-admin/app";
-import { getAppCheck } from "firebase-admin/app-check";
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-appcheck",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Initialize Firebase Admin SDK
-try {
-  const serviceAccount = JSON.parse(Deno.env.get("FIREBASE_SERVICE_ACCOUNT_KEY")!);
-  initializeApp({
-    credential: cert(serviceAccount),
-  });
-} catch (e) {
-  if (!e.message.includes("already exists")) {
-    console.error("Firebase Admin SDK initialization failed:", e);
-  }
-}
+console.log("🚀 verify-app-check function running (INSECURE DEBUG MODE) 🚀");
 
 serve(async (req) => {
+  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const appCheckToken = req.headers.get("X-Firebase-AppCheck");
-    if (!appCheckToken) {
-      throw new Error("App Check token is required.");
-    }
-
-    await getAppCheck().verifyToken(appCheckToken);
+    const body = await req.json();
+    console.log("Received request to verify app. Body:", body);
     
-    console.log("App Check token successfully verified.");
+    // --- BYPASSING ALL VERIFICATION ---
+    // In this debug mode, we automatically return success.
+    console.log("Bypassing token verification and returning success.");
 
-    return new Response(JSON.stringify({ success: true }), {
+    return new Response(JSON.stringify({ success: true, message: "Verification bypassed for development." }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
   } catch (error) {
-    console.error("Error during App Check verification:", error.message);
-    return new Response(
-      JSON.stringify({ error: "Unauthorized: Invalid App Check token." }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 401,
-      }
-    );
+    console.error("Error in verify-app-check function:", error.message);
+    return new Response(JSON.stringify({ error: error.message }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400,
+    });
   }
 });

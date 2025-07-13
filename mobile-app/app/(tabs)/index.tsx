@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
-import { Searchbar, Text } from "react-native-paper";
+import { Searchbar } from "react-native-paper"; // Keep Searchbar
 
-import BillComponent, { Bill } from "../../src/components/Bill";
+import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
 import { ThemedView } from "../../components/ThemedView";
+import { ThemedText } from "../../components/ThemedText"; // Use ThemedText again
 import { supabase } from "../../src/lib/supabase";
 
 export default function HomeScreen() {
+  // ... (logic is unchanged)
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +32,6 @@ export default function HomeScreen() {
         }
 
         const { data, error } = await query;
-
         if (error) throw error;
         setBills(data);
       } catch (err: any) {
@@ -40,7 +41,6 @@ export default function HomeScreen() {
       }
     };
 
-    // Use a timeout to debounce the search query
     const searchTimeout = setTimeout(() => {
       fetchBills();
     }, 300);
@@ -59,7 +59,6 @@ export default function HomeScreen() {
         />
       );
     }
-
     if (error) {
       return (
         <EmptyState
@@ -69,11 +68,10 @@ export default function HomeScreen() {
         />
       );
     }
-
     if (bills.length === 0) {
       return (
         <EmptyState
-          icon="file-search-outline" // Using a Material Community Icon name
+          icon="file-search-outline"
           title="No Bills Found"
           message={
             searchQuery
@@ -83,7 +81,6 @@ export default function HomeScreen() {
         />
       );
     }
-
     return (
       <FlatList
         data={bills}
@@ -97,11 +94,10 @@ export default function HomeScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
-        {/* Using Paper's Text component for consistent typography */}
-        <Text variant="headlineLarge" style={styles.title}>
+        {/* REVERTED to ThemedText */}
+        <ThemedText type="title" style={styles.title}>
           Explore Bills
-        </Text>
-        {/* NEW: Using the Searchbar component */}
+        </ThemedText>
         <Searchbar
           placeholder="Search by keyword or bill..."
           onChangeText={setSearchQuery}
@@ -125,10 +121,10 @@ const styles = StyleSheet.create({
   title: {
     fontWeight: "bold",
     marginBottom: 16,
+    fontSize: 32, // Manually set style
+    lineHeight: 32,
   },
-  searchbar: {
-    // RNP Searchbar default styling is quite good, minimal overrides needed
-  },
+  searchbar: {},
   content: {
     flex: 1,
     paddingHorizontal: 16,

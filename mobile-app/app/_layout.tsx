@@ -1,45 +1,42 @@
-import {
-  DarkTheme as NavigationDarkTheme,
-  DefaultTheme as NavigationDefaultTheme,
-} from "@react-navigation/native";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React from "react";
+import React, { useEffect } from "react";
 import { PaperProvider } from "react-native-paper";
 import "react-native-reanimated";
 import Toast from "react-native-toast-message";
 
 import { useColorScheme } from "../hooks/useColorScheme";
 import { AuthProvider } from "../src/providers/AuthProvider";
-
-// You can merge themes later, but for now, we'll just use the navigation theme
-// and let Paper's default theme adapt.
+import { LightTheme, DarkTheme } from "../constants/paper-theme"; // Import our custom themes
+import RootLayoutNav from "./RootLayoutNav"; // We will create this component next
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const [loaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
   });
+  const colorScheme = useColorScheme();
 
-  if (!loaded) {
+  useEffect(() => {
+    if (fontError) {
+      console.error("Font loading error:", fontError);
+    }
+  }, [fontError]);
+
+  if (!fontsLoaded && !fontError) {
     return null;
   }
 
-  const navigationTheme = colorScheme === 'dark' ? NavigationDarkTheme : NavigationDefaultTheme;
+  // Determine which theme to use
+  const theme = colorScheme === "dark" ? DarkTheme : LightTheme;
 
   return (
-    <PaperProvider>
+    <PaperProvider theme={theme}>
       <AuthProvider>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ headerShown: false, presentation: "modal" }} />
-          <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
-          <Stack.Screen name="+not-found" />
-        </Stack>
+        <RootLayoutNav />
         <Toast />
+        <StatusBar style="auto" />
       </AuthProvider>
-      <StatusBar style="auto" />
     </PaperProvider>
   );
 }

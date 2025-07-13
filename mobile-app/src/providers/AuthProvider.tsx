@@ -9,12 +9,13 @@ import { supabase } from "../lib/supabase";
 interface AuthContextType {
   session: Session | null;
   loading: boolean;
-  isReady: boolean;
   signIn: () => Promise<void>;
+  // We remove isReady as it's no longer needed with this simpler flow
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// --- Firebase Web Config ---
 let firebaseConfig;
 if (Platform.OS === 'web') {
   try {
@@ -23,45 +24,21 @@ if (Platform.OS === 'web') {
     console.error("Failed to parse EXPO_PUBLIC_FIREBASE_WEB_CONFIG from .env");
   }
 }
+// -------------------------
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const initialize = async () => {
-      try {
-        if (firebase.apps.length === 0) {
-          await firebase.initializeApp(Platform.OS === 'web' ? firebaseConfig : undefined);
-        }
-        
-        // --- THIS IS THE KEY CHANGE ---
-        // Only activate App Check on native platforms
-        if (Platform.OS !== 'web') {
-          console.log("Activating App Check for native...");
-          await appCheck().activate("ignored", true);
-          console.log("App Check activated.");
-        } else {
-          console.log("Skipping App Check activation for web.");
-        }
-        
-        // If we reach here without errors, we are ready.
-        setIsReady(true);
-
-      } catch (e) {
-        console.error("Initialization failed:", e);
-        Toast.show({ type: 'error', text1: 'Initialization Failed', text2: e.message });
-      }
-
-      const { data: { session } } = await supabase.auth.getSession();
+    // This effect only checks for an existing session and sets up the listener.
+    // All sign-in logic is now handled by the signIn function.
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
-    };
-
-    initialize();
+    });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
@@ -71,24 +48,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const signIn = async () => {
-    if (!isReady) {
-      console.warn("Auth not ready, sign-in aborted.");
-      return;
-    }
     setLoading(true);
     try {
-      // For native, we get and verify the App Check token
-      if (Platform.OS !== 'web') {
-        const { token } = await appCheck().getToken(true);
-        if (!token) throw new Error("Could not get App Check token.");
+      // --- THIS IS THE KEY CHANGE ---
+      // If we are in development mode, skip all verification.
+      if (__DEV__) {
+        console.log("DEV mode: Skipping App Check, signing in directly.");
+      } else {
+        // In PRODUCTION, run the full App Check flow.
+        if (Platform.OS !== 'web') {
+          if (firebase.apps.length === 0) {
+            await firebase.initializeApp(Platform.OS === 'web' ? firebaseConfig : undefined);
+          }
+          await appCheck().activate("ignored", true);
+          const { token } = await appCheck().getToken(true);
+          if (!token) throw new Error("Production Error: Could not get App Check token.");
 
-        const { data, error: functionError } = await supabase.functions.invoke("verify-app-check", {
-          body: { appCheckToken: token },
-        });
-        if (functionError || !data?.success) throw functionError || new Error("Edge function verification failed.");
+          const { data, error: functionError } = await supabase.functions.invoke("verify-app-check", {
+            body: { appCheckToken: token },
+          });
+          if (functionError || !data?.success) throw functionError || new Error("Production Error: Edge function verification failed.");
+        }
       }
       
-      // If verification succeeds (or is skipped for web), sign in.
+      // This part runs for both DEV and PROD (after verification)
       const { error: signInError } = await supabase.auth.signInAnonymously();
       if (signInError) throw signInError;
       
@@ -101,7 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   return (
-    <AuthContext.Provider value={{ session, loading, isReady, signIn }}>
+    <AuthContext.Provider value={{ session, loading, signIn }}>
       {children}
     </AuthContext.Provider>
   );
@@ -114,8 +97,3 @@ export const useAuth = () => {
   }
   return context;
 };
-export default AuthProvider;
-export { AuthContext };
-
-// This code is part of a React Native application that provides authentication functionality using Supabase and Firebase App Check. It initializes the Firebase app, activates App Check for native platforms, and manages user sessions with Supabase. The `AuthProvider` component wraps the application to provide authentication context, while the `useAuth` hook allows components to access authentication state and methods. The code also includes error handling and user feedback via Toast notifications.
-// The `signIn` method handles the sign-in process, including App Check token verification for native platforms, and provides feedback on success or failure. The context is designed to be used throughout the application, ensuring that authentication state is easily accessible in any component that needs it.
