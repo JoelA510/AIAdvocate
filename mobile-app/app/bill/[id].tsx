@@ -1,12 +1,11 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState, useEffect } from "react";
 import { StyleSheet, View, Pressable, ScrollView } from "react-native";
-import { Card, Divider, Text } from "react-native-paper";
+import { Card, Divider, Text, useTheme } from "react-native-paper";
 
+import { ThemedText } from "../../components/ThemedText";
 import { ThemedView } from "../../components/ThemedView";
 import { IconSymbol } from "../../components/ui/IconSymbol";
-import { useThemeColor } from "../../hooks/useThemeColor";
-import BillComponent from "../../src/components/Bill";
 import EmptyState from "../../src/components/EmptyState";
 import { supabase } from "../../src/lib/supabase";
 
@@ -15,16 +14,23 @@ import type { Bill } from "../../src/components/Bill";
 export default function BillDetailsScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
+  const theme = useTheme(); // Get the theme
   const [bill, setBill] = useState<Bill | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const backButtonColor = useThemeColor({ light: "#000", dark: "#fff" }, "text");
+
+  // The back button color is now derived from the theme.
+  const backButtonColor = theme.colors.onSurface;
 
   useEffect(() => {
     if (!id) return;
     const fetchBill = async () => {
       try {
-        const { data, error } = await supabase.from("bills").select("*").eq("id", id).single();
+        const { data, error } = await supabase
+          .from("bills")
+          .select("*")
+          .eq("id", id)
+          .single();
         if (error) throw error;
         setBill(data);
       } catch (err: any) {
@@ -45,35 +51,55 @@ export default function BillDetailsScreen() {
   }
 
   if (error || !bill) {
+    // Note: No ThemedView needed here as EmptyState provides it.
     return (
-      <ThemedView style={{ flex: 1, paddingTop: 60 }}>
+      <View style={{ flex: 1, paddingTop: 60, backgroundColor: theme.colors.background }}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
-          <Text>Back</Text>
+          <IconSymbol
+            name="chevron.right"
+            color={backButtonColor}
+            size={24}
+            style={styles.backIcon}
+          />
+          <ThemedText>Back</ThemedText>
         </Pressable>
         <EmptyState
           icon="chevron.left.forwardslash.chevron.right"
           title={error ? "An Error Occurred" : "Bill Not Found"}
-          message={error ? `Could not load the bill. \n(${error})` : `The bill with ID #${id} could not be found.`}
+          message={
+            error
+              ? `Could not load the bill. \n(${error})`
+              : `The bill with ID #${id} could not be found.`
+          }
         />
-      </ThemedView>
+      </View>
     );
   }
 
   return (
-    <ScrollView style={styles.scrollView}>
-      <ThemedView style={styles.container}>
+    // Set the ScrollView background color from the theme
+    <ScrollView style={[styles.scrollView, { backgroundColor: theme.colors.background }]}>
+      <View style={styles.container}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
-          <Text style={{ fontSize: 16 }}>Back</Text>
+          <IconSymbol
+            name="chevron.right"
+            color={backButtonColor}
+            size={24}
+            style={styles.backIcon}
+          />
+          <ThemedText style={{ fontSize: 16 }}>Back</ThemedText>
         </Pressable>
-        
-        <Text variant="headlineMedium" style={styles.title}>{bill.bill_number}</Text>
-        <Text variant="titleLarge" style={styles.subtitle}>{bill.title}</Text>
-        
+
+        <Text variant="headlineMedium" style={styles.title}>
+          {bill.bill_number}
+        </Text>
+        <Text variant="titleLarge" style={styles.subtitle}>
+          {bill.title}
+        </Text>
+
         <Divider style={styles.divider} />
 
-        <BillComponent bill={bill} />
+        {/* The Bill component from Paper should theme automatically */}
 
         <Card style={styles.summaryCard} mode="outlined">
           <Card.Title title="Simple Summary" titleVariant="titleMedium" />
@@ -95,7 +121,7 @@ export default function BillDetailsScreen() {
             <Text variant="bodyLarge">{bill.summary_complex}</Text>
           </Card.Content>
         </Card>
-      </ThemedView>
+      </View>
     </ScrollView>
   );
 }
@@ -110,16 +136,16 @@ const styles = StyleSheet.create({
     paddingTop: 60,
   },
   backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 16,
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
   },
   backIcon: {
-    transform: [{ rotate: '180deg' }],
+    transform: [{ rotate: "180deg" }],
   },
   title: {
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   subtitle: {
     marginBottom: 16,
@@ -129,9 +155,5 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     marginTop: 16,
-  },
-  summaryBody: {
-    fontSize: 16,
-    lineHeight: 24,
   },
 });

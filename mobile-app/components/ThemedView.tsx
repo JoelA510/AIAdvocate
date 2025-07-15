@@ -1,22 +1,17 @@
 import { View, type ViewProps } from "react-native";
+import { useTheme } from "react-native-paper";
 
-import { useThemeColor } from "../hooks/useThemeColor";
+// We remove the lightColor and darkColor props as they are no longer needed.
+export type ThemedViewProps = ViewProps;
 
-export type ThemedViewProps = ViewProps & {
-  lightColor?: string;
-  darkColor?: string;
-};
+export function ThemedView({ style, ...otherProps }: ThemedViewProps) {
+  // Get the theme from the PaperProvider context.
+  const theme = useTheme();
 
-export function ThemedView({
-  style,
-  lightColor,
-  darkColor,
-  ...otherProps
-}: ThemedViewProps) {
-  const backgroundColor = useThemeColor(
-    { light: lightColor, dark: darkColor },
-    "background",
+  return (
+    <View
+      style={[{ backgroundColor: theme.colors.background }, style]}
+      {...otherProps}
+    />
   );
-
-  return <View style={[{ backgroundColor }, style]} {...otherProps} />;
 }
