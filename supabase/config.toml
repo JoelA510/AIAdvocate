@@ -11,3 +11,7 @@ import_map = "./functions/ingest-and-summarize/deno.json"
 # This function must be called before a user is logged in, so we must disable JWT verification.
 verify_jwt = false
 import_map = "./functions/verify-app-check/deno.json"
+
+[functions.bulk-import-dataset]
+verify_jwt = false
+import_map = "./functions/bulk-import-dataset/deno.json"

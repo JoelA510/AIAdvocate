@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1022996508433",
+    "project_id": "aiadvocate-2a04d",
+    "storage_bucket": "aiadvocate-2a04d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1022996508433:android:bd9be9f81f701927f9a6b0",
+        "android_client_info": {
+          "package_name": "com.JoelA510.AIAdvocateTest"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBsgeSYRvYQIjRxT-bNBed7E9IBzU_kRrI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

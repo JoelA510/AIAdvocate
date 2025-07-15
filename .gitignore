@@ -41,6 +41,9 @@ app-example
 # Supabase environment variables
 .env
 
+# Supabase environment variables
+mobile-app/.env
+
 # Yarn package manager files
 package-lock.json
 
@@ -50,3 +53,6 @@ package-lock.json
 
 # Firebase Service Account Key
 service-account-file.json
+
+# Supabase secrets file
+supabase/.env
