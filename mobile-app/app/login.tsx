@@ -1,12 +1,13 @@
 import React, { useEffect } from "react";
 import { StyleSheet, ActivityIndicator } from "react-native";
+import { useTheme } from "react-native-paper"; // Import useTheme from Paper
 import { ThemedText } from "../components/ThemedText";
 import { ThemedView } from "../components/ThemedView";
 import { useAuth } from "../src/providers/AuthProvider";
-import { useThemeColor } from "../hooks/useThemeColor";
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
+  const theme = useTheme(); // Get the theme from the provider
 
   useEffect(() => {
     // When the screen loads, automatically trigger the sign-in process.
@@ -14,11 +15,10 @@ export default function LoginScreen() {
     signIn();
   }, [signIn]);
 
-  const tint = useThemeColor({}, "tint");
-
   return (
     <ThemedView style={styles.container}>
-      <ActivityIndicator size="large" color={tint} />
+      {/* Use a color from the theme for the activity indicator */}
+      <ActivityIndicator size="large" color={theme.colors.primary} />
       <ThemedText type="title">Signing In...</ThemedText>
     </ThemedView>
   );

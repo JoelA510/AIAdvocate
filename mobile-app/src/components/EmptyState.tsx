@@ -1,10 +1,10 @@
 import React from "react";
 import { StyleSheet } from "react-native";
+import { useTheme } from "react-native-paper"; // Import useTheme
 
 import { ThemedText } from "../../components/ThemedText";
 import { ThemedView } from "../../components/ThemedView";
 import { IconSymbol } from "../../components/ui/IconSymbol";
-import { useThemeColor } from "../../hooks/useThemeColor";
 
 type EmptyStateProps = {
   icon: React.ComponentProps<typeof IconSymbol>["name"];
@@ -13,15 +13,18 @@ type EmptyStateProps = {
 };
 
 export default function EmptyState({ icon, title, message }: EmptyStateProps) {
-  const iconColor = useThemeColor({ light: "#a0a0a0", dark: "#606060" }, "text");
+  const theme = useTheme(); // Get the theme
+
+  // Use a muted color from the theme for the icon and message text
+  const mutedColor = theme.colors.onSurfaceDisabled;
 
   return (
     <ThemedView style={styles.container}>
-      <IconSymbol name={icon} size={80} color={iconColor} />
+      <IconSymbol name={icon} size={80} color={mutedColor} />
       <ThemedText type="title" style={styles.title}>
         {title}
       </ThemedText>
-      <ThemedText type="default" style={styles.message}>
+      <ThemedText type="default" style={[styles.message, { color: mutedColor }]}>
         {message}
       </ThemedText>
     </ThemedView>
@@ -41,6 +44,5 @@ const styles = StyleSheet.create({
   },
   message: {
     textAlign: "center",
-    color: "#888",
   },
 });
