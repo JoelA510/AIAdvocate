@@ -1,20 +1,19 @@
 {
   "expo": {
-    "name": "mobile-app",
-    "slug": "mobile-app",
+    "name": "ai-advocate",
+    "slug": "ai-advocate",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mobileapp",
     "userInterfaceStyle": "automatic",
-    "displayName": "AI Advocate Test",
+    "displayName": "AI Advocate",
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/images/icon-foreground.png",
+        "backgroundColor": "#151718"
       },
-      "package": "com.JoelA510.AIAdvocateTest",
-      "googleServicesFile": "./google-services.json"
+      "package": "com.JoelA510.AIAdvocateTest"
     },
     "ios": {
       "supportsTablet": true
@@ -31,7 +30,6 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
@@ -44,9 +42,13 @@
       "typedRoutes": true
     },
     "extra": {
+      "router": {
+        "origin": false
+      },
       "eas": {
-        "projectId": "58e6aeb8-c2e1-4d59-b2d5-ea44b5f6a2d2"
+        "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c"
       }
-    }
+    },
+    "owner": "joela510"
   }
 }
