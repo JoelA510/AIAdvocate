@@ -15,3 +15,7 @@ import_map = "./functions/verify-app-check/deno.json"
 [functions.bulk-import-dataset]
 verify_jwt = false
 import_map = "./functions/bulk-import-dataset/deno.json"
+
+[functions.sync-updated-bills]
+verify_jwt = false
+import_map = "./functions/sync-updated-bills/deno.json"
