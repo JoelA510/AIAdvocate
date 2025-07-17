@@ -13,7 +13,8 @@
         "foregroundImage": "./assets/images/icon-foreground.png",
         "backgroundColor": "#151718"
       },
-      "package": "com.JoelA510.AIAdvocateTest"
+      "package": "com.JoelA510.AIAdvocateTest",
+      "googleServicesFile": "./google-services.json"
     },
     "ios": {
       "supportsTablet": true
@@ -48,7 +49,6 @@
       "eas": {
         "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c"
       }
-    },
-    "owner": "joela510"
+    }
   }
 }
