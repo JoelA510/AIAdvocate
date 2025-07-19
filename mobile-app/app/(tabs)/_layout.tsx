@@ -45,9 +45,27 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Home",
+          title: "LNF Highlights",
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="sparkles" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="all"
+        options={{
+          title: "All Bills",
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="house.fill" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="find-your-rep"
+        options={{
+          title: "Find Your Rep",
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="person.crop.circle.badge.questionmark" color={color} />
           ),
         }}
       />

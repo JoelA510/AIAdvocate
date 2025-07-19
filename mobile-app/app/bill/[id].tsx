@@ -2,8 +2,8 @@
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
-import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { Text, useTheme, Divider } from 'react-native-paper';
+import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator, Share } from 'react-native';
+import { Text, useTheme, Divider, Button } from 'react-native-paper';
 
 import { ThemedView } from '../../components/ThemedView';
 import { IconSymbol } from '../../components/ui/IconSymbol';
@@ -40,6 +40,16 @@ export default function BillDetailsScreen() {
     fetchBill();
   }, [id]);
 
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `Check out this bill: https://aiadvocate.com/bill/${id}`,
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   if (loading) {
     return (
       <ThemedView style={styles.centeredContainer}>
@@ -74,6 +84,7 @@ export default function BillDetailsScreen() {
         
         <Text variant="headlineMedium" style={styles.title}>{bill.bill_number}</Text>
         <Text variant="titleLarge" style={styles.subtitle}>{bill.title}</Text>
+        <Button onPress={handleShare}>Share</Button>
         
         <Divider style={styles.divider} />
 

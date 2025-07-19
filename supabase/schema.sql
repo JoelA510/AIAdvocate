@@ -32,6 +32,7 @@ CREATE TABLE public.bills (
   summary_complex TEXT,
   panel_review JSONB,
   is_verified BOOLEAN DEFAULT false,
+  is_lnf_highlighted BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 COMMENT ON TABLE public.bills IS 'Stores core legislative bill information and AI-generated summaries.';
@@ -40,7 +41,8 @@ COMMENT ON TABLE public.bills IS 'Stores core legislative bill information and A
 -- PROFILES TABLE (SIMPLIFIED FOR ANONYMOUS AUTH)
 -- Stores a public reference to an authenticated user from the private `auth.users` table.
 CREATE TABLE public.profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  expo_push_token TEXT
 );
 COMMENT ON TABLE public.profiles IS 'Stores a public reference to an authenticated user.';
 
@@ -68,19 +70,45 @@ CREATE TABLE public.bookmarks (
 COMMENT ON TABLE public.bookmarks IS 'Stores user bookmarks for bills.';
 
 
+-- LEGISLATORS TABLE
+-- Stores information about legislators.
+CREATE TABLE public.legislators (
+  id BIGINT PRIMARY KEY,
+  name TEXT NOT NULL,
+  chamber TEXT,
+  district TEXT,
+  party TEXT,
+  photo_url TEXT,
+  email TEXT,
+  is_lnf_ally BOOLEAN DEFAULT false
+);
+COMMENT ON TABLE public.legislators IS 'Stores information about legislators.';
+
+
+-- VOTES TABLE
+-- Stores legislator votes on specific bills.
+CREATE TABLE public.votes (
+  bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
+  legislator_id BIGINT NOT NULL REFERENCES public.legislators(id) ON DELETE CASCADE,
+  vote_option TEXT,
+  PRIMARY KEY (bill_id, legislator_id)
+);
+COMMENT ON TABLE public.votes IS 'Stores legislator votes on specific bills.';
+
+
 -- ===============================================================================================
 -- SECTION 2: AUTH HELPER FUNCTION
 -- ===============================================================================================
 
 -- Creates a profile entry when a new user signs up in Supabase Auth.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
 BEGIN
   INSERT INTO public.profiles (id)
   VALUES (new.id);
   RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$ LANGUAGE plpgsql SECURITY DEFINER;
 COMMENT ON FUNCTION public.handle_new_user() IS 'Creates a profile entry for a new anonymous or registered user.';
 
 -- Attaches the function to the auth.users table.
@@ -98,6 +126,8 @@ ALTER TABLE public.bills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.legislators ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY;
 
 -- RLS POLICIES FOR 'bills'
 -- Rule: Anyone can read bill information.
@@ -124,6 +154,16 @@ CREATE POLICY "Users can view their own bookmarks" ON public.bookmarks
 -- Rule: A user can only create or delete their own bookmark.
 CREATE POLICY "Users can manage their own bookmarks" ON public.bookmarks
   FOR ALL USING (auth.uid() = user_id);
+
+-- RLS POLICIES FOR 'legislators'
+-- Rule: Anyone can read legislator information.
+CREATE POLICY "Public can view all legislators" ON public.legislators
+  FOR SELECT USING (true);
+
+-- RLS POLICIES FOR 'votes'
+-- Rule: Anyone can read vote information.
+CREATE POLICY "Public can view all votes" ON public.votes
+  FOR SELECT USING (true);
 
 
 -- ===============================================================================================
