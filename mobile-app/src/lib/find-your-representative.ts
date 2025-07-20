@@ -1,10 +1,9 @@
-import { GOOGLE_CIVIC_API_KEY } from "@env";
 import { supabase } from "./supabase";
 
 export const findYourRep = async (address: string) => {
   try {
     const response = await fetch(
-      `https://www.googleapis.com/civicinfo/v2/representatives?key=${GOOGLE_CIVIC_API_KEY}&address=${address}`
+      `https://www.googleapis.com/civicinfo/v2/representatives?key=${process.env.EXPO_PUBLIC_GOOGLE_CIVIC_API_KEY}&address=${address}`
     );
     const data = await response.json();
 

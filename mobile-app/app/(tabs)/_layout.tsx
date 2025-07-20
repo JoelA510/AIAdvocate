@@ -6,9 +6,6 @@ import { useTheme } from "react-native-paper"; // Import useTheme
 import { HapticTab } from "../../components/HapticTab";
 import { IconSymbol } from "../../components/ui/IconSymbol";
 import TabBarBackground from "../../components/ui/TabBarBackground";
-// We no longer need the old Colors or useColorScheme hook
-// import { Colors } from "../../constants/Colors";
-// import { useColorScheme } from "../../hooks/useColorScheme";
 
 export default function TabLayout() {
   const theme = useTheme(); // Get the theme from PaperProvider
@@ -16,18 +13,13 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        // Set active and inactive colors from the theme
         tabBarActiveTintColor: theme.colors.primary,
         tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
         headerShown: false,
         tabBarButton: HapticTab,
-        // The custom background component is kept for the iOS blur effect
         tabBarBackground: TabBarBackground,
         tabBarStyle: {
-          // **THIS IS THE KEY FIX**: Apply a background color from the theme.
           backgroundColor: theme.colors.surface,
-          // The rest of the styles ensure the blur effect works on iOS
-          // and provide a subtle top border on all platforms.
           ...Platform.select({
             ios: {
               position: "absolute",
@@ -61,7 +53,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="find-your-rep"
+        name="find-your-representative"
         options={{
           title: "Find Your Rep",
           tabBarIcon: ({ color }) => (

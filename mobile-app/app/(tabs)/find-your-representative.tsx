@@ -1,4 +1,4 @@
-import FindYourRepScreen from "../find-your-rep";
+import FindYourRepScreen from "../find-your-representative";
 
 export default function FindYourRep() {
   return <FindYourRepScreen />;

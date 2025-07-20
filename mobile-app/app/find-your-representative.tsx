@@ -3,8 +3,8 @@ import { StyleSheet, View } from "react-native";
 import { TextInput, Button, Text } from "react-native-paper";
 import { Link } from "expo-router";
 
-import { findYourRep } from "../src/lib/find-your-rep";
-import { ThemedView } from "../../components/ThemedView";
+import { findYourRep } from "../src/lib/find-your-representative";
+import { ThemedView } from "../components/ThemedView";
 
 export default function FindYourRepScreen() {
   const [address, setAddress] = useState("");

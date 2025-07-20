@@ -1,8 +1,8 @@
 import { useRouter, useSegments } from "expo-router";
 import { Stack } from "expo-router";
 import React, { useEffect } from "react";
-import { useAuth } from "../src/providers/AuthProvider";
-import { ThemedView } from "../components/ThemedView";
+import { useAuth } from "../providers/AuthProvider";
+import { ThemedView } from "../../components/ThemedView";
 import { useTheme } from "react-native-paper";
 
 export default function RootLayoutNav() {
@@ -14,12 +14,14 @@ export default function RootLayoutNav() {
   useEffect(() => {
     if (loading) return;
 
-    const inAuthGroup = segments[0] === "(auth)";
+    const inTabsGroup = segments[0] === "(tabs)";
 
-    if (session && inAuthGroup) {
-      router.replace("/(tabs)");
-    } else if (!session && !loading) {
+    if (!session) {
+      // Redirect to the login page if the user is not signed in.
       router.replace("/login");
+    } else if (!inTabsGroup) {
+      // Redirect to the main tabs layout if the user is signed in and not in the tabs group.
+      router.replace("/(tabs)");
     }
   }, [session, loading, segments, router]);
 
