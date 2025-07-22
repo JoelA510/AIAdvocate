@@ -1,18 +1,18 @@
 # AI Advocate
 
-AI Advocate is a privacy-first mobile application designed to make complex California legislative bills accessible and understandable for a general audience. With a special focus on the privacy and safety of vulnerable users, the app utilizes anonymous authentication to provide a secure, registration-free experience.
+AI Advocate is a privacy-first mobile application designed to Educate, Empower, and Employ. It makes complex legislative bills accessible and provides tools for users to engage directly with their representatives, with a special focus on survivors of domestic violence, human trafficking, and sexual assault.
 
-> **Project Status:** Version 1.0 is feature-complete, stable, and fully operational.
+> **Project Status:** Phase 1 and the foundational elements of Phase 2 are complete. The app has been restructured into a four-tab advocacy platform.
 
 ## Core Features
 
--   ✅ **Curated Bill Feed:** The home screen provides a focused feed of bills highlighted by Love Never Fails staff, ensuring users see the most relevant legislation first.
--   ✅ **Comprehensive Bill Search:** A dedicated "All Bills" tab allows for full-text search of all imported legislation by title, number, or keyword.
--   ✅ **AI-Powered Summaries:** Reads the full text of bills and uses the Gemini API to generate summaries for Simple, Medium, and Complex reading levels, plus the full original text.
--   ✅ **Legislator Directory:** A complete directory of legislators, allowing users to find their representatives and view contact information.
--   ✅ **User Interactions:** React to bills (👍, 👎, ❤️) and see aggregate counts update in real-time.
+-   ✅ **Curated Bill Feed:** The main "Bills" tab displays a focused feed of legislation curated by the LNF Survivor-led Advocate Panel.
+-   ✅ **Take Action:** The "Advocacy" tab allows users to find their representatives by address and contact them with a pre-filled, customizable email template.
+-   ✅ **AI-Powered Summaries:** Reads the full text of bills and uses the Gemini API to generate summaries for different reading levels.
+-   ✅ **LNF Information:** A dedicated "LNF" tab provides information about Love Never Fails and the Survivor-led Advocate Panel.
 -   ✅ **Private Bookmarks:** Save bills for later review in a dedicated "Saved" tab.
 -   ✅ **Secure Anonymous Authentication:** All user actions are tied to a unique, anonymous identity created automatically on first app launch, with no sign-up required.
+-   ✅ **Multilingual Foundation:** The app is built with a localization framework (i18next) to support multiple languages.
 
 ## Technical Architecture
 
@@ -21,20 +21,32 @@ AI Advocate is a privacy-first mobile application designed to make complex Calif
 -   **Backend:** A fully serverless backend powered by Supabase:
     -   **Database:** Supabase Postgres for all data storage.
     -   **Authentication:** Supabase Auth for anonymous user sessions.
-    -   **Serverless Functions:** Deno Edge Functions manage a robust, two-stage data pipeline for automated daily data ingestion and AI enrichment.
+    -   **Serverless Functions:** Deno Edge Functions manage a robust data pipeline for automated data ingestion, AI enrichment, and legislator syncing.
 -   **AI:** Google's Gemini API for all summarization tasks.
 
 ---
 
-## Potential Future Enhancements
+## Official Roadmap
 
-With a stable foundation in place, AI Advocate is well-positioned for future growth. Potential next steps could include:
+### Phase 1: The Core Advocacy Experience (Complete)
+-   [x] Add `is_curated` boolean to the `bills` table.
+-   [x] Re-architect the UI to a four-tab layout: Bills, Saved, LNF, and Advocacy.
+-   [x] "Bills" tab fetches and displays only curated bills.
+-   [x] "LNF" tab displays static information.
+-   [x] "Advocacy" tab contains the "Find Your Rep" feature.
 
--   **"Take Action" Feature:** An enhancement for the legislator directory that would allow users to email their representatives with pre-filled templates, turning insight into advocacy.
--   **Context-Aware Push Notifications:** A system to notify users about critical events, such as when a highlighted bill has an upcoming vote or when their representative votes on an LNF-relevant bill.
--   **Voting Records:** Augmenting legislator profiles with their complete voting history on all LNF-relevant bills.
--   **Deep Linking:** Allowing the sharing of URLs that open directly to specific bills or legislator profiles within the app to increase engagement.
--   **Full Accessibility Audit:** A comprehensive review of the entire application to ensure it is fully accessible to users with disabilities, further aligning with the project's inclusive mission.
+### Phase 2: Advanced Features & Webpage Goals (In Progress)
+-   [x] **Legislator & Voting Data:**
+    -   [x] Create `legislators` and `votes` tables.
+    -   [x] Add `is_lnf_ally` boolean to the `legislators` table.
+    -   [x] Build the Edge Function to sync legislator and voting data.
+-   [x] **"Take Action" Email Templates:**
+    -   [x] Implement the feature to open a user's email client with a pre-filled template.
+-   [ ] **Multilingual Support:**
+    -   [x] Integrate a localization library.
+    -   [ ] Use the Gemini API for high-quality text translations.
+-   [ ] **Survivor Panel Integration:**
+    -   [ ] Design and build a system to store and display the panel's feedback on bills.
 
 ---
 
