@@ -32,7 +32,7 @@ CREATE TABLE public.bills (
   summary_complex TEXT,
   panel_review JSONB,
   is_verified BOOLEAN DEFAULT false,
-  is_lnf_highlighted BOOLEAN DEFAULT false,
+  is_curated BOOLEAN DEFAULT false NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 COMMENT ON TABLE public.bills IS 'Stores core legislative bill information and AI-generated summaries.';

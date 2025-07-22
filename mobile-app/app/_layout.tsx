@@ -1,3 +1,4 @@
+import "../src/lib/i18n";
 import { useFonts } from "expo-font";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";

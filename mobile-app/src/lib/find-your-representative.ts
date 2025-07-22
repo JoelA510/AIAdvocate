@@ -3,12 +3,17 @@ import { supabase } from "./supabase";
 export const findYourRep = async (address: string) => {
   try {
     const response = await fetch(
-      `https://www.googleapis.com/civicinfo/v2/representatives?key=${process.env.EXPO_PUBLIC_GOOGLE_CIVIC_API_KEY}&address=${address}`
+      `https://v3.openstates.org/people.geo?lat=42.3601&lng=-71.0589&apikey=${process.env.EXPO_PUBLIC_PLURAL_POLICY_API_KEY}`
     );
     const data = await response.json();
 
+    if (!response.ok) {
+      console.error("Plural Policy API Error:", data.error);
+      return null;
+    }
+
     const officials = await Promise.all(
-      data.officials.map(async (official: any) => {
+      data.results.map(async (official: any) => {
         const { data: legislator, error } = await supabase
           .from("legislators")
           .select("id")
@@ -20,6 +25,7 @@ export const findYourRep = async (address: string) => {
         return {
           ...official,
           id: legislator?.id,
+          email: official.email, // Make sure email is included
         };
       })
     );
