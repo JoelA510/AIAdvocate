@@ -1,4 +1,4 @@
-// mobile-app/app/bill/[id].tsx
+// mobile-app/app/(tabs)/bill/[id].tsx
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
@@ -9,9 +9,9 @@ import { ThemedView } from '../../../components/ThemedView';
 import { IconSymbol } from '../../../components/ui/IconSymbol';
 import EmptyState from '../../../src/components/EmptyState';
 import { supabase } from '../../../src/lib/supabase';
-import ExpandableCard from '../../../src/components/ExpandableCard'; // Import our new component
+import ExpandableCard from '../../../src/components/ExpandableCard';
 
-import type { Bill } from '../../../src/components/Bill'; // We still need the Bill type
+import type { Bill } from '../../../src/components/Bill';
 
 export default function BillDetailsScreen() {
   const { id } = useLocalSearchParams();
@@ -27,7 +27,6 @@ export default function BillDetailsScreen() {
     if (!id) return;
     const fetchBill = async () => {
       try {
-        // Fetch all columns, including our new summaries and original_text
         const { data, error } = await supabase.from("bills").select("*").eq("id", id).single();
         if (error) throw error;
         setBill(data);
@@ -41,12 +40,14 @@ export default function BillDetailsScreen() {
   }, [id]);
 
   const handleShare = async () => {
+    if (!bill) return;
     try {
       await Share.share({
-        message: `Check out this bill: https://aiadvocate.com/bill/${id}`,
+        message: `Check out this bill: ${bill.bill_number} - ${bill.title}. You can learn more about it in the AI Advocate app.`,
+        url: bill.state_link || undefined, // Share the official link if it exists
       });
     } catch (error) {
-      console.error(error);
+      console.error('Error sharing:', error);
     }
   };
 
@@ -85,10 +86,25 @@ export default function BillDetailsScreen() {
         <Text variant="headlineMedium" style={styles.title}>{bill.bill_number}</Text>
         <Text variant="titleLarge" style={styles.subtitle}>{bill.title}</Text>
         <Button onPress={handleShare}>Share</Button>
+
+        {/* --- Survivor Panel Review Card --- */}
+        {/* **THE FIX:** Accessing the JSON object correctly */}
+        {bill.panel_review && bill.panel_review.recommendation && (
+          <Card style={[styles.reviewCard, { borderColor: theme.colors.primary }]} mode="outlined">
+            <Card.Title title="Survivor Panel Review" titleVariant="titleMedium" />
+            <Card.Content>
+              <Text variant="labelLarge" style={styles.reviewRecommendation}>
+                Recommendation: {bill.panel_review.recommendation}
+              </Text>
+              <Text variant="bodyMedium" style={styles.reviewComment}>
+                {bill.panel_review.comment}
+              </Text>
+            </Card.Content>
+          </Card>
+        )}
         
         <Divider style={styles.divider} />
 
-        {/* Use our new component for each text block */}
         <ExpandableCard title="Simple Summary" content={bill.summary_simple} />
         <ExpandableCard title="Medium Summary" content={bill.summary_medium} />
         <ExpandableCard title="Complex Summary" content={bill.summary_complex} />
@@ -99,6 +115,7 @@ export default function BillDetailsScreen() {
   );
 }
 
+// **THE FIX:** Pass the theme object to the StyleSheet function so it's available.
 const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   centeredContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
@@ -110,6 +127,7 @@ const styles = StyleSheet.create({
   divider: { marginVertical: 16 },
   reviewCard: {
     marginVertical: 8,
+    borderWidth: 1,
   },
   reviewRecommendation: {
     fontWeight: "bold",
