@@ -7,6 +7,7 @@ import { HapticTab } from "../../components/HapticTab";
 import TabBarBackground from "../../components/ui/TabBarBackground";
 import { IconSymbol } from "../../components/ui/IconSymbol";
 import LnfIcon from "../../components/ui/LnfIcon";
+import HeaderBanner from "../../components/ui/HeaderBanner";
 
 export default function TabLayout() {
   const { t } = useTranslation();
@@ -15,7 +16,7 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerShown: false,
+        header: () => <HeaderBanner />,
         tabBarButton: HapticTab,
         tabBarBackground: TabBarBackground,
         tabBarStyle: {
