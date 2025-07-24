@@ -44,11 +44,17 @@ export default function BillDetailsScreen() {
     try {
       await Share.share({
         message: `Check out this bill: ${bill.bill_number} - ${bill.title}. You can learn more about it in the AI Advocate app.`,
-        url: bill.state_link || undefined, // Share the official link if it exists
+        url: bill.state_link || undefined,
       });
     } catch (error) {
       console.error('Error sharing:', error);
     }
+  };
+
+  // **THE FIX:** This function is now simple and unambiguous.
+  // It always goes back to the main Bills screen.
+  const handleGoBack = () => {
+    router.push('/');
   };
 
   if (loading) {
@@ -62,7 +68,7 @@ export default function BillDetailsScreen() {
   if (error || !bill) {
     return (
       <View style={[styles.centeredContainer, { backgroundColor: theme.colors.background }]}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable style={styles.backButton} onPress={handleGoBack}>
           <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
           <Text>Back</Text>
         </Pressable>
@@ -78,7 +84,7 @@ export default function BillDetailsScreen() {
   return (
     <ScrollView style={[styles.scrollView, { backgroundColor: theme.colors.background }]}>
       <View style={styles.container}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable style={styles.backButton} onPress={handleGoBack}>
           <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
           <Text style={{ fontSize: 16 }}>Back</Text>
         </Pressable>
@@ -87,8 +93,6 @@ export default function BillDetailsScreen() {
         <Text variant="titleLarge" style={styles.subtitle}>{bill.title}</Text>
         <Button onPress={handleShare}>Share</Button>
 
-        {/* --- Survivor Panel Review Card --- */}
-        {/* **THE FIX:** Accessing the JSON object correctly */}
         {bill.panel_review && bill.panel_review.recommendation && (
           <Card style={[styles.reviewCard, { borderColor: theme.colors.primary }]} mode="outlined">
             <Card.Title title="Survivor Panel Review" titleVariant="titleMedium" />
@@ -115,7 +119,6 @@ export default function BillDetailsScreen() {
   );
 }
 
-// **THE FIX:** Pass the theme object to the StyleSheet function so it's available.
 const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   centeredContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
