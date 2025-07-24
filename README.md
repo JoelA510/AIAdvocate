@@ -6,6 +6,7 @@ AI Advocate is a privacy-first mobile application designed to Educate, Empower, 
 
 ## Core Features
 
+-   ✅ **Theme-Adaptive UI:** The application automatically adjusts its color scheme (light/dark) based on the user's device settings, including a theme-adaptive header banner.
 -   ✅ **Curated Bill Feed:** The main "Bills" tab displays a focused feed of legislation curated by the LNF Survivor-led Advocate Panel.
 -   ✅ **Take Action:** The "Advocacy" tab allows users to find their representatives by address and contact them with a pre-filled, customizable email template.
 -   ✅ **AI-Powered Summaries:** Reads the full text of bills and uses the Gemini API to generate summaries for different reading levels.
@@ -53,6 +54,8 @@ AI Advocate is a privacy-first mobile application designed to Educate, Empower, 
 ## Developer Notes & Best Practices
 
 This project has several key dependencies and configurations. The following are best practices and important lessons learned during the initial development phase.
+
+*   **Theme-Adaptive Components:** To create components that adapt to the device theme, use the `useTheme` hook from `react-native-paper` to access the current theme's colors and the `useColorScheme` hook from `react-native` to detect the current color scheme (light or dark). The `HeaderBanner.tsx` component is a good example of this.
 
 *   **Package Management:** The project is configured to use **Yarn** as its package manager. Due to potential caching and dependency resolution issues, `npm` should be avoided. The command `npx expo install --fix` is the correct tool for validating and fixing dependency versions.
 
