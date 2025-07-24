@@ -1,8 +1,8 @@
 // mobile-app/src/components/ExpandableCard.tsx
 
 import React, { useState } from 'react';
-import { View, Pressable, StyleSheet } from 'react-native';
-import { Card, Text, useTheme } from 'react-native-paper';
+import { Pressable, StyleSheet, Platform } from 'react-native'; // Import Platform
+import { Card, Text } from 'react-native-paper';
 import * as Haptics from 'expo-haptics';
 
 type ExpandableCardProps = {
@@ -13,14 +13,16 @@ type ExpandableCardProps = {
 
 const ExpandableCard = ({ title, content, defaultExpanded = false }: ExpandableCardProps) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-  const theme = useTheme();
 
   if (!content) {
-    return null; // Don't render the card if there's no content
+    return null;
   }
 
   const handlePress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // **THE FIX:** Only run haptics on native platforms (iOS/Android).
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     setIsExpanded(!isExpanded);
   };
 
