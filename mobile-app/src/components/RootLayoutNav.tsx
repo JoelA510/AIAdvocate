@@ -15,12 +15,11 @@ export default function RootLayoutNav() {
     if (loading) return;
 
     const inTabsGroup = segments[0] === "(tabs)";
-    const inBillRoute = segments[0] === "bill";
 
     if (!session) {
       // Redirect to the login page if the user is not signed in.
       router.replace("/login");
-    } else if (!inTabsGroup && !inBillRoute) {
+    } else if (!inTabsGroup) {
       // Redirect to the main tabs layout if the user is signed in and not in the tabs group.
       router.replace("/(tabs)");
     }
@@ -33,8 +32,10 @@ export default function RootLayoutNav() {
   return (
     <Stack>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="login" options={{ headerShown: false, presentation: "modal" }} />
-      <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="login"
+        options={{ headerShown: false, presentation: "modal" }}
+      />
       <Stack.Screen name="+not-found" />
     </Stack>
   );

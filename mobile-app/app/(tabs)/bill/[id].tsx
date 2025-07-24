@@ -5,13 +5,13 @@ import { useState, useEffect } from 'react';
 import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator, Share } from 'react-native';
 import { Text, useTheme, Divider, Button, Card } from 'react-native-paper';
 
-import { ThemedView } from '../../components/ThemedView';
-import { IconSymbol } from '../../components/ui/IconSymbol';
-import EmptyState from '../../src/components/EmptyState';
-import { supabase } from '../../src/lib/supabase';
-import ExpandableCard from '../../src/components/ExpandableCard'; // Import our new component
+import { ThemedView } from '../../../components/ThemedView';
+import { IconSymbol } from '../../../components/ui/IconSymbol';
+import EmptyState from '../../../src/components/EmptyState';
+import { supabase } from '../../../src/lib/supabase';
+import ExpandableCard from '../../../src/components/ExpandableCard'; // Import our new component
 
-import type { Bill } from '../../src/components/Bill'; // We still need the Bill type
+import type { Bill } from '../../../src/components/Bill'; // We still need the Bill type
 
 export default function BillDetailsScreen() {
   const { id } = useLocalSearchParams();
