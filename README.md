@@ -7,7 +7,9 @@ AI Advocate is a privacy-first mobile application designed to Educate, Empower, 
 ## Core Features
 
 -   ✅ **Theme-Adaptive UI:** The application automatically adjusts its color scheme (light/dark) based on the user's device settings, including a theme-adaptive header banner.
--   ✅ **Curated Bill Feed:** The main "Bills" tab displays a focused feed of legislation curated by the LNF Survivor-led Advocate Panel.
+-   ✅ **Comprehensive Bill Feed:** The main "Bills" tab displays a complete, searchable list of all legislation relevant to the app's mission.
+-   ✅ **Intelligent Bill Search:** A powerful search bar that understands both keywords (like "human trafficking") and specific bill numbers (like "SB376") for precise filtering.
+-   ✅ **Survivor Panel Reviews:** Displays direct feedback and recommendations from the LNF Survivor-led Advocate Panel on bill detail pages.
 -   ✅ **Take Action:** The "Advocacy" tab allows users to find their representatives by address and contact them with a pre-filled, customizable email template.
 -   ✅ **AI-Powered Summaries:** Reads the full text of bills and uses the Gemini API to generate summaries for different reading levels.
 -   ✅ **LNF Information:** A dedicated "LNF" tab provides information about Love Never Fails and the Survivor-led Advocate Panel.
@@ -30,9 +32,9 @@ AI Advocate is a privacy-first mobile application designed to Educate, Empower, 
 ## Official Roadmap
 
 ### Phase 1: The Core Advocacy Experience (Complete)
--   [x] Add `is_curated` boolean to the `bills` table.
+-   [x] Add `is_curated` boolean to the `bills` table for staff-led highlighting.
 -   [x] Re-architect the UI to a four-tab layout: Bills, Saved, LNF, and Advocacy.
--   [x] "Bills" tab fetches and displays only curated bills.
+-   [x] "Bills" tab fetches and displays all relevant bills in the database.
 -   [x] "LNF" tab displays static information.
 -   [x] "Advocacy" tab contains the "Find Your Rep" feature.
 
@@ -43,11 +45,12 @@ AI Advocate is a privacy-first mobile application designed to Educate, Empower, 
     -   [x] Build the Edge Function to sync legislator and voting data.
 -   [x] **"Take Action" Email Templates:**
     -   [x] Implement the feature to open a user's email client with a pre-filled template.
+-   [x] **Survivor Panel Integration:**
+    -   [x] Display the panel's feedback and recommendations prominently on bill detail pages.
 -   [ ] **Multilingual Support:**
     -   [x] Integrate a localization library.
     -   [ ] Use the Gemini API for high-quality text translations.
--   [ ] **Survivor Panel Integration:**
-    -   [ ] Design and build a system to store and display the panel's feedback on bills.
+
 
 ---
 
