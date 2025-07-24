@@ -30,7 +30,6 @@ CREATE TABLE public.bills (
   summary_simple TEXT,
   summary_medium TEXT,
   summary_complex TEXT,
-  panel_review JSONB,
   is_verified BOOLEAN DEFAULT false,
   is_curated BOOLEAN DEFAULT false NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()

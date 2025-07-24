@@ -120,7 +120,6 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 16,
-    paddingTop: 60,
     borderBottomWidth: 1,
     borderBottomColor: "#ddd",
   },

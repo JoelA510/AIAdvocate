@@ -3,7 +3,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
 import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator, Share } from 'react-native';
-import { Text, useTheme, Divider, Button } from 'react-native-paper';
+import { Text, useTheme, Divider, Button, Card } from 'react-native-paper';
 
 import { ThemedView } from '../../components/ThemedView';
 import { IconSymbol } from '../../components/ui/IconSymbol';
@@ -102,10 +102,20 @@ export default function BillDetailsScreen() {
 const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   centeredContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  container: { flex: 1, padding: 16, paddingTop: 60, paddingBottom: 40 },
+  container: { flex: 1, padding: 16, paddingBottom: 40 },
   backButton: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, alignSelf: 'flex-start' },
   backIcon: { transform: [{ rotate: '180deg' }] },
   title: { fontWeight: 'bold' },
   subtitle: { marginBottom: 16 },
   divider: { marginVertical: 16 },
+  reviewCard: {
+    marginVertical: 8,
+  },
+  reviewRecommendation: {
+    fontWeight: "bold",
+    marginBottom: 8,
+  },
+  reviewComment: {
+    lineHeight: 22,
+  },
 });

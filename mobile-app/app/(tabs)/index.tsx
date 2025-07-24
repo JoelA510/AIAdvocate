@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
+import { Searchbar } from "react-native-paper";
+
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
@@ -7,24 +9,25 @@ import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
 import { supabase } from "../../src/lib/supabase";
 
-export default function HomeScreen() {
+export default function AllBillsScreen() {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   useEffect(() => {
+    setLoading(true);
     const fetchBills = async () => {
-      setLoading(true);
       try {
         let query = supabase
           .from("bills")
           .select("*")
-          .eq('is_curated', true)
           .order("id", { ascending: false });
 
         if (searchQuery.trim()) {
-          query = query.textSearch("title,bill_number", searchQuery, { type: "websearch" });
+          query = query.textSearch("title,bill_number", searchQuery, {
+            type: "websearch",
+          });
         }
 
         const { data, error } = await query;
@@ -36,7 +39,12 @@ export default function HomeScreen() {
         setLoading(false);
       }
     };
-    fetchBills();
+
+    const searchTimeout = setTimeout(() => {
+      fetchBills();
+    }, 300);
+
+    return () => clearTimeout(searchTimeout);
   }, [searchQuery]);
 
   const renderContent = () => {
@@ -50,7 +58,6 @@ export default function HomeScreen() {
         />
       );
     }
-
     if (error) {
       return (
         <EmptyState
@@ -60,32 +67,43 @@ export default function HomeScreen() {
         />
       );
     }
-
     if (bills.length === 0) {
       return (
         <EmptyState
           icon="file-search-outline"
           title="No Bills Found"
-          message="There are no curated bills at the moment. Check back later!"
+          message={
+            searchQuery
+              ? `We couldn't find any bills matching "${searchQuery}". Try another search.`
+              : "There are no bills to display at the moment."
+          }
         />
       );
     }
-
     return (
       <FlatList
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
+        contentContainerStyle={{ paddingBottom: 40 }}
       />
     );
   };
 
   return (
     <ThemedView style={styles.container}>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Bills</ThemedText>
-      </ThemedView>
-      {renderContent()}
+      <View style={styles.header}>
+        <ThemedText type="title" style={styles.title}>
+          Explore Bills
+        </ThemedText>
+        <Searchbar
+          placeholder="Search by keyword or bill..."
+          onChangeText={setSearchQuery}
+          value={searchQuery}
+          style={styles.searchbar}
+        />
+      </View>
+      <View style={styles.content}>{renderContent()}</View>
     </ThemedView>
   );
 }
@@ -93,9 +111,19 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  header: {
     padding: 16,
   },
-  titleContainer: {
-    paddingBottom: 16,
+  title: {
+    fontWeight: "bold",
+    marginBottom: 16,
+    fontSize: 32,
+    lineHeight: 32,
+  },
+  searchbar: {},
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
   },
 });

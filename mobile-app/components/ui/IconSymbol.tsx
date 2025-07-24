@@ -17,6 +17,8 @@ const MAPPING = {
   "bookmark.fill": "bookmark",
   "paperplane.fill": "send", // Re-adding in case it's used in EmptyState
   "file-search-outline": "find-in-page", // NEW: Mapping for the search empty state
+  "sparkles": "auto-awesome",
+  "person.2.fill": "group",
 } as IconMapping;
 
 export function IconSymbol({

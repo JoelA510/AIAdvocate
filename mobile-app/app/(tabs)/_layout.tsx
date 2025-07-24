@@ -4,27 +4,26 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "react-native-paper";
 import { HapticTab } from "../../components/HapticTab";
+import TabBarBackground from "../../components/ui/TabBarBackground";
 import { IconSymbol } from "../../components/ui/IconSymbol";
+import LnfIcon from "../../components/ui/LnfIcon";
 
 export default function TabLayout() {
-  const theme = useTheme();
   const { t } = useTranslation();
+  const theme = useTheme();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: theme.colors.primary,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarBackground: TabBarBackground,
+        tabBarStyle: {
+          backgroundColor: theme.colors.background,
+        },
+        tabBarActiveTintColor: theme.colors.primary,
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: t("tabs.bills"),
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-        }}
-      />
       <Tabs.Screen
         name="saved"
         options={{
@@ -33,17 +32,31 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="highlighted"
+        options={{
+          title: t("tabs.highlighted"),
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="sparkles" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: t("tabs.bills"),
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="lnf"
         options={{
           title: t("tabs.lnf"),
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="heart.fill" color={color} />,
+          tabBarIcon: () => <LnfIcon />,
         }}
       />
       <Tabs.Screen
         name="advocacy"
         options={{
           title: t("tabs.advocacy"),
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="megaphone.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.2.fill" color={color} />,
         }}
       />
     </Tabs>
