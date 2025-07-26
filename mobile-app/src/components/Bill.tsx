@@ -54,27 +54,97 @@ function BillComponent({ bill }: BillProps) {
     fetchDetails();
   }, [bill.id, userId]);
 
-  // Handler functions remain largely the same, but now update local state optimistically
-  // before re-fetching, which feels much faster to the user.
+  
+
   const handleReaction = async (reactionType: string) => {
-    // ... (handleReaction logic remains the same)
+    const currentReaction = billDetails.user_reaction;
+    const newReaction = currentReaction === reactionType ? null : reactionType;
+
+    // Optimistically update the UI
+    setBillDetails({
+      ...billDetails,
+      user_reaction: newReaction,
+      reaction_counts: {
+        ...billDetails.reaction_counts,
+        [reactionType]: (billDetails.reaction_counts[reactionType] || 0) + (newReaction ? 1 : -1),
+        ...(currentReaction && { [currentReaction]: (billDetails.reaction_counts[currentReaction] || 1) - 1 }),
+      },
+    });
+
+    try {
+      const { error } = await supabase.rpc('handle_reaction', {
+        p_bill_id: bill.id,
+        p_user_id: userId,
+        p_reaction_type: reactionType,
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      // Revert the UI if the DB operation fails
+      setBillDetails(billDetails);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Could not update your reaction.',
+      });
+    }
   };
 
   const handleBookmark = async () => {
-    // ... (handleBookmark logic remains the same)
+    const currentIsBookmarked = billDetails.is_bookmarked;
+    const newIsBookmarked = !currentIsBookmarked;
+
+    // Optimistically update the UI
+    setBillDetails({ ...billDetails, is_bookmarked: newIsBookmarked });
+
+    try {
+      if (newIsBookmarked) {
+        // Add the bookmark
+        const { error } = await supabase
+          .from('bookmarks')
+          .insert({ user_id: userId, bill_id: bill.id });
+        if (error) throw error;
+        Toast.show({
+          type: 'success',
+          text1: 'Saved!',
+          text2: 'This bill has been added to your list.',
+        });
+      } else {
+        // Remove the bookmark
+        const { error } = await supabase
+          .from('bookmarks')
+          .delete()
+          .match({ user_id: userId, bill_id: bill.id });
+        if (error) throw error;
+        Toast.show({
+          type: 'info',
+          text1: 'Removed',
+          text2: 'This bill has been removed from your list.',
+        });
+      }
+    } catch (error: any) {
+      // Revert the UI if the DB operation fails
+      setBillDetails({ ...billDetails, is_bookmarked: currentIsBookmarked });
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Could not update your bookmark.',
+      });
+    }
   };
 
   return (
-    <Link href={`/bill/${bill.id}`} asChild>
-      <Pressable>
-        <Card style={styles.card} mode="elevated">
+    <Card style={styles.card} mode="elevated">
+      <Link href={`/bill/${bill.id}`} asChild>
+        <Pressable>
           <Card.Title title={bill.bill_number} titleVariant="headlineSmall" />
           <Card.Content>
             <Text variant="titleMedium">{bill.title}</Text>
           </Card.Content>
-          <Card.Actions style={styles.actions}>
-            <View style={styles.reactionContainer}>
-              <Button
+        </Pressable>
+      </Link>
+      <Card.Actions style={styles.actions}>
+        <View style={styles.reactionContainer}>
+          <Button
                 icon="thumb-up"
                 mode={billDetails.user_reaction === "upvote" ? "contained" : "text"}
                 onPress={() => handleReaction("upvote")}
@@ -95,18 +165,16 @@ function BillComponent({ bill }: BillProps) {
               >
                 {billDetails.reaction_counts.love || 0}
               </Button>
-            </View>
-            <Button
-              icon={billDetails.is_bookmarked ? "bookmark" : "bookmark-outline"}
-              onPress={handleBookmark}
-              style={{ marginLeft: 'auto' }}
-            >
-              Save
-            </Button>
-          </Card.Actions>
-        </Card>
-      </Pressable>
-    </Link>
+        </View>
+        <Button
+          icon={billDetails.is_bookmarked ? "bookmark" : "bookmark-outline"}
+          onPress={handleBookmark}
+          style={{ marginLeft: 'auto' }}
+        >
+          Save
+        </Button>
+      </Card.Actions>
+    </Card>
   );
 }
 
