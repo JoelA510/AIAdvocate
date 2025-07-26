@@ -15,16 +15,7 @@ const BROWSER_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 };
 
-const RELEVANT_KEYWORDS = [
-  'trafficking', 'human trafficking', 'human trafficker', 'trafficked',
-  'victim', 'survivor', 'abuse', 'coercion', 'assault', 
-  'domestic violence', 'sexual violence', 'sex work', 
-  'sex worker', 'prostitution', 'solicitation'
-];
-
-const KEYWORD_REGEX = new RegExp(`\\b(${RELEVANT_KEYWORDS.join('|')})\\b`, 'i');
-
-console.log("🚀 Initializing sync-updated-bills v9 (Consolidated & Final)");
+console.log("🚀 Initializing sync-updated-bills v13 (Callable & Defensive)");
 
 serve(async (req) => {
   if (req.method === "GET") {
@@ -54,46 +45,58 @@ serve(async (req) => {
       }
     };
 
-    const masterListUrl = `https://api.legiscan.com/?op=getMasterListRaw&id=${SESSION_ID}&key=${legiscanApiKey}&access_key=${DATASET_ACCESS_KEY}`;
-    const masterListResponse = await fetch(masterListUrl, { headers: BROWSER_HEADERS });
-    if (!masterListResponse.ok) throw new Error("Failed to fetch master list.");
+    // **THE FIX:** Check if the script sent us a specific bill_id to process.
+    const { bill_id: requestedBillId } = (await req.json()) || {};
     
-    const { masterlist } = await masterListResponse.json();
-    if (!masterlist) throw new Error("Master list not found in response.");
-    
-    const legiscanBills = Object.values(masterlist);
-    const { data: ourBills } = await supabaseAdmin.from("bills").select("id, change_hash");
-    const ourBillsMap = new Map(ourBills.map(b => [b.id, b.change_hash]));
+    let billToProcessId;
 
-    let billToProcessId = null;
-    for (const legiscanBill of legiscanBills) {
-      if (KEYWORD_REGEX.test(legiscanBill.title) && ourBillsMap.get(legiscanBill.bill_id) !== legiscanBill.change_hash) {
-        billToProcessId = legiscanBill.bill_id;
-        break; 
+    if (requestedBillId) {
+      // If we were told which bill to process, use that one.
+      billToProcessId = requestedBillId;
+      console.log(`Received request to process specific bill ID: ${billToProcessId}`);
+    } else {
+      // Otherwise, find the next one in the queue automatically (for the cron job).
+      console.log("Searching for the next bill with a placeholder summary...");
+      const { data: billToProcess, error: findBillError } = await supabaseAdmin
+        .from("bills")
+        .select("id")
+        .ilike('summary_simple', 'Placeholder for%')
+        .limit(1)
+        .single();
+      
+      if (findBillError) {
+        if (findBillError.code === 'PGRST116') { // No rows found
+          return new Response(JSON.stringify({ message: "Sync complete. All bills are up-to-date." }), { headers: corsHeaders });
+        }
+        throw findBillError;
       }
+      billToProcessId = billToProcess.id;
     }
-
-    if (!billToProcessId) {
-      return new Response(JSON.stringify({ message: "Sync complete. No new relevant bills to process." }), { headers: corsHeaders });
-    }
-
-    console.log(`Processing relevant bill ID: ${billToProcessId}...`);
-
+    
+    console.log(`Processing bill ID: ${billToProcessId}...`);
+    
     const billDetailsUrl = `https://api.legiscan.com/?op=getBill&id=${billToProcessId}&key=${legiscanApiKey}&access_key=${DATASET_ACCESS_KEY}`;
     const billDetailsRes = await fetch(billDetailsUrl, { headers: BROWSER_HEADERS });
-    const { bill: billData } = await billDetailsRes.json();
-    const docId = billData.texts[billData.texts.length - 1]?.doc_id;
-
-    if (!docId) {
-      await supabaseAdmin.from("bills").upsert({ id: billToProcessId, change_hash: billData.change_hash, title: billData.title, bill_number: billData.bill_number, summary_simple: "No text available." });
-      throw new Error(`Skipping bill ${billToProcessId}: No document text found.`);
+    const billDetailsJson = await billDetailsRes.json();
+    if (!billDetailsJson.bill) throw new Error(`Failed to get bill details for ID: ${billToProcessId}`);
+    const billData = billDetailsJson.bill;
+    
+    const doc = billData.texts && billData.texts.length > 0 ? billData.texts[billData.texts.length - 1] : null;
+    if (!doc || !doc.doc_id) {
+      console.log(`- Bill ${billData.bill_number} has no text. Marking as processed and skipping.`);
+      await supabaseAdmin.from("bills").upsert({ 
+        id: billData.bill_id, bill_number: billData.bill_number, title: billData.title,
+        change_hash: billData.change_hash, summary_simple: "No text available from source.",
+      });
+      return new Response(JSON.stringify({ message: `Skipped bill ${billData.bill_number} (no text).` }), { headers: corsHeaders });
     }
 
-    const billTextUrl = `https://api.legiscan.com/?op=getBillText&id=${docId}&key=${legiscanApiKey}&access_key=${DATASET_ACCESS_KEY}`;
+    const billTextUrl = `https://api.legiscan.com/?op=getBillText&id=${doc.doc_id}&key=${legiscanApiKey}&access_key=${DATASET_ACCESS_KEY}`;
     const billTextRes = await fetch(billTextUrl, { headers: BROWSER_HEADERS });
     const { text: textData } = await billTextRes.json();
     const originalText = atob(textData.doc);
 
+    console.log(`- Generating summaries for ${billData.bill_number}...`);
     const [summarySimple, summaryMedium, summaryComplex] = await Promise.all([
         getSummary("Explain and summarize this legislative bill to a 12 year old. Be as verbose as needed not to miss a detail.", originalText),
         getSummary("Explain and summarize this legislative bill to a 16 year old. Be as verbose as needed not to miss a detail.", originalText),
@@ -108,15 +111,14 @@ serve(async (req) => {
         summary_medium: summaryMedium, summary_complex: summaryComplex,
     };
 
-    const { error: upsertError } = await supabaseAdmin.from("bills").upsert(billToUpsert, { onConflict: "id" });
-    if (upsertError) throw upsertError;
-
+    await supabaseAdmin.from("bills").upsert(billToUpsert, { onConflict: "id" });
+    
     const successMessage = `✅ Successfully processed bill ${billData.bill_number}.`;
     return new Response(JSON.stringify({ message: successMessage }), { headers: corsHeaders });
 
   } catch (error) {
     console.error("Function failed:", error);
-    return new Response(JSON.stringify({ error: error.message, stack: error.stack }), {
+    return new Response(JSON.stringify({ error: error.message }), {
       status: 500, headers: corsHeaders
     });
   }
