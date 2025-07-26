@@ -1,47 +1,74 @@
-import { ScrollView, StyleSheet } from "react-native";
-import { ThemedText } from "../../components/ThemedText";
-import { ThemedView } from "../../components/ThemedView";
+// mobile-app/app/(tabs)/lnf.tsx
 
-export default function LNFScreen() {
+import React from 'react';
+import { StyleSheet, Platform } from 'react-native'; // Import Platform
+import { WebView } from 'react-native-webview';
+import { ThemedView } from '../../components/ThemedView';
+import { Text, Button } from 'react-native-paper';
+import * as Linking from 'expo-linking';
+
+const LNF_URL = 'https://www.loveneverfailsus.com/ai-advocate';
+
+export default function LnfScreen() {
+  // **THE FIX:** Check if the current platform is 'web'.
+  if (Platform.OS === 'web') {
+    // On the web, render a simple link instead of the WebView.
+    return (
+      <ThemedView style={styles.containerWeb}>
+        <Text variant="headlineSmall" style={styles.titleWeb}>
+          Visit Love Never Fails
+        </Text>
+        <Text variant="bodyLarge" style={styles.textWeb}>
+          Our web view is best experienced on our full site.
+        </Text>
+        <Button
+          mode="contained"
+          onPress={() => Linking.openURL(LNF_URL)}
+          style={styles.buttonWeb}
+        >
+          Open loveneverfailsus.com
+        </Button>
+      </ThemedView>
+    );
+  }
+
+  // On native (Android/iOS), render the WebView as intended.
   return (
-    <ThemedView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <ThemedText type="title">About Love Never Fails</ThemedText>
-        <ThemedText style={styles.paragraph}>
-          Love Never Fails is dedicated to the restoration, education, and protection of those involved in or at risk of domestic human trafficking. We are committed to fighting for a world where everyone is safe, valued, and loved.
-        </ThemedText>
-
-        <ThemedText type="subtitle" style={styles.subtitle}>
-          Our Mission
-        </ThemedText>
-        <ThemedText style={styles.paragraph}>
-          To empower individuals and communities to stand against human trafficking through awareness, action, and aftercare.
-        </ThemedText>
-
-        <ThemedText type="subtitle" style={styles.subtitle}>
-          The Survivor-led Advocate Panel
-        </ThemedText>
-        <ThemedText style={styles.paragraph}>
-          The AI Advocate platform is guided by a panel of survivors of domestic violence, human trafficking, and sexual assault. Their lived experience and expertise are the driving force behind our legislative priorities and advocacy efforts. They review, analyze, and select the bills highlighted in this app to ensure our focus remains on the most critical issues impacting survivors.
-        </ThemedText>
-      </ScrollView>
+    <ThemedView style={styles.containerNative}>
+      <WebView
+        source={{ uri: LNF_URL }}
+        style={styles.webview}
+        allowsInlineMediaPlayback
+        javaScriptEnabled
+        domStorageEnabled
+      />
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  // Styles for the native WebView
+  containerNative: {
     flex: 1,
   },
-  scrollContent: {
+  webview: {
+    flex: 1,
+  },
+  // Styles for the web fallback view
+  containerWeb: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: 24,
+    gap: 16,
   },
-  subtitle: {
-    marginTop: 24,
-    marginBottom: 8,
+  titleWeb: {
+    fontWeight: 'bold',
   },
-  paragraph: {
-    fontSize: 16,
-    lineHeight: 24,
+  textWeb: {
+    textAlign: 'center',
+  },
+  buttonWeb: {
+    marginTop: 16,
   },
 });

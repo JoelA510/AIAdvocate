@@ -1,3 +1,4 @@
+import "intl-pluralrules"; // <-- KEEP THIS LINE AT THE TOP
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
