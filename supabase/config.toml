@@ -2,20 +2,17 @@
 # It's used by the Supabase CLI to manage your local development environment
 # and to deploy your project to the Supabase platform.
 
-[functions.ingest-and-summarize]
-# This function requires a service_role key, so we want to verify the user's JWT.
-verify_jwt = true
-import_map = "./functions/ingest-and-summarize/deno.json"
+[functions.sync-updated-bills]
+# This is our main data pipeline, run daily by a cron job.
+verify_jwt = false
+import_map = "./functions/sync-updated-bills/deno.json"
 
 [functions.verify-app-check]
-# This function must be called before a user is logged in, so we must disable JWT verification.
+# This function is called by the app for security and must not require a JWT.
 verify_jwt = false
 import_map = "./functions/verify-app-check/deno.json"
 
-[functions.bulk-import-dataset]
-verify_jwt = false
-import_map = "./functions/bulk-import-dataset/deno.json"
-
-[functions.sync-updated-bills]
-verify_jwt = false
-import_map = "./functions/sync-updated-bills/deno.json"
+[functions.send-push-notifications]
+# This function will be called with a service_role key and requires a valid JWT.
+verify_jwt = true
+import_map = "./functions/send-push-notifications/deno.json"
