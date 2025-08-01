@@ -16,3 +16,7 @@ import_map = "./functions/verify-app-check/deno.json"
 # This function will be called with a service_role key and requires a valid JWT.
 verify_jwt = true
 import_map = "./functions/send-push-notifications/deno.json"
+
+[functions.sync-legislators-and-votes]
+verify_jwt = false
+import_map = "./functions/sync-legislators-and-votes/deno.json"

@@ -1,6 +1,7 @@
 {
   "imports": {
     "npm:@supabase/supabase-js@2": "npm:@supabase/supabase-js@2",
-    "npm:@google/generative-ai": "npm:@google/generative-ai"
+    "npm:@google/generative-ai": "npm:@google/generative-ai",
+    "https://deno.land/x/deno_dom/deno-dom-wasm.ts": "https://deno.land/x/deno_dom/deno-dom-wasm.ts"
   }
 }

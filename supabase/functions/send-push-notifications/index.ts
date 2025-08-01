@@ -1,5 +1,8 @@
+// supabase/functions/send-push-notifications/index.ts
+
 import { serve } from "std/http/server.ts";
-import { createClient } from "@supabase/supabase-js";
+// **THE FIX:** The import now uses the 'npm:' specifier to match the deno.json
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 serve(async (req) => {
   try {

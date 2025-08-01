@@ -1,5 +1,7 @@
+// supabase/functions/sync-legislators-and-votes/index.ts
+
 import { serve } from "std/http/server.ts";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const LEGISCAN_API_KEY = Deno.env.get("LEGISCAN_API_KEY")!;
 
