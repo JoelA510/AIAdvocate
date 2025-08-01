@@ -25,7 +25,55 @@ const RELEVANT_KEYWORDS = [
 ];
 const KEYWORD_REGEX = new RegExp(`\\b(${RELEVANT_KEYWORDS.join('|')})\\b`, 'i');
 
-console.log("🚀 Initializing bulk-import-dataset v32 (Final Logic)");
+console.log("🚀 Initializing bulk-import-dataset v33 (Robust Text Cleaning)");
+
+// --- NEW: Robust Text Cleaning Function ---
+/**
+ * Cleans raw text by removing HTML, decoding entities, fixing encoding artifacts, and normalizing whitespace.
+ * @param rawText The input string, which could be plain text or HTML.
+ * @returns A clean, plain text string.
+ */
+function cleanText(rawText: string): string {
+  if (!rawText) {
+    return '';
+  }
+
+  let cleanedText = rawText;
+
+  // 1. Handle potential HTML content by parsing it
+  if (cleanedText.trim().startsWith('<')) {
+    try {
+      const dom = new DOMParser().parseFromString(cleanedText, "text/html");
+      cleanedText = dom?.body.textContent ?? '';
+    } catch (e) {
+      console.error("DOMParser failed, falling back to raw text.", e);
+      // Fallback to the original text if parsing fails
+    }
+  }
+
+  // 2. Decode common HTML entities that might remain after parsing
+  cleanedText = cleanedText
+    .replace(/ /g, ' ')
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
+    .replace(/'/g, "'");
+
+  // 3. Correct common character encoding artifacts.
+  // The Â character often precedes other characters when ISO-8859-1 is misread as UTF-8.
+  // Also remove the Unicode replacement character � which results from decoding errors.
+  cleanedText = cleanedText
+    .replace(/Â/g, '') // Remove the Â character completely
+    .replace(/\uFFFD/g, ''); // Removes the '�' replacement character
+
+  // 4. Normalize whitespace
+  // Replace multiple whitespace characters (spaces, tabs, newlines) with a single space
+  cleanedText = cleanedText.replace(/\s\s+/g, ' ').trim();
+
+  return cleanedText;
+}
+
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -45,7 +93,6 @@ serve(async (req) => {
       throw new Error("Failed to get a valid dataset list from LegiScan.");
     }
 
-    // **THE FIX:** The simplest possible logic. Find the one object where prior is 0.
     const activeDataset = datasetListJson.datasetlist.find(d => d.prior === 0);
 
     if (!activeDataset) {
@@ -82,15 +129,12 @@ serve(async (req) => {
             if (latestTextDoc?.doc) {
                 const binaryString = atob(latestTextDoc.doc);
                 const bytes = Uint8Array.from(binaryString, c => c.charCodeAt(0));
-                const decoder = new TextDecoder('utf-8');
-                const rawHtml = decoder.decode(bytes);
+                // MODIFIED: Use fatal: false to prevent crashing on invalid chars
+                const decoder = new TextDecoder('utf-8', { fatal: false });
+                const rawText = decoder.decode(bytes);
                 
-                if (rawHtml.trim().startsWith('<')) {
-                    const dom = new DOMParser().parseFromString(rawHtml, "text/html");
-                    originalText = dom?.body.textContent?.trim() ?? '';
-                } else {
-                    originalText = rawHtml;
-                }
+                // MODIFIED: Use the new robust cleaning function
+                originalText = cleanText(rawText);
             }
             
             billsToUpsert.push({
@@ -129,7 +173,7 @@ serve(async (req) => {
       headers: { "Content-Type": "application/json" }, status: 200,
     });
   } catch (error) {
-    console.error("Function failed:", error.message);
+    console.error("Function failed:", error.message, error.stack);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { "Content-Type": "application/json" }, status: 500,
     });
