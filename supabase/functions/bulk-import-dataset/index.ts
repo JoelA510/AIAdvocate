@@ -3,7 +3,6 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
-import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
 // --- Configuration ---
 const corsHeaders = {
@@ -19,146 +18,74 @@ const BROWSER_HEADERS = {
 };
 const RELEVANT_KEYWORDS = [
   'trafficking', 'human trafficking', 'human trafficker', 'trafficked',
-  'victim', 'survivor', 'abuse', 'coercion', 'assault', 
-  'domestic violence', 'sexual violence', 'sex work', 
+  'victim', 'survivor', 'abuse', 'coercion', 'assault',
+  'domestic violence', 'sexual violence', 'sex work',
   'sex worker', 'prostitution', 'solicitation'
 ];
 const KEYWORD_REGEX = new RegExp(`\\b(${RELEVANT_KEYWORDS.join('|')})\\b`, 'i');
 
-console.log("🚀 Initializing bulk-import-dataset v33 (Robust Text Cleaning)");
-
-// --- NEW: Robust Text Cleaning Function ---
-/**
- * Cleans raw text by removing HTML, decoding entities, fixing encoding artifacts, and normalizing whitespace.
- * @param rawText The input string, which could be plain text or HTML.
- * @returns A clean, plain text string.
- */
-function cleanText(rawText: string): string {
-  if (!rawText) {
-    return '';
-  }
-
-  let cleanedText = rawText;
-
-  // 1. Handle potential HTML content by parsing it
-  if (cleanedText.trim().startsWith('<')) {
-    try {
-      const dom = new DOMParser().parseFromString(cleanedText, "text/html");
-      cleanedText = dom?.body.textContent ?? '';
-    } catch (e) {
-      console.error("DOMParser failed, falling back to raw text.", e);
-      // Fallback to the original text if parsing fails
-    }
-  }
-
-  // 2. Decode common HTML entities that might remain after parsing
-  cleanedText = cleanedText
-    .replace(/ /g, ' ')
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
-    .replace(/'/g, "'");
-
-  // 3. Correct common character encoding artifacts.
-  // The Â character often precedes other characters when ISO-8859-1 is misread as UTF-8.
-  // Also remove the Unicode replacement character � which results from decoding errors.
-  cleanedText = cleanedText
-    .replace(/Â/g, '') // Remove the Â character completely
-    .replace(/\uFFFD/g, ''); // Removes the '�' replacement character
-
-  // 4. Normalize whitespace
-  // Replace multiple whitespace characters (spaces, tabs, newlines) with a single space
-  cleanedText = cleanedText.replace(/\s\s+/g, ' ').trim();
-
-  return cleanedText;
-}
-
+console.log("🚀 Initializing bulk-import-dataset v37 (Correct Seeding Logic)");
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const legiscanApiKey = Deno.env.get("LEGISCAN_API_KEY");
     if (!legiscanApiKey) throw new Error("LEGISCAN_API_KEY is not set.");
     
-    // --- STEP 1: Get the active session dataset ---
-    console.log("Fetching dataset list to find the active session...");
+    // Step 1: Get active session
     const datasetListUrl = `https://api.legiscan.com/?key=${legiscanApiKey}&op=getDatasetList&state=CA`;
     const datasetListResponse = await fetch(datasetListUrl, { headers: BROWSER_HEADERS });
     const datasetListJson = await datasetListResponse.json();
-    if (datasetListJson.status !== "OK" || !datasetListJson.datasetlist) {
-      throw new Error("Failed to get a valid dataset list from LegiScan.");
-    }
-
+    if (datasetListJson.status !== "OK") throw new Error("Failed to get dataset list.");
     const activeDataset = datasetListJson.datasetlist.find(d => d.prior === 0);
-
-    if (!activeDataset) {
-      console.error("Complete dataset list:", JSON.stringify(datasetListJson.datasetlist, null, 2));
-      throw new Error("Could not find an active (non-prior) session in the dataset list.");
-    }
+    if (!activeDataset) throw new Error("Could not find an active session.");
     
+    // Step 2: Fetch dataset ZIP
     const { session_id, access_key } = activeDataset;
-    console.log(`Found active session to import: ${activeDataset.session_title}`);
-
-    // --- STEP 2: Fetch the dataset ZIP ---
+    console.log(`Found active session: ${activeDataset.session_title}. Fetching dataset...`);
     const legiscanUrl = `https://api.legiscan.com/?op=getDataset&id=${session_id}&key=${legiscanApiKey}&access_key=${access_key}`;
     const legiscanResponse = await fetch(legiscanUrl, { headers: BROWSER_HEADERS });
-    const legiscanJson = await legiscanResponse.json();
-    const { dataset } = legiscanJson;
-    if (!dataset?.zip) { throw new Error("No 'dataset.zip' property found in the final response."); }
+    const { dataset } = await legiscanResponse.json();
+    if (!dataset?.zip) throw new Error("No 'dataset.zip' property found.");
     
-    // --- STEP 3: Process and FILTER bills from the ZIP ---
-    console.log("✅ Dataset received! Filtering and processing relevant bills...");
+    // Step 3: Process bill metadata from ZIP
+    console.log("✅ Dataset received! Seeding database with bill metadata...");
     const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const zip = new JSZip();
-    await zip.loadAsync(dataset.zip, { base64: true });
+    const zip = await new JSZip().loadAsync(dataset.zip, { base64: true });
     
     const billsToUpsert = [];
     for (const file of Object.values(zip.files)) {
       if (file.name.includes('/bill/') && !file.dir) {
         try {
           const billJsonText = await file.async("text");
-          const billData = JSON.parse(billJsonText).bill;
+          const { bill: billData } = JSON.parse(billJsonText);
 
           if (KEYWORD_REGEX.test(billData.title)) {
-            let originalText = '';
-            const latestTextDoc = billData.texts?.[billData.texts.length - 1];
-            if (latestTextDoc?.doc) {
-                const binaryString = atob(latestTextDoc.doc);
-                const bytes = Uint8Array.from(binaryString, c => c.charCodeAt(0));
-                // MODIFIED: Use fatal: false to prevent crashing on invalid chars
-                const decoder = new TextDecoder('utf-8', { fatal: false });
-                const rawText = decoder.decode(bytes);
-                
-                // MODIFIED: Use the new robust cleaning function
-                originalText = cleanText(rawText);
-            }
-            
+            // We only insert the metadata. The text and summaries will be filled by the worker.
             billsToUpsert.push({
-                id: billData.bill_id, bill_number: billData.bill_number, title: billData.title,
-                description: billData.description, status: String(billData.status),
-                state_link: billData.state_link, change_hash: billData.change_hash,
-                original_text: originalText,
-                summary_simple: `Placeholder for ${billData.bill_number}.`,
-                summary_medium: `Placeholder for ${billData.bill_number}.`,
-                summary_complex: `Placeholder for ${billData.bill_number}.`,
+                id: billData.bill_id,
+                bill_number: billData.bill_number,
+                title: billData.title,
+                description: billData.description,
+                status: String(billData.status),
+                state_link: billData.state_link,
+                change_hash: billData.change_hash,
+                summary_simple: `Placeholder for ${billData.bill_number}.`, // Mark for processing
             });
           }
-        } catch (e) { console.error(`Skipping file: ${file.name}`, e); }
+        } catch (e) { console.error(`Skipping file due to error: ${file.name}`, e); }
       }
     }
     
-    console.log(`✅ Processed and found ${billsToUpsert.length} relevant bills to import.`);
     if (billsToUpsert.length === 0) {
-      return new Response(JSON.stringify({ message: `No new bills matching the keywords were found in this dataset.` }), {
+      return new Response(JSON.stringify({ message: "No new bills matching keywords found." }), {
         headers: { "Content-Type": "application/json" }, status: 200,
       });
     }
 
     // --- STEP 4: Save to database ---
+    console.log(`✅ Found ${billsToUpsert.length} relevant bills. Seeding database...`);
     const CHUNK_SIZE = 500;
     for (let i = 0; i < billsToUpsert.length; i += CHUNK_SIZE) {
       const chunk = billsToUpsert.slice(i, i + CHUNK_SIZE);
@@ -167,15 +94,15 @@ serve(async (req) => {
       if (error) throw error;
     }
 
-    console.log("✅🎉 VICTORY! Successfully imported all relevant bills!");
-
-    return new Response(JSON.stringify({ message: `Successfully imported ${billsToUpsert.length} relevant bills.` }), {
+    console.log("✅🎉 VICTORY! Successfully seeded database with all relevant bill metadata!");
+    return new Response(JSON.stringify({ message: `Successfully seeded ${billsToUpsert.length} bills.` }), {
       headers: { "Content-Type": "application/json" }, status: 200,
     });
+
   } catch (error) {
     console.error("Function failed:", error.message, error.stack);
     return new Response(JSON.stringify({ error: error.message }), {
-      headers: { "Content-Type": "application/json" }, status: 500,
+        headers: { "Content-Type": "application/json" }, status: 500,
     });
   }
 });
