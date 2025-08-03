@@ -1,47 +1,47 @@
+// mobile-app/app/_layout.tsx
+
 import "../src/lib/i18n";
 import { useFonts } from "expo-font";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { PaperProvider } from "react-native-paper";
 import "react-native-reanimated";
 import Toast from "react-native-toast-message";
 
 import { useColorScheme } from "../hooks/useColorScheme";
-import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
-import { LightTheme, DarkTheme } from "../constants/paper-theme"; // Import our custom themes
-import RootLayoutNav from "../src/components/RootLayoutNav";
+import { AuthProvider } from "../src/providers/AuthProvider";
+import { LightTheme, DarkTheme } from "../constants/paper-theme";
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
   });
   const colorScheme = useColorScheme();
-  const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
     if (fontError) {
       console.error("Font loading error:", fontError);
     }
-    setIsClient(true);
   }, [fontError]);
 
   if (!fontsLoaded && !fontError) {
     return null;
   }
 
-  // Determine which theme to use
   const theme = colorScheme === "dark" ? DarkTheme : LightTheme;
 
   return (
     <PaperProvider theme={theme}>
       <AuthProvider>
-        <RootLayoutNav />
-        {isClient && <Toast />}
+        {/* The Stack navigator now lives directly here */}
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+        </Stack>
+        <Toast />
         <StatusBar style="auto" />
       </AuthProvider>
     </PaperProvider>
   );
 }
-
-

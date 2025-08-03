@@ -27,7 +27,6 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="mobileapp"/>
-        <data android:scheme="com.JoelA510.AIAdvocateTest"/>
         <data android:scheme="exp+ai-advocate"/>
       </intent-filter>
     </activity>
