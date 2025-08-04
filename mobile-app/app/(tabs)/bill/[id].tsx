@@ -1,17 +1,16 @@
 // mobile-app/app/(tabs)/bill/[id].tsx
-
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState, useEffect } from 'react';
-import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator, Share } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator, Share, Linking } from 'react-native';
 import { Text, useTheme, Divider, Button, Card } from 'react-native-paper';
 
 import { ThemedView } from '../../../components/ThemedView';
 import { IconSymbol } from '../../../components/ui/IconSymbol';
 import EmptyState from '../../../src/components/EmptyState';
 import { supabase } from '../../../src/lib/supabase';
-import ExpandableCard from '../../../src/components/ExpandableCard';
-
-import type { Bill } from '../../../src/components/Bill';
+import { Bill } from '../../../src/components/Bill';
+import SummarySlider from '../../../src/components/SummarySlider';
+import FindYourRep from '../../../src/components/FindYourRep';
 
 export default function BillDetailsScreen() {
   const { id } = useLocalSearchParams();
@@ -51,8 +50,6 @@ export default function BillDetailsScreen() {
     }
   };
 
-  // **THE FIX:** This function is now simple and unambiguous.
-  // It always goes back to the main Bills screen.
   const handleGoBack = () => {
     router.push('/');
   };
@@ -108,12 +105,19 @@ export default function BillDetailsScreen() {
         )}
         
         <Divider style={styles.divider} />
-
-        <ExpandableCard title="Simple Summary" content={bill.summary_simple} />
-        <ExpandableCard title="Medium Summary" content={bill.summary_medium} />
-        <ExpandableCard title="Complex Summary" content={bill.summary_complex} />
-        <ExpandableCard title="Original Text" content={bill.original_text} />
         
+        <FindYourRep bill={bill} />
+
+        <Divider style={styles.divider} />
+        
+        <SummarySlider bill={bill} />
+
+        {bill.original_text && (
+          <Text style={styles.attributionText} onPress={() => Linking.openURL('https://legiscan.com')}>
+            Original text provided by LegiScan
+          </Text>
+        )}
+
       </View>
     </ScrollView>
   );
@@ -138,5 +142,13 @@ const styles = StyleSheet.create({
   },
   reviewComment: {
     lineHeight: 22,
+  },
+  attributionText: {
+    fontSize: 12,
+    color: 'gray', // Or use theme.colors.onSurfaceDisabled
+    textAlign: 'center',
+    marginTop: 24,
+    marginBottom: 8,
+    textDecorationLine: 'underline',
   },
 });

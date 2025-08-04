@@ -1,41 +1,42 @@
-import { supabase } from "./supabase";
+// mobile-app/src/lib/find-your-representative.ts
 
 export const findYourRep = async (address: string) => {
-  try {
-    const response = await fetch(
-      `https://v3.openstates.org/people.geo?lat=42.3601&lng=-71.0589&apikey=${process.env.EXPO_PUBLIC_PLURAL_POLICY_API_KEY}`
-    );
-    const data = await response.json();
+  const openStatesApiKey = process.env.EXPO_PUBLIC_OPENSTATES_API_KEY;
+  const locationIqApiKey = process.env.EXPO_PUBLIC_LOCATIONIQ_API_KEY;
 
-    if (!response.ok) {
-      console.error("Plural Policy API Error:", data.error);
+  if (!openStatesApiKey || !locationIqApiKey) {
+    console.error("API Key(s) are missing from .env file.");
+    return null;
+  }
+
+  try {
+    // Step 1: Geocode the address
+    const geocodeUrl = `https://us1.locationiq.com/v1/search?key=${locationIqApiKey}&q=${encodeURIComponent(address)}&format=json`;
+    const geocodeResponse = await fetch(geocodeUrl);
+    const geocodeData = await geocodeResponse.json();
+    if (!geocodeResponse.ok || !Array.isArray(geocodeData) || geocodeData.length === 0) {
+      console.error("LocationIQ Geocoding Error:", geocodeData?.error || 'Failed to geocode address.');
       return null;
     }
+    const { lat, lon } = geocodeData[0];
 
-    const officials = await Promise.all(
-      data.results.map(async (official: any) => {
-        const { data: legislator, error } = await supabase
-          .from("legislators")
-          .select("id")
-          .eq("name", official.name)
-          .single();
+    // Step 2: Find legislators with a single, simple call
+    const searchUrl = `https://v3.openstates.org/people.geo?lat=${lat}&lng=${lon}`;
+    const searchResponse = await fetch(searchUrl, {
+      method: 'GET',
+      headers: { 'X-API-KEY': openStatesApiKey },
+    });
+    const searchData = await searchResponse.json();
+    if (!searchResponse.ok) {
+      console.error("OpenStates Search Error:", searchData.detail || 'Search failed.');
+      return null;
+    }
+    
+    // The data is complete from this one call.
+    return searchData;
 
-        if (error) console.error(error);
-
-        return {
-          ...official,
-          id: legislator?.id,
-          email: official.email, // Make sure email is included
-        };
-      })
-    );
-
-    return {
-      ...data,
-      officials,
-    };
   } catch (error) {
-    console.error(error);
+    console.error("Failed to fetch representatives:", error);
     return null;
   }
 };
