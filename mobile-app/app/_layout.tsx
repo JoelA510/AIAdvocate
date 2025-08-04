@@ -15,6 +15,7 @@ import { LightTheme, DarkTheme } from "../constants/paper-theme";
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
+    // --- THIS IS THE CORRECTED FILE PATH ---
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
   });
   const colorScheme = useColorScheme();
@@ -29,15 +30,16 @@ export default function RootLayout() {
     return null;
   }
 
+  // --- REVERTED A MISTAKE HERE AS WELL ---
+  // This was incorrectly set to always be DarkTheme. Now it respects the color scheme.
   const theme = colorScheme === "dark" ? DarkTheme : LightTheme;
 
   return (
     <PaperProvider theme={theme}>
       <AuthProvider>
-        {/* The Stack navigator now lives directly here */}
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ headerShown: false }} />
+          {/* We will add the login screen back in the next step */}
         </Stack>
         <Toast />
         <StatusBar style="auto" />
