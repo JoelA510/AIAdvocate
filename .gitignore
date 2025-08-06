@@ -1,5 +1,3 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
 # dependencies
 node_modules/
 
@@ -30,26 +28,17 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
-
-# typescript
-*.tsbuildinfo
-
-app-example
-
-# Supabase environment variables
-mobile-app/.env
-
-# Yarn package manager files
-package-lock.json
-
-# Ignore native directories managed by Prebuild/EAS Build
-/android
-/ios
-
-# Firebase Service Account Key
-service-account-file.json
-
-# Supabase secrets file
+# Supabase
 supabase/.env
+supabase/.temp
+
+# Ignore all environment files except for the example templates
+.env
+.env*.local
+.env.production
+mobile-app/.env
+mobile-app/.env.production
+
+# Re-include example files so they CAN be committed
+!supabase/.env.example
+!mobile-app/.env.example

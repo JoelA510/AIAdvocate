@@ -17,7 +17,19 @@
     "preview": {
       "distribution": "internal"
     },
-    "production": {}
+    "production": {
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "${EXPO_PUBLIC_SUPABASE_URL}",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}",
+        "EXPO_PUBLIC_OPENSTATES_API_KEY": "${EXPO_PUBLIC_OPENSTATES_API_KEY}",
+        "EXPO_PUBLIC_LOCATIONIQ_API_KEY": "${EXPO_PUBLIC_LOCATIONIQ_API_KEY}",
+        "EXPO_PUBLIC_RECAPTCHA_SITE_KEY": "${EXPO_PUBLIC_RECAPTCHA_SITE_KEY}",
+        "EXPO_PUBLIC_FIREBASE_WEB_CONFIG": "${EXPO_PUBLIC_FIREBASE_WEB_CONFIG}"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    }
   },
   "submit": {
     "production": {}

@@ -4,3 +4,9 @@
 
 expo-env.d.ts
 # @end expo-cli
+
+.env*.local
+.env.production
+mobile-app/.env.production
+supabase/.env.example
+supabase/.env

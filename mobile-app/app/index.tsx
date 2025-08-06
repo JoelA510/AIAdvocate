@@ -1,28 +1,54 @@
 // mobile-app/app/index.tsx
 
-import { Redirect } from 'expo-router';
-import React from 'react';
-import { ActivityIndicator } from 'react-native-paper';
-import { ThemedView } from '../components/ThemedView';
-import { useAuth } from '../src/providers/AuthProvider';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useRef } from 'react';
+import { Animated, Dimensions, Image, StyleSheet } from 'react-native';
+import { useTheme } from 'react-native-paper'; // Import the useTheme hook
+import { ThemedView } from '../components/ThemedView'; // Import ThemedView
 
-export default function Index() {
-  const { session, loading } = useAuth();
+const HEADER_HEIGHT = 50; // The final height of the header banner
 
-  if (loading) {
-    // Show a loading spinner while we check for a session
-    return (
-      <ThemedView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator animating={true} />
-      </ThemedView>
-    );
-  }
+export default function SplashScreen() {
+  const router = useRouter();
+  const theme = useTheme(); // Get the current theme
+  const screenHeight = Dimensions.get('window').height;
+  const initialPosition = (screenHeight / 2) - (HEADER_HEIGHT / 2);
 
-  if (!session) {
-    // If the user is not signed in, redirect to the login screen.
-    return <Redirect href="/login" />;
-  }
+  const bannerPosition = useRef(new Animated.Value(initialPosition)).current;
 
-  // If the user is signed in, redirect to the main app screen.
-  return <Redirect href="/(tabs)" />;
+  useEffect(() => {
+    Animated.timing(bannerPosition, {
+      toValue: 0, 
+      duration: 1200,
+      useNativeDriver: true,
+    }).start(() => {
+      router.replace('/(tabs)');
+    });
+  }, []);
+
+  // Determine banner color based on the theme
+  const bannerTintColor = theme.dark ? '#FFFFFF' : '#000000';
+
+  return (
+    // Use ThemedView as the main container to get the correct background color
+    <ThemedView style={styles.container}>
+      <Animated.View style={{ transform: [{ translateY: bannerPosition }] }}>
+        <Image
+          source={require('../assets/images/banner.png')}
+          style={[styles.banner, { tintColor: bannerTintColor }]}
+          resizeMode="contain"
+        />
+      </Animated.View>
+    </ThemedView>
+  );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  banner: {
+    width: '100%',
+    height: HEADER_HEIGHT,
+  },
+});
