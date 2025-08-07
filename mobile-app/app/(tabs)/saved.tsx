@@ -1,6 +1,9 @@
+// mobile-app/app/(tabs)/saved.tsx
+
 import { useFocusEffect } from "expo-router";
 import React, { useState, useCallback } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ThemedText } from "../../components/ThemedText";
 import { ThemedView } from "../../components/ThemedView";
@@ -16,6 +19,7 @@ export default function SavedBillsScreen() {
   const [savedBills, setSavedBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
 
   const fetchSavedBills = useCallback(async () => {
     if (!userId) {
@@ -23,32 +27,25 @@ export default function SavedBillsScreen() {
       setError("User not authenticated.");
       return;
     }
-
     setLoading(true);
     try {
       const { data: bookmarks, error: bookmarkError } = await supabase
         .from("bookmarks")
         .select("bill_id")
         .eq("user_id", userId);
-
       if (bookmarkError) throw bookmarkError;
-
       const billIds = bookmarks.map((b) => b.bill_id);
-
       if (billIds.length === 0) {
         setSavedBills([]);
-        setLoading(false);
+        setLoading(false); // Make sure to stop loading
         return;
       }
-
       const { data: bills, error: billsError } = await supabase
         .from("bills")
         .select("*")
         .in("id", billIds);
-
       if (billsError) throw billsError;
-
-      setSavedBills(bills);
+      setSavedBills(bills || []);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -73,17 +70,15 @@ export default function SavedBillsScreen() {
         />
       );
     }
-
     if (error) {
       return (
         <EmptyState
           icon="chevron.left.forwardslash.chevron.right"
           title="An Error Occurred"
-          message={`We couldn't fetch your saved bills. Please try again later. \n(${error})`}
+          message={`We couldn't fetch your saved bills.\n(${error})`}
         />
       );
     }
-
     if (savedBills.length === 0) {
       return (
         <EmptyState
@@ -93,19 +88,19 @@ export default function SavedBillsScreen() {
         />
       );
     }
-
     return (
       <FlatList
         data={savedBills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+        showsVerticalScrollIndicator={false}
       />
     );
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <ThemedText type="title">Saved Bills</ThemedText>
       </View>
@@ -119,12 +114,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ddd",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   content: {
     flex: 1,
-    padding: 16,
+    paddingHorizontal: 16,
   },
 });

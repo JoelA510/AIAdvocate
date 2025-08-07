@@ -1,20 +1,21 @@
 // mobile-app/app/(tabs)/lnf.tsx
 
 import React from 'react';
-import { StyleSheet, Platform } from 'react-native'; // Import Platform
+import { StyleSheet, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Linking from 'expo-linking';
 import { ThemedView } from '../../components/ThemedView';
 import { Text, Button } from 'react-native-paper';
-import * as Linking from 'expo-linking';
 
 const LNF_URL = 'https://www.loveneverfailsus.com/ai-advocate';
 
 export default function LnfScreen() {
-  // **THE FIX:** Check if the current platform is 'web'.
+  const insets = useSafeAreaInsets();
+
   if (Platform.OS === 'web') {
-    // On the web, render a simple link instead of the WebView.
     return (
-      <ThemedView style={styles.containerWeb}>
+      <ThemedView style={[styles.containerWeb, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <Text variant="headlineSmall" style={styles.titleWeb}>
           Visit Love Never Fails
         </Text>
@@ -32,9 +33,9 @@ export default function LnfScreen() {
     );
   }
 
-  // On native (Android/iOS), render the WebView as intended.
+  // On native, wrap the WebView in a ThemedView with padding
   return (
-    <ThemedView style={styles.containerNative}>
+    <ThemedView style={[styles.containerNative, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <WebView
         source={{ uri: LNF_URL }}
         style={styles.webview}
@@ -47,19 +48,17 @@ export default function LnfScreen() {
 }
 
 const styles = StyleSheet.create({
-  // Styles for the native WebView
   containerNative: {
     flex: 1,
   },
   webview: {
     flex: 1,
   },
-  // Styles for the web fallback view
   containerWeb: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    paddingHorizontal: 24,
     gap: 16,
   },
   titleWeb: {

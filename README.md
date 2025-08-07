@@ -36,50 +36,136 @@ This guide will walk you through setting up the entire project, from the backend
 
 ### Prerequisites
 
--   **Node.js (v20 LTS recommended):** Manage Node versions with [NVM](https://github.com/nvm-sh/nvm).
+Before you begin, ensure you have the following installed on your machine:
+-   **Node.js (v20 LTS recommended):** It is highly recommended to manage Node versions with [NVM](https://github.com/nvm-sh/nvm).
 -   **Yarn:** The project's required package manager. Install with `npm install -g yarn`.
 -   **Supabase CLI:** Follow the [official installation guide](https://supabase.com/docs/guides/cli/getting-started).
 -   **Git:** For version control.
 
-### Step 1: Clone & Configure Backend
+### Step 1: Clone the Repository
 
-1.  **Clone the Repository:** `git clone <your-repository-url>` and `cd` into the project.
-2.  **Link Supabase Project:** Navigate to the `supabase/` directory and link it to your remote Supabase project: `supabase link --project-ref <your-project_ref>`.
-3.  **Configure Backend Secrets:** In the `supabase/` directory, copy the example environment file (`cp .env.example .env`) and fill in your secret keys for Supabase, LegiScan, and Gemini.
-4.  **Push the Database Schema:** Run `supabase db push`. This executes the `schema.sql` file, which is the single source of truth for all tables and required database functions (`handle_reaction`, `get_bill_details_for_user`, etc.).
+Clone the project to your local machine:
+`bash
+git clone <your-repository-url>
+cd AIAdvocate
+`
 
-### Step 2: Configure & Run Frontend
+### Step 2: Set Up the Supabase Backend
 
-1.  **Configure Frontend Keys:** Navigate to the `mobile-app/` directory. Create a `.env` file and fill in all the public-facing keys (prefixed with `EXPO_PUBLIC_`) for Supabase, OpenStates, and LocationIQ.
-2.  **Install Dependencies:** Run `yarn install`. If you encounter dependency issues, the canonical fix is `npx expo install --fix`.
-3.  **Run the App:** Run `yarn start` to launch the Metro development server. To run on a mobile device, you must first have a development build installed.
+1.  **Log in to Supabase:**
+    `bash
+    supabase login
+    `
+2.  **Link the Project:** Link your local repository to your remote Supabase project. You will need your Project REF, which can be found in your Supabase project's URL (e.g., `https://supabase.com/dashboard/project/<project_ref>`).
+    `bash
+    supabase link --project-ref <your-project_ref>
+    `
+3.  **Push the Database Schema:** This command will execute the `schema.sql` file and create all necessary tables and functions in your remote database.
+    `bash
+    supabase db push
+    `
+
+### Step 3: Configure Environment Variables
+
+This project uses two separate `.env` files for security and clarity.
+
+1.  **Backend Secrets (`supabase/.env`):**
+    *   Navigate to the `supabase/` directory.
+    *   Create a copy of the example file: `cp .env.example .env`
+    *   Open the new `.env` file and fill in your secret keys for Supabase, LegiScan, and Gemini.
+
+2.  **Frontend Public Keys (`mobile-app/.env`):**
+    *   Navigate to the `mobile-app/` directory.
+    *   Create a `.env` file and add the following public keys:
+    `
+    EXPO_PUBLIC_SUPABASE_URL=https://<your-project_ref>.supabase.co
+    EXPO_PUBLIC_SUPABASE_ANON_KEY=<your_supabase_anon_key>
+    EXPO_PUBLIC_OPENSTATES_API_KEY=<your_openstates_api_key>
+    EXPO_PUBLIC_LOCATIONIQ_API_KEY=<your_locationiq_api_key>
+    `
+
+### Step 4: Install Frontend Dependencies
+
+1.  Navigate to the `mobile-app/` directory.
+2.  Install all required packages using Yarn:
+    `bash
+    yarn install
+    `
+3.  **Important:** If you encounter dependency errors after upgrading packages in the future, the canonical fix is:
+    `bash
+    npx expo install --fix
+    `
 
 ---
 
-## Key Architectural Decisions & Workflows
+## Key Workflows & Architectural Decisions
 
-*   **Authentication Flow:** The app uses a fully autonomous `AuthProvider`. On first launch, it silently creates an anonymous user. The entry point at `app/index.tsx` is a theme-aware, animated splash screen that provides a seamless visual transition into the main `(tabs)` layout.
+*   **Authentication Flow:** The app uses a fully autonomous `AuthProvider` that silently creates an anonymous user on first launch. The app's entry point (`app/index.tsx`) is a theme-aware, animated splash screen that provides a seamless visual transition into the main `(tabs)` layout.
 
-*   **Data Pipeline (Bills):**
-    1.  **Seeding (`bulk-import-dataset`):** A manual, one-time Supabase function to seed the database with basic bill metadata.
-    2.  **Enrichment (`sync-updated-bills`):** A daily cron-job function that processes one bill at a time, fetching text and generating AI summaries.
-    3.  **Backlog Processing:** The initial data enrichment is handled by the `python3 process_full_backlog.py` script, which is quota-aware and can be run locally.
+*   **Native vs. JavaScript Changes:** It is critical to understand the difference between a change that can be deployed instantly (JS-only) and a change that requires a new app store submission (native).
+    *   **A new build (`eas build`) is required if you:**
+        *   Add or update a package that has native code (e.g., `expo-clipboard`).
+        *   Change any configuration in `app.json` under the `android` or `ios` keys (e.g., `displayName`, `edgeToEdge`, `package`).
+        *   Change any native asset files, such as the app icon images.
+    *   **An OTA update (`eas update`) is sufficient if you:**
+        *   Only change your own JavaScript/TypeScript code in the `app/` or `src/` directories.
+
+*   **Native Project Regeneration:** If the native project files (`android` and `ios`) become out of sync with `app.json`, the definitive solution is to delete the problematic directory and regenerate it:
+    `bash
+    # From the mobile-app directory
+    npx expo prebuild --platform android --clean
+    `
 
 *   **Data Pipeline (Representatives):** The "Find Your Rep" feature uses a three-stage API pipeline:
-    1.  **Geocoding:** The user's address is sent to **LocationIQ** to get coordinates.
+    1.  **Geocoding:** The user's address is sent to the **LocationIQ API** to get coordinates.
     2.  **Search:** The coordinates are sent to the **OpenStates API's** `/people.geo` endpoint to get a list of basic legislator objects.
     3.  **Enrichment:** The app then makes individual API calls for each state-level legislator to the `/people/{ocd-id}` endpoint to fetch their full, detailed profile, including contact information.
 
-*   **Native Builds & Deployment:** The project uses EAS for all builds and deployments.
-    *   **Native Dependencies:** If you add a package with native code (like `expo-clipboard`), you **must** create a new development build (`eas build --profile development`) and a new production build (`eas build --profile production`).
-    *   **OTA Updates:** JavaScript-only changes can be deployed instantly to production users via `eas update --branch production`.
-    *   **Web App:** The web version is a static build created with `yarn expo export` and can be deployed to any static hosting service like Netlify.
+---
+
+## Deployment Guide
+
+#### Deploying the Native Mobile App (iOS & Android)
+
+The native app is built and updated using EAS (Expo Application Services).
+
+1.  **Initial Production Build:**
+    *   To create a new app binary (`.aab` or `.ipa`) for the app stores, run the following from the `mobile-app` directory:
+    `bash
+    eas build --platform all --profile production
+    `
+    *   This binary must be submitted to the Google Play Console and Apple App Store Connect.
+
+2.  **Over-the-Air (OTA) Updates:**
+    *   After a production build is live in the stores, you can push JavaScript-only changes directly to users with an OTA update.
+    `bash
+    eas update --branch production --message "Your update message"
+    `
+
+3.  **Development Build:**
+    *   If you add any new native dependencies, you must create and install a new development build on your test device:
+    `bash
+    eas build --platform android --profile development
+    `
+
+#### Deploying the Web App
+
+The web app is deployed as a static site.
+
+1.  **Build the Web App:**
+    *   From the `mobile-app` directory, run the export command:
+    `bash
+    yarn expo export
+    `
+    *   This will generate a `dist` folder containing the complete, standalone web application.
+
+2.  **Deploy the `dist` Folder:**
+    *   Deploy the contents of the `dist` folder to any static web hosting provider.
+    *   The recommended method is to use a service like **Netlify** or **Vercel**, which often feature a simple drag-and-drop interface for deployment.
 
 ---
 
 ## Official Roadmap
-
-*(This section remains the same)*
 
 ### Phase 1: The Core Advocacy Experience (Complete)
 -   [x] Add `is_curated` boolean to the `bills` table for staff-led highlighting.
@@ -98,5 +184,5 @@ This guide will walk you through setting up the entire project, from the backend
 -   [x] **Survivor Panel Integration:**
     -   [x] Display the panel's feedback and recommendations prominently on bill detail pages.
 -   [ ] **Multilingual Support:**
-    -   [x] Integrate a localization library.
-    -   [ ] Use the Gemini API for high-quality text translations.
+    -   [] Integrate a localization library.
+    -   [ ] Choose a specific AI API for high-quality text translations.

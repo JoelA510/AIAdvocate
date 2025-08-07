@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar } from "react-native-paper";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
@@ -16,33 +17,24 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const insets = useSafeAreaInsets(); // Get safe area insets
 
   useEffect(() => {
     const fetchBills = async () => {
       setLoading(true);
       try {
-        let query = supabase
-          .from("bills")
-          .select("*")
-          .order("id", { ascending: false });
-
-        // --- Smart Search Logic ---
+        let query = supabase.from("bills").select("*").order("id", { ascending: false });
         const trimmedQuery = searchQuery.trim();
         const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
 
         if (trimmedQuery) {
           if (billNumberRegex.test(trimmedQuery)) {
-            // If it's a bill number, use a precise search on the bill_number column.
             const processedBillNumber = trimmedQuery.replace(/\s/g, '');
             query = query.ilike('bill_number', `%${processedBillNumber}%`);
           } else {
-            // Otherwise, use full-text search on title and description.
-            query = query.textSearch("title,description", trimmedQuery, {
-              type: "websearch",
-            });
+            query = query.textSearch("title,description", trimmedQuery, { type: "websearch" });
           }
         }
-        // --- End of Smart Search Logic ---
 
         const { data, error } = await query;
         if (error) throw error;
@@ -54,10 +46,7 @@ export default function HomeScreen() {
       }
     };
 
-    const searchTimeout = setTimeout(() => {
-      fetchBills();
-    }, 300);
-
+    const searchTimeout = setTimeout(() => { fetchBills(); }, 300);
     return () => clearTimeout(searchTimeout);
   }, [searchQuery]);
 
@@ -72,14 +61,16 @@ export default function HomeScreen() {
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        // Apply bottom padding for the navigation bar
+        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
       />
     );
   };
 
   return (
-    <ThemedView style={styles.container}>
+    // Apply top padding to the container to push content below status bar
+    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <ThemedText type="title" style={styles.title}>
           Explore Bills
@@ -98,7 +89,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { padding: 16 },
+  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
   title: { fontWeight: "bold", marginBottom: 16, fontSize: 32, lineHeight: 32 },
   searchbar: {},
   content: { flex: 1, paddingHorizontal: 16 },

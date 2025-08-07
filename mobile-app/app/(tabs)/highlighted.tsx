@@ -1,5 +1,8 @@
+// mobile-app/app/(tabs)/highlighted.tsx
+
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
@@ -7,11 +10,11 @@ import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
 import { supabase } from "../../src/lib/supabase";
 
-export default function HomeScreen() {
+export default function HighlightedScreen() {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     const fetchBills = async () => {
@@ -23,13 +26,9 @@ export default function HomeScreen() {
           .eq('is_curated', true)
           .order("id", { ascending: false });
 
-        if (searchQuery.trim()) {
-          query = query.textSearch("title,bill_number", searchQuery, { type: "websearch" });
-        }
-
         const { data, error } = await query;
         if (error) throw error;
-        setBills(data);
+        setBills(data || []);
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -37,7 +36,7 @@ export default function HomeScreen() {
       }
     };
     fetchBills();
-  }, [searchQuery]);
+  }, []);
 
   const renderContent = () => {
     if (loading) {
@@ -50,42 +49,41 @@ export default function HomeScreen() {
         />
       );
     }
-
     if (error) {
       return (
         <EmptyState
           icon="chevron.left.forwardslash.chevron.right"
           title="An Error Occurred"
-          message={`We couldn't fetch the bills. Please try again later. \n(${error})`}
+          message={`We couldn't fetch the bills. \n(${error})`}
         />
       );
     }
-
     if (bills.length === 0) {
       return (
         <EmptyState
-          icon="file-search-outline"
-          title="No Bills Found"
+          icon="sparkles"
+          title="No Highlighted Bills"
           message="There are no curated bills at the moment. Check back later!"
         />
       );
     }
-
     return (
       <FlatList
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+        showsVerticalScrollIndicator={false}
       />
     );
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Bills</ThemedText>
-      </ThemedView>
-      {renderContent()}
+    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <ThemedText type="title">Highlighted Bills</ThemedText>
+      </View>
+      <View style={styles.content}>{renderContent()}</View>
     </ThemedView>
   );
 }
@@ -93,9 +91,14 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
   },
-  titleContainer: {
-    paddingBottom: 16,
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
   },
 });

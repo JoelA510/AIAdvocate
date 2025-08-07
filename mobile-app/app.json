@@ -15,7 +15,8 @@
         "backgroundColor": "#151718"
       },
       "package": "com.JoelA510.AIAdvocateTest",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "edgeToEdge": true
     },
     "ios": {
       "supportsTablet": true,

@@ -1,8 +1,10 @@
 // mobile-app/app/(tabs)/bill/[id].tsx
+
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator, Share, Linking } from 'react-native';
 import { Text, useTheme, Divider, Button, Card } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedView } from '../../../components/ThemedView';
 import { IconSymbol } from '../../../components/ui/IconSymbol';
@@ -16,6 +18,7 @@ export default function BillDetailsScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const [bill, setBill] = useState<Bill | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +45,7 @@ export default function BillDetailsScreen() {
     if (!bill) return;
     try {
       await Share.share({
-        message: `Check out this bill: ${bill.bill_number} - ${bill.title}. You can learn more about it in the AI Advocate app.`,
+        message: `Check out this bill: ${bill.bill_number} - ${bill.title}. You can learn more in the AI Advocate app.`,
         url: bill.state_link || undefined,
       });
     } catch (error) {
@@ -51,12 +54,12 @@ export default function BillDetailsScreen() {
   };
 
   const handleGoBack = () => {
-    router.push('/');
+    router.push('/(tabs)');
   };
 
   if (loading) {
     return (
-      <ThemedView style={styles.centeredContainer}>
+      <ThemedView style={[styles.centeredContainer, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" />
       </ThemedView>
     );
@@ -64,7 +67,7 @@ export default function BillDetailsScreen() {
 
   if (error || !bill) {
     return (
-      <View style={[styles.centeredContainer, { backgroundColor: theme.colors.background }]}>
+      <View style={[styles.centeredContainer, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
         <Pressable style={styles.backButton} onPress={handleGoBack}>
           <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
           <Text>Back</Text>
@@ -79,7 +82,11 @@ export default function BillDetailsScreen() {
   }
 
   return (
-    <ScrollView style={[styles.scrollView, { backgroundColor: theme.colors.background }]}>
+    <ScrollView 
+      style={[styles.scrollView, { backgroundColor: theme.colors.background }]}
+      contentContainerStyle={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.container}>
         <Pressable style={styles.backButton} onPress={handleGoBack}>
           <IconSymbol name="chevron.right" color={backButtonColor} size={24} style={styles.backIcon} />
@@ -117,7 +124,6 @@ export default function BillDetailsScreen() {
             Original text provided by LegiScan
           </Text>
         )}
-
       </View>
     </ScrollView>
   );
@@ -125,30 +131,15 @@ export default function BillDetailsScreen() {
 
 const styles = StyleSheet.create({
   scrollView: { flex: 1 },
-  centeredContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  centeredContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16 },
   container: { flex: 1, padding: 16, paddingBottom: 40 },
   backButton: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, alignSelf: 'flex-start' },
   backIcon: { transform: [{ rotate: '180deg' }] },
   title: { fontWeight: 'bold' },
   subtitle: { marginBottom: 16 },
   divider: { marginVertical: 16 },
-  reviewCard: {
-    marginVertical: 8,
-    borderWidth: 1,
-  },
-  reviewRecommendation: {
-    fontWeight: "bold",
-    marginBottom: 8,
-  },
-  reviewComment: {
-    lineHeight: 22,
-  },
-  attributionText: {
-    fontSize: 12,
-    color: 'gray', // Or use theme.colors.onSurfaceDisabled
-    textAlign: 'center',
-    marginTop: 24,
-    marginBottom: 8,
-    textDecorationLine: 'underline',
-  },
+  reviewCard: { marginVertical: 8, borderWidth: 1 },
+  reviewRecommendation: { fontWeight: "bold", marginBottom: 8 },
+  reviewComment: { lineHeight: 22 },
+  attributionText: { fontSize: 12, color: 'gray', textAlign: 'center', marginTop: 24, marginBottom: 8, textDecorationLine: 'underline' },
 });
