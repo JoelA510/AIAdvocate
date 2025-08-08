@@ -39,6 +39,12 @@ supabase/.temp
 mobile-app/.env
 mobile-app/.env.production
 
+# Firebase service files
+mobile-app/google-services.json
+mobile-app/GoogleService-Info.plist
+
 # Re-include example files so they CAN be committed
 !supabase/.env.example
 !mobile-app/.env.example
+!mobile-app/google-services.json.example
+!mobile-app/GoogleService-Info.plist.example

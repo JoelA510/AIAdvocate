@@ -84,6 +84,14 @@ This project uses two separate `.env` files for security and clarity.
     EXPO_PUBLIC_LOCATIONIQ_API_KEY=<your_locationiq_api_key>
     `
 
+3.  **Firebase Service Files:**
+    *   From the `mobile-app/` directory, copy the provided example files:
+    `
+    cp google-services.json.example google-services.json
+    cp GoogleService-Info.plist.example GoogleService-Info.plist
+    `
+    *   Replace the placeholder values in each file with your Firebase project settings.
+
 ### Step 4: Install Frontend Dependencies
 
 1.  Navigate to the `mobile-app/` directory.
