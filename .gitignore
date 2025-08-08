@@ -43,6 +43,11 @@ mobile-app/.env.production
 mobile-app/google-services.json
 mobile-app/GoogleService-Info.plist
 
+# Yarn artifacts we're not committing
+mobile-app/.yarn/
+mobile-app/.yarnrc.yml
+mobile-app/yarn.lock
+
 # Re-include example files so they CAN be committed
 !supabase/.env.example
 !mobile-app/.env.example
