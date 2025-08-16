@@ -2,7 +2,7 @@
   "expo": {
     "name": "AI Advocate",
     "slug": "ai-advocate",
-    "owner": "loveneverfails",
+    "owner": "joela510",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -16,8 +16,7 @@
       },
       "package": "com.loveneverfails.aiadvocate",
       "googleServicesFile": "./google-services.json",
-      "edgeToEdgeEnabled": true,
-      "versionCode": 1
+      "edgeToEdge": true
     },
     "ios": {
       "supportsTablet": true,
@@ -25,8 +24,7 @@
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      },
-      "buildNumber": "1"
+      }
     },
     "web": {
       "bundler": "metro",
