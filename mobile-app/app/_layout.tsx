@@ -33,14 +33,16 @@ export default function RootLayout() {
 
   return (
     <PaperProvider theme={theme}>
-      <AuthProvider>
-        <Stack>
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        </Stack>
-        <Toast />
-        <StatusBar style="auto" />
-      </AuthProvider>
+      <ConfigProvider>
+        <AuthProvider>
+          <Stack>
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          </Stack>
+          <Toast />
+          <StatusBar style="auto" />
+        </AuthProvider>
+      </ConfigProvider>
     </PaperProvider>
   );
 }

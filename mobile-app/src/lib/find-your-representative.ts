@@ -1,8 +1,11 @@
 // mobile-app/src/lib/find-your-representative.ts
 
+import { getConfig } from './config';
+
 export const findYourRep = async (address: string) => {
-  const openStatesApiKey = process.env.EXPO_PUBLIC_OPENSTATES_API_KEY;
-  const locationIqApiKey = process.env.EXPO_PUBLIC_LOCATIONIQ_API_KEY;
+  const config = getConfig();
+  const openStatesApiKey = config.EXPO_PUBLIC_OPENSTATES_API_KEY;
+  const locationIqApiKey = config.EXPO_PUBLIC_LOCATIONIQ_API_KEY;
 
   if (!openStatesApiKey || !locationIqApiKey) {
     console.error("API Key(s) are missing from .env file.");
