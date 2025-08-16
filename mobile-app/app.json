@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "ai-advocate",
+    "name": "AI Advocate",
     "slug": "ai-advocate",
-    "owner": "joela510",
+    "owner": "loveneverfails",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -14,13 +14,13 @@
         "foregroundImage": "./assets/images/icon-foreground.png",
         "backgroundColor": "#151718"
       },
-      "package": "com.JoelA510.AIAdvocateTest",
+      "package": "com.loveneverfails.aiadvocate",
       "googleServicesFile": "./google-services.json",
       "edgeToEdge": true
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.JoelA510.AIAdvocateTest",
+      "bundleIdentifier": "com.loveneverfails.aiadvocate",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
