@@ -1,32 +1,57 @@
+```markdown
 # AI Advocate
 
 AI Advocate is a privacy-first mobile application designed to Educate, Empower, and Employ. It makes complex legislative bills accessible and provides tools for users to engage directly with their representatives, with a special focus on survivors of domestic violence, human trafficking, and sexual assault.
 
-> **Project Status:** Phase 1 and the foundational elements of Phase 2 are complete. The app has been restructured into a four-tab advocacy platform with a robust, interactive feature set.
+> **Project Status:** **V1 Complete & Stable.** The core feature set has been fully implemented. The application is production-ready and built on a robust, scalable, and efficient serverless architecture.
 
 ## Core Features
 
--   ✅ **Animated Splash Screen:** A theme-aware, animated splash screen provides a polished and professional entry into the app.
--   ✅ **Theme-Adaptive UI:** The application automatically adjusts its color scheme (light/dark) based on the user's device settings.
--   ✅ **Comprehensive Bill Feed:** The main "Bills" tab displays a complete, searchable list of all legislation relevant to the app's mission.
--   ✅ **AI-Powered Summaries:** Bills can be viewed in four formats (Simple, Medium, Complex, and Original Text) using a sleek summary slider.
--   ✅ **Interactive Advocacy Workflow:**
+-   ✅ **On-Demand Multilingual Support:** The app automatically detects the user's device language and provides on-demand, AI-powered translations for all bill content. An intelligent caching layer ensures translations are only generated once per language, minimizing API costs and providing instant delivery for subsequent requests.
+
+-   ✅ **AI-Powered Bill Discovery:** A "Related Bills" feature uses AI-generated vector embeddings and semantic search (`pgvector`) to help users discover other legislation that is contextually similar to the bill they are currently viewing.
+
+-   ✅ **Comprehensive Bill Feed:** The main "Bills" tab displays a complete, searchable list of all legislation relevant to the app's mission, with a dedicated "Highlighted" feed for curated content.
+
+-   ✅ **Multi-Level AI Summaries:** Bills can be viewed in four formats (Simple, Medium, Complex, and Original Text) using a sleek summary slider, ensuring the content is accessible to all reading levels.
+
+-   ✅ **Text-to-Speech Accessibility:** A "Speak" button provides an audio read-out of the currently selected bill summary, enhancing accessibility for all users.
+
+-   ✅ **Full Advocacy Workflow:**
     -   Find state legislators by address using a multi-stage API pipeline (LocationIQ & OpenStates).
-    -   View legislator contact details (email and phone) directly in the app.
-    -   Generate pre-filled email templates for a selected bill.
-    -   Integrated on both the main "Advocacy" tab and individual bill pages for a seamless user experience.
--   ✅ **Private Bookmarks & Reactions:** Users can save bills for later and react to legislation, with all interactions tied to their secure, anonymous identity.
--   ✅ **Secure Anonymous Authentication:** All user actions are tied to a unique identity created automatically and silently in the background on first app launch.
+    -   View legislator contact details and generate pre-filled email templates for a selected bill.
+
+-   ✅ **Push Notifications for Saved Bills:** Users can subscribe to updates on specific bills simply by bookmarking them. The foundation is in place to notify users of important status changes or upcoming votes.
+
+-   ✅ **User Reactions & Bookmarks:** Users can express their sentiment on bills with upvote/downvote reactions and save bills to a private list for later reference.
+
+-   ✅ **Secure & Private by Design:** All user actions are tied to a unique, anonymous identity created automatically on first launch, with no personal information ever required.
 
 ## Technical Architecture
 
 -   **Frontend:** React Native (Expo) with Expo Router for file-based navigation.
 -   **UI Library:** React Native Paper for a modern, Material Design component system.
+-   **Internationalization:** `i18next` with `expo-localization` for automatic language detection.
 -   **Backend:** A fully serverless backend powered by Supabase:
-    -   **Database:** Supabase Postgres, managed via a single source-of-truth `schema.sql`.
+    -   **Database:** Supabase Postgres with the `pgvector` extension for semantic search.
     -   **Authentication:** Supabase Auth for seamless anonymous user sessions.
-    -   **Serverless Functions:** Deno Edge Functions manage the data pipeline for automated bill ingestion and AI enrichment.
--   **AI:** Google's Gemini API for all summarization and translation tasks.
+    -   **Serverless Functions:** Deno Edge Functions manage the entire data pipeline.
+-   **AI:** Google's Gemini API:
+    -   `gemini-1.5-flash` for all summarization and on-demand translation tasks.
+    -   `embedding-001` for generating vector embeddings for bill discovery.
+-   **Testing & CI:** Jest with React Testing Library for component testing, and GitHub Actions for continuous integration.
+
+---
+
+## Key Architectural Decisions
+
+*   **Efficient AI Pipeline:** The core data ingestion function (`sync-updated-bills`) has been highly optimized. It now uses a single API call to generate all three summary tiers and the vector embedding simultaneously, significantly reducing cost and processing time.
+
+*   **On-Demand Caching:** To provide multilingual support affordably and at scale, the system uses an on-demand caching strategy. The `translate-bill` function first checks the `bill_translations` table. If a translation exists, it's served instantly. If not, the function generates it via the Gemini API and immediately saves the result, ensuring any future request for that specific translation is a cache hit.
+
+*   **Atomic Transactions:** User actions that affect multiple database tables (e.g., bookmarking a bill and subscribing to its notifications) are handled by single, atomic RPC functions (`toggle_bookmark_and_subscription`) to ensure data consistency.
+
+*   **Client-Side Resilience:** All critical API calls from the mobile app are wrapped in a `safeFetch` utility that provides automatic retries with exponential backoff, making the app more resilient to transient network errors or API rate limiting.
 
 ---
 
@@ -45,25 +70,25 @@ Before you begin, ensure you have the following installed on your machine:
 ### Step 1: Clone the Repository
 
 Clone the project to your local machine:
-`bash
+```bash
 git clone <your-repository-url>
 cd AIAdvocate
-`
+```
 
 ### Step 2: Set Up the Supabase Backend
 
 1.  **Log in to Supabase:**
-    `bash
+    ```bash
     supabase login
-    `
+    ```
 2.  **Link the Project:** Link your local repository to your remote Supabase project. You will need your Project REF, which can be found in your Supabase project's URL (e.g., `https://supabase.com/dashboard/project/<project_ref>`).
-    `bash
+    ```bash
     supabase link --project-ref <your-project_ref>
-    `
+    ```
 3.  **Push the Database Schema:** This command will execute the `schema.sql` file and create all necessary tables and functions in your remote database.
-    `bash
+    ```bash
     supabase db push
-    `
+    ```
 
 ### Step 3: Configure Environment Variables
 
@@ -77,28 +102,28 @@ This project uses two separate `.env` files for security and clarity.
 2.  **Frontend Public Keys (`mobile-app/.env`):**
     *   Navigate to the `mobile-app/` directory.
     *   Create a `.env` file and add the following public keys:
-    `
+    ```
     EXPO_PUBLIC_SUPABASE_URL=https://<your-project_ref>.supabase.co
     EXPO_PUBLIC_SUPABASE_ANON_KEY=<your_supabase_anon_key>
     EXPO_PUBLIC_OPENSTATES_API_KEY=<your_openstates_api_key>
     EXPO_PUBLIC_LOCATIONIQ_API_KEY=<your_locationiq_api_key>
-    `
+    ```
 
 ### Step 4: Install Frontend Dependencies
 
 1.  Navigate to the `mobile-app/` directory.
 2.  Install all required packages using Yarn:
-    `bash
+    ```bash
     yarn install
-    `
+    ```
 3.  **Important:** If you encounter dependency errors after upgrading packages in the future, the canonical fix is:
-    `bash
+    ```bash
     npx expo install --fix
-    `
+    ```
 
 ---
 
-## Key Workflows & Architectural Decisions
+## Developer Workflows & Project Structure
 
 *   **Authentication Flow:** The app uses a fully autonomous `AuthProvider` that silently creates an anonymous user on first launch. The app's entry point (`app/index.tsx`) is a theme-aware, animated splash screen that provides a seamless visual transition into the main `(tabs)` layout.
 
@@ -111,10 +136,10 @@ This project uses two separate `.env` files for security and clarity.
         *   Only change your own JavaScript/TypeScript code in the `app/` or `src/` directories.
 
 *   **Native Project Regeneration:** If the native project files (`android` and `ios`) become out of sync with `app.json`, the definitive solution is to delete the problematic directory and regenerate it:
-    `bash
+    ```bash
     # From the mobile-app directory
     npx expo prebuild --platform android --clean
-    `
+    ```
 
 *   **Data Pipeline (Representatives):** The "Find Your Rep" feature uses a three-stage API pipeline:
     1.  **Geocoding:** The user's address is sent to the **LocationIQ API** to get coordinates.
@@ -131,22 +156,22 @@ The native app is built and updated using EAS (Expo Application Services).
 
 1.  **Initial Production Build:**
     *   To create a new app binary (`.aab` or `.ipa`) for the app stores, run the following from the `mobile-app` directory:
-    `bash
+    ```bash
     eas build --platform all --profile production
-    `
+    ```
     *   This binary must be submitted to the Google Play Console and Apple App Store Connect.
 
 2.  **Over-the-Air (OTA) Updates:**
     *   After a production build is live in the stores, you can push JavaScript-only changes directly to users with an OTA update.
-    `bash
+    ```bash
     eas update --branch production --message "Your update message"
-    `
+    ```
 
 3.  **Development Build:**
     *   If you add any new native dependencies, you must create and install a new development build on your test device:
-    `bash
+    ```bash
     eas build --platform android --profile development
-    `
+    ```
 
 #### Deploying the Web App
 
@@ -154,9 +179,9 @@ The web app is deployed as a static site.
 
 1.  **Build the Web App:**
     *   From the `mobile-app` directory, run the export command:
-    `bash
+    ```bash
     yarn expo export
-    `
+    ```
     *   This will generate a `dist` folder containing the complete, standalone web application.
 
 2.  **Deploy the `dist` Folder:**
@@ -165,24 +190,14 @@ The web app is deployed as a static site.
 
 ---
 
-## Official Roadmap
+## V1 Complete: The Road Ahead
 
-### Phase 1: The Core Advocacy Experience (Complete)
--   [x] Add `is_curated` boolean to the `bills` table for staff-led highlighting.
--   [x] Re-architect the UI to a four-tab layout: Bills, Saved, LNF, and Advocacy.
--   [x] "Bills" tab fetches and displays all relevant bills in the database.
--   [x] "LNF" tab displays static information.
--   [x] "Advocacy" tab contains the "Find Your Rep" feature.
+The application is now in a stable, feature-complete state. Future development can focus on iterative improvements, maintenance, and the implementation of new, high-value features. The foundation has been laid for:
 
-### Phase 2: Advanced Features & Webpage Goals (In Progress)
--   [x] **Legislator & Voting Data:**
-    -   [x] Create `legislators` and `votes` tables.
-    -   [x] Add `is_lnf_ally` boolean to the `legislators` table.
-    -   [x] Build the Edge Function to sync legislator and voting data.
--   [x] **"Take Action" Email Templates:**
-    -   [x] Implement the feature to open a user's email client with a pre-filled template.
--   [x] **Survivor Panel Integration:**
-    -   [x] Display the panel's feedback and recommendations prominently on bill detail pages.
--   [ ] **Multilingual Support:**
-    -   [] Integrate a localization library.
-    -   [ ] Choose a specific AI API for high-quality text translations.
+-   `[ ]` **Expanded Test Coverage:** Write comprehensive unit and integration tests for all major components and user flows.
+-   `[ ]` **Notification Dispatch:** Build the final Edge Function to read from the `subscriptions` table and dispatch push notifications via Expo's push API.
+-   `[ ]` **Private Encrypted Notes:** Implement the ability for users to add private, client-side encrypted notes to their saved bills using the `encryption.ts` utility.
+-   `[ ]` **Expanded Analytics:** Integrate additional `trackEvent` calls to gather anonymous data on feature usage, such as shares, saves, and advocacy actions.
+-   `[ ]` **Additional Languages:** Add new `[lang].json` files and potentially fine-tune AI prompts to support a wider range of languages.
+```markdown
+---
