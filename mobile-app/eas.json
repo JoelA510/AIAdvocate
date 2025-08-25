@@ -7,27 +7,35 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "android": {
-        "buildType": "apk",
-        "env": {
-          "KOTLIN_VERSION": "2.1.0"
-        }
-      }
+      "channel": "development",
+      "android": { "buildType": "apk" },
+      "ios": { "simulator": false }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview"
     },
     "production": {
+      "channel": "production",
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "${EXPO_PUBLIC_SUPABASE_URL}",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "app-bundle"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "metadataPath": "./store.config.json"
+      }
+      /* Optionally add Android track when you start submitting:
+      ,"android": {
+        "track": "internal"   // or "production", "beta", etc.
+      }
+      */
+    }
   }
 }

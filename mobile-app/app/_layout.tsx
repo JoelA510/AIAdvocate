@@ -5,7 +5,7 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
-import { PaperProvider } from "react-native-paper";
+import { Provider as PaperProvider } from "react-native-paper";
 import "react-native-reanimated";
 import Toast from "react-native-toast-message";
 
@@ -25,6 +25,7 @@ export default function RootLayout() {
     }
   }, [fontError]);
 
+  // Render nothing while fonts load (keep your original behavior)
   if (!fontsLoaded && !fontError) {
     return null;
   }
@@ -33,16 +34,14 @@ export default function RootLayout() {
 
   return (
     <PaperProvider theme={theme}>
-      <ConfigProvider>
-        <AuthProvider>
-          <Stack>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          </Stack>
-          <Toast />
-          <StatusBar style="auto" />
-        </AuthProvider>
-      </ConfigProvider>
+      <AuthProvider>
+        <Stack>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        </Stack>
+        <Toast />
+        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+      </AuthProvider>
     </PaperProvider>
   );
 }

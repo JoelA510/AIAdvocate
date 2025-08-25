@@ -2,13 +2,16 @@
   "expo": {
     "name": "AI Advocate",
     "slug": "ai-advocate",
-    "owner": "loveneverfails",
+    "owner": "joela510",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mobileapp",
     "userInterfaceStyle": "automatic",
-    "displayName": "AI Advocate",
+
+    "description": "An AI-powered legal assistant app.",
+    "githubUrl": "https://github.com/JoelA510/AIAdvocate",
+
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon-foreground.png",
@@ -16,9 +19,9 @@
       },
       "package": "com.loveneverfails.aiadvocate",
       "googleServicesFile": "./google-services.json",
-      "edgeToEdgeEnabled": true,
       "versionCode": 1
     },
+
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.loveneverfails.aiadvocate",
@@ -28,11 +31,13 @@
       },
       "buildNumber": "1"
     },
+
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
       "expo-router",
       "expo-font",
@@ -47,22 +52,34 @@
       ],
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
-      "@react-native-firebase/app-check"
+      "@react-native-firebase/app-check",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static",
+            "deploymentTarget": "15.1"
+          },
+          "android": {
+            "minSdkVersion": 24
+          }
+        }
+      ]
     ],
+
     "experiments": {
       "typedRoutes": true
     },
+
     "extra": {
-      "router": {
-        "origin": false
-      },
-      "eas": {
-        "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c"
-      }
+      "router": { "origin": false },
+      "eas": { "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c" }
     },
+
     "updates": {
       "url": "https://u.expo.dev/2815e517-2761-4f1b-a1d9-57dc978c3b0c"
     },
+
     "runtimeVersion": "1.0.0"
   }
 }

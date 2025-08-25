@@ -9,7 +9,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.loveneverfails.aiadvocate</string>
+	<string>com.JoelA510.AIAdvocateTest</string>
 	<key>PROJECT_ID</key>
 	<string>aiadvocate-2a04d</string>
 	<key>STORAGE_BUCKET</key>
@@ -25,7 +25,7 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:1022996508433:ios:0e9d468d21aaa04ff9a6b0</string>
+	<string>1:1022996508433:ios:6d279783a8fe7ff8f9a6b0</string>
 	<key>DATABASE_URL</key>
 	<string>https://aiadvocate-2a04d-default-rtdb.firebaseio.com</string>
 </dict>

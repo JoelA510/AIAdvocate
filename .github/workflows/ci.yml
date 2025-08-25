@@ -1,0 +1,44 @@
+# .github/workflows/ci.yml
+
+name: Run Tests & Lint
+
+# This workflow runs on every push to any branch and on every pull request.
+on: [push, pull_request]
+
+jobs:
+  test-and-lint:
+    name: Test & Lint Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Check out the repository's code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Node.js environment (v20)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Use yarn's cache for faster dependency installation
+          cache: 'yarn'
+          cache-dependency-path: 'mobile-app/yarn.lock'
+
+      # Step 3: Install dependencies
+      # We specify the working-directory to ensure yarn runs inside the mobile-app folder.
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+        working-directory: ./mobile-app
+
+      # Step 4: Run the Jest tests
+      # The --ci flag optimizes Jest for CI environments.
+      # The --runInBand flag runs tests serially, which can prevent memory issues in CI.
+      - name: Run tests
+        run: yarn test --ci --runInBand
+        working-directory: ./mobile-app
+        
+      # Step 5: Run the linter
+      # This checks for code style and formatting issues.
+      - name: Run linter
+        run: yarn lint
+        working-directory: ./mobile-app

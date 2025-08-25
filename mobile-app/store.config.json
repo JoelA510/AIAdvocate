@@ -1,0 +1,16 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "info": {
+      "en-US": {
+        "title": "AI Advocate",
+        "subtitle": "AI-Powered Legislation Summarizer",
+        "description": "Concise summaries of CA legislation using AI.",
+        "keywords": ["legal", "ai", "assistant"],
+        "marketingUrl": "https://www.loveneverfailsus.com/",
+        "supportUrl": "https://www.loveneverfailsus.com/ai-advocate",
+        "privacyPolicyUrl": "https://www.loveneverfailsus.com/ai-advocate-privacy"
+      }
+    }
+  }
+}
