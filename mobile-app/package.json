@@ -45,6 +45,8 @@
     "react-dom": "19.0.0",
     "react-i18next": "^15.7.2",
     "react-native": "0.79.5",
+    "react-native-awesome-slider": "^2.9.0",
+    "react-native-gesture-handler": "~2.24.0",
     "react-native-modal": "^13.0.1",
     "react-native-paper": "^5.14.5",
     "react-native-picker-select": "^9.3.1",
