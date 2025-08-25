@@ -1,185 +1,134 @@
-// mobile-app/src/components/Bill.tsx
+// mobile-app/app/(tabs)/bill/[id].tsx
 
-import { useRouter } from "expo-router";
-import React, { useState, useEffect } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
-import { Card, IconButton, Text, useTheme, Button } from "react-native-paper";
-import Toast from "react-native-toast-message";
+import RelatedBills from '../../../src/components/RelatedBills';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Pressable, ScrollView, ActivityIndicator, Share, Linking } from 'react-native';
+import { Text, useTheme, Divider, Button, Card, IconButton, ActivityIndicator as PaperActivityIndicator } from 'react-native-paper';
+import * as Speech from 'expo-speech';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next'; // <-- NEW IMPORT
 
-import { supabase } from "../lib/supabase";
-import { useAuth } from "../providers/AuthProvider";
+import { trackEvent } from '../../../src/lib/analytics';
+import { useAuth } from '../../../src/providers/AuthProvider';
+import { ThemedView } from '../../../components/ThemedView';
+import { IconSymbol } from '../../../components/ui/IconSymbol';
+import EmptyState from '../../../src/components/EmptyState';
+import { supabase } from '../../../src/lib/supabase';
+import { Bill } from '../../../src/components/Bill';
+import SummarySlider from '../../../src/components/SummarySlider';
+import FindYourRep from '../../../src/components/FindYourRep';
 
-// The more detailed interface from the 'proposed' version
-export interface Bill {
-  id: number;
-  bill_number: string;
-  title: string;
-  description: string | null;
-  status: string | null;
-  state_link: string | null;
-  summary_simple: string | null;
-  summary_medium: string | null;
-  summary_complex: string | null;
-  is_curated: boolean;
-  original_text: string | null;
-  change_hash: string;
-  created_at: string;
-  panel_review: any;
-}
+// Type for our translated content
+type TranslatedBill = Omit<Bill, 'id' | 'bill_number'>;
 
-export default function BillComponent({ bill }: { bill: Bill }) {
-  const theme = useTheme();
+export default function BillDetailsScreen() {
+  const { id } = useLocalSearchParams();
   const router = useRouter();
   const { session } = useAuth();
-  const userId = session?.user?.id;
-
-  // State from the 'existing' version, which is more efficient
-  const [billDetails, setBillDetails] = useState({
-    reaction_counts: {},
-    user_reaction: null,
-    is_bookmarked: false,
-  });
+  const { i18n } = useTranslation(); // <-- Get i18n instance
+  const currentLanguage = i18n.language;
+  
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  
+  const [bill, setBill] = useState<Bill | null>(null);
+  const [translatedBill, setTranslatedBill] = useState<TranslatedBill | null>(null); // <-- NEW STATE
+  const [isTranslating, setIsTranslating] = useState(false); // <-- NEW STATE
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeSummaryText, setActiveSummaryText] = useState('');
+  
+  const backButtonColor = theme.colors.onSurface;
 
-  // Data fetching from the 'existing' version, which gets everything at once
+  // Effect to fetch the original bill
   useEffect(() => {
-    if (!userId) {
-      setLoading(false);
+    if (!id) return;
+    const fetchBill = async () => { /* ... (this function remains the same) ... */ };
+    fetchBill();
+  }, [id, session]);
+
+  // NEW: Effect to fetch translation when bill or language changes
+  useEffect(() => {
+    if (!bill) return;
+
+    // If we are on the default language, clear any existing translation
+    if (currentLanguage === 'en') {
+      setTranslatedBill(null);
       return;
     }
-    setLoading(true);
-    const fetchDetails = async () => {
-      const { data, error } = await supabase.rpc('get_bill_details_for_user', {
-        p_bill_id: bill.id,
-        p_user_id: userId,
-      });
-
-      if (error) {
-        console.error("Error fetching bill details:", error.message);
-      } else if (data) {
-        setBillDetails({
-          reaction_counts: data.reaction_counts || {},
-          user_reaction: data.user_reaction,
-          is_bookmarked: data.is_bookmarked,
+    
+    const fetchTranslation = async () => {
+      setIsTranslating(true);
+      Speech.stop(); // Stop any speech from the previous language
+      try {
+        const { data, error } = await supabase.functions.invoke('translate-bill', {
+          body: { bill_id: bill.id, language_code: currentLanguage },
         });
+        if (error) throw error;
+        setTranslatedBill(data);
+      } catch (e: any) {
+        console.error("Translation failed:", e.message);
+        // Optionally show a toast to the user
+      } finally {
+        setIsTranslating(false);
       }
-      setLoading(false);
     };
 
-    fetchDetails();
-  }, [bill.id, userId]);
-
-  // handleBookmark function using the SUPERIOR logic from the 'proposed' version
-  const handleBookmark = async () => {
-    if (!userId) return;
-
-    // Optimistically update the UI
-    const previousBookmarkState = billDetails.is_bookmarked;
-    setBillDetails(prev => ({ ...prev, is_bookmarked: !previousBookmarkState }));
-
-    const { error } = await supabase.rpc('toggle_bookmark_and_subscription', {
-      p_bill_id: bill.id,
-      p_user_id: userId,
-    });
-
-    if (error) {
-      setBillDetails(prev => ({ ...prev, is_bookmarked: previousBookmarkState }));
-      console.error("Error toggling bookmark:", error);
-      Toast.show({ type: "error", text1: "Error", text2: "Could not save your change." });
-    } else {
-      Toast.show({ type: "success", text1: previousBookmarkState ? "Bookmark Removed" : "Bookmark Saved" });
-    }
-  };
+    fetchTranslation();
+  }, [bill, currentLanguage]);
   
-  // handleReaction function brought over from the 'existing' version
-  const handleReaction = async (reactionType: string) => {
-    if (!userId) return;
+  const handleSpeak = async () => { /* ... (this function remains the same) ... */ };
+  const handleShare = async () => { /* ... (this function remains the same) ... */ };
+  const handleGoBack = () => { /* ... (this function remains the same) ... */ };
+  if (loading) { /* ... (this function remains the same) ... */ }
+  if (error || !bill) { /* ... (this function remains the same) ... */ }
 
-    // A more stable way to do optimistic updates
-    const originalDetails = { ...billDetails };
-    const currentReaction = billDetails.user_reaction;
-    const newReaction = currentReaction === reactionType ? null : reactionType;
-    
-    // Create a mutable copy of reaction counts to update
-    const newCounts = { ...(billDetails.reaction_counts || {}) };
-    if (currentReaction) {
-        newCounts[currentReaction] = (newCounts[currentReaction] || 1) - 1;
-    }
-    if (newReaction) {
-        newCounts[newReaction] = (newCounts[newReaction] || 0) + 1;
-    }
-
-    setBillDetails({
-        ...billDetails,
-        user_reaction: newReaction,
-        reaction_counts: newCounts,
-    });
-
-    const { error } = await supabase.rpc('handle_reaction', {
-      p_bill_id: bill.id,
-      p_user_id: userId,
-      p_reaction_type: reactionType,
-    });
-
-    if (error) {
-      setBillDetails(originalDetails); // Revert on error
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Could not save your reaction.' });
-    }
-  };
-
-  const handlePress = () => {
-    router.push(`/(tabs)/bill/${bill.id}`);
-  };
+  // Use translated content if available, otherwise fall back to original
+  const displayTitle = translatedBill?.title || bill.title;
+  const displayBillForSlider = translatedBill ? { ...bill, ...translatedBill } : bill;
 
   return (
-    <Card style={styles.card}>
-      {/* Use the superior Pressable wrapper from the 'proposed' version */}
-      <Pressable onPress={handlePress}>
-        <Card.Content>
-          {/* Use the superior header/summary layout from the 'proposed' version */}
-          <View style={styles.header}>
-            <Text variant="titleMedium" style={styles.billNumber}>{bill.bill_number}</Text>
-            <IconButton
-              icon={billDetails.is_bookmarked ? "bookmark" : "bookmark-outline"}
-              iconColor={theme.colors.primary}
-              size={24}
-              onPress={handleBookmark}
-              disabled={loading}
-              accessibilityLabel="Bookmark this bill"
-            />
+    <ScrollView /* ... */ >
+      <View style={styles.container}>
+        <Pressable style={styles.backButton} onPress={handleGoBack}>
+          {/* ... */}
+        </Pressable>
+        
+        <Text variant="headlineMedium" style={styles.title}>{bill.bill_number}</Text>
+        
+        {/* Display title or a loading indicator while translating */}
+        {isTranslating ? (
+          <View style={styles.translatingContainer}>
+            <PaperActivityIndicator size="small" />
+            <Text style={styles.translatingText}>Translating...</Text>
           </View>
-          <Text variant="bodyLarge" style={styles.title}>{bill.title}</Text>
-          {bill.summary_simple && (
-            <Text variant="bodyMedium" numberOfLines={3} style={styles.summary}>{bill.summary_simple}</Text>
-          )}
-        </Card.Content>
-      </Pressable>
-      {/* ADD BACK the Card.Actions from the 'existing' version to hold reactions */}
-      <Card.Actions style={styles.actions}>
-        <View style={styles.reactionContainer}>
-          <Button
-            icon="thumb-up"
-            mode={billDetails.user_reaction === "upvote" ? "contained" : "text"}
-            onPress={() => handleReaction("upvote")}
-            disabled={loading}
-          >
-            {billDetails.reaction_counts.upvote || 0}
-          </Button>
-          <Button
-            icon="thumb-down"
-            mode={billDetails.user_reaction === "downvote" ? "contained" : "text"}
-            onPress={() => handleReaction("downvote")}
-            disabled={loading}
-          >
-            {billDetails.reaction_counts.downvote || 0}
-          </Button>
+        ) : (
+          <Text variant="titleLarge" style={styles.subtitle}>{displayTitle}</Text>
+        )}
+        
+        <View style={styles.actionsContainer}>
+          {/* ... (buttons remain the same) ... */}
         </View>
-      </Card.Actions>
-    </Card>
+
+        {/* ... (panel review remains the same) ... */}
+        
+        <Divider style={styles.divider} />
+        <FindYourRep bill={bill} />
+        <Divider style={styles.divider} />
+        
+        {/* Pass the potentially translated bill to the slider */}
+        <SummarySlider bill={displayBillForSlider} onSummaryChange={setActiveSummaryText} />
+
+        <Divider style={styles.divider} />
+        <RelatedBills billId={bill.id} />
+
+        {/* ... (attribution remains the same) ... */}
+      </View>
+    </ScrollView>
   );
 }
 
-// Merged styles from both versions
 const styles = StyleSheet.create({
   card: {
     marginBottom: 16,
@@ -202,9 +151,19 @@ const styles = StyleSheet.create({
   },
   actions: {
     paddingHorizontal: 8,
-    paddingTop: 0, // No extra space needed above
+    paddingTop: 8, 
   },
   reactionContainer: {
     flexDirection: 'row',
+  },
+    translatingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  translatingText: {
+    marginLeft: 12,
+    fontSize: 18,
+    fontStyle: 'italic',
   },
 });

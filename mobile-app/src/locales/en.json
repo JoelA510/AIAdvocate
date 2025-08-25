@@ -1,9 +1,13 @@
 {
   "tabs": {
     "bills": "Bills",
-    "highlighted": "Highlighted",
     "saved": "Saved",
+    "highlighted": "Highlighted",
     "lnf": "LNF",
     "advocacy": "Advocacy"
+  },
+  "billDetails": {
+    "share": "Share",
+    "speak": "Speak summary"
   }
 }

@@ -1,0 +1,13 @@
+{
+  "tabs": {
+    "bills": "Proyectos",
+    "saved": "Guardado",
+    "highlighted": "Destacado",
+    "lnf": "LNF",
+    "advocacy": "Abogacía"
+  },
+  "billDetails": {
+    "share": "Compartir",
+    "speak": "Leer resumen"
+  }
+}
