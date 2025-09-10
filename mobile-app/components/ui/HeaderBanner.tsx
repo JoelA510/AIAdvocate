@@ -1,34 +1,71 @@
-// mobile-app/src/components/HeaderBanner.tsx
+// mobile-app/components/ui/HeaderBanner.tsx
+import React, { useEffect } from "react";
+import { StyleSheet, Image, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from "react-native-reanimated";
+import { ThemedView } from "../ThemedView";
 
-import React from 'react';
-import { Image, StyleSheet, useColorScheme, View } from 'react-native';
-import { useTheme } from 'react-native-paper';
-import { useSafeAreaInsets } from 'react-native-safe-area-context'; // 1. Import the hook
+// Update this path to your real asset if different
+const bannerSource = require("../../assets/images/header-banner.png");
 
-const HeaderBanner = () => {
-  const theme = useTheme();
-  const colorScheme = useColorScheme();
-  const insets = useSafeAreaInsets(); // 2. Get the safe area insets
+// ensure only one animation per app run
+let hasAnimatedOnce = false;
 
-  const bannerTintColor = colorScheme === 'dark' ? theme.colors.primary : theme.colors.onSurface;
+export default function HeaderBanner() {
+  const insets = useSafeAreaInsets();
+  const progress = useSharedValue(hasAnimatedOnce ? 1 : 0);
+
+  const styleA = useAnimatedStyle(() => {
+    const translateY = (1 - progress.value) * 24; // gentle slide up
+    const opacity = progress.value < 0.05 ? 0 : 1;
+    return { transform: [{ translateY }], opacity };
+  });
+
+  useEffect(() => {
+    if (hasAnimatedOnce) return;
+    progress.value = withTiming(1, {
+      duration: 600,
+      easing: Easing.out(Easing.cubic),
+    });
+    hasAnimatedOnce = true;
+  }, [progress]); // ← add progress to deps
 
   return (
-    // 3. Apply the top inset as padding to the container View
-    <View style={{ backgroundColor: theme.colors.background, paddingTop: insets.top }}>
-      <Image
-        source={require('../../assets/images/banner.png')}
-        style={[styles.banner, { tintColor: bannerTintColor }]}
-        resizeMode="contain"
-      />
-    </View>
+    <ThemedView style={[styles.wrap, { paddingTop: insets.top }]}>
+      <Animated.View
+        style={[
+          styleA,
+          Platform.select({
+            web: { position: "relative" },
+            default: { position: "relative" },
+          }),
+        ]}
+      >
+        <Image
+          source={bannerSource}
+          resizeMode="contain"
+          style={styles.bannerImage}
+          accessibilityRole="image"
+          accessibilityLabel="AI Advocate"
+        />
+      </Animated.View>
+    </ThemedView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  banner: {
-    width: '100%',
-    height: 50, // This is the height of the image itself
+  wrap: {
+    width: "100%",
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  bannerImage: {
+    width: "100%",
+    height: 48,
   },
 });
-
-export default HeaderBanner;

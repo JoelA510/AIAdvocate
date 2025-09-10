@@ -47,7 +47,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
     }
     setLoading(true);
     const fetchDetails = async () => {
-      const { data, error } = await supabase.rpc('get_bill_details_for_user', {
+      const { data, error } = await supabase.rpc("get_bill_details_for_user", {
         p_bill_id: bill.id,
         p_user_id: userId,
       });
@@ -70,39 +70,42 @@ export default function BillComponent({ bill }: { bill: Bill }) {
   const handleBookmark = async () => {
     if (!userId) return;
     const previousBookmarkState = billDetails.is_bookmarked;
-    setBillDetails(prev => ({ ...prev, is_bookmarked: !previousBookmarkState }));
+    setBillDetails((prev) => ({ ...prev, is_bookmarked: !previousBookmarkState }));
 
-    const { error } = await supabase.rpc('toggle_bookmark_and_subscription', {
+    const { error } = await supabase.rpc("toggle_bookmark_and_subscription", {
       p_bill_id: bill.id,
       p_user_id: userId,
     });
 
     if (error) {
-      setBillDetails(prev => ({ ...prev, is_bookmarked: previousBookmarkState }));
+      setBillDetails((prev) => ({ ...prev, is_bookmarked: previousBookmarkState }));
       console.error("Error toggling bookmark:", error);
       Toast.show({ type: "error", text1: "Error", text2: "Could not save your change." });
     } else {
-      Toast.show({ type: "success", text1: previousBookmarkState ? "Bookmark Removed" : "Bookmark Saved" });
+      Toast.show({
+        type: "success",
+        text1: previousBookmarkState ? "Bookmark Removed" : "Bookmark Saved",
+      });
     }
   };
-  
+
   const handleReaction = async (reactionType: string) => {
     if (!userId) return;
     const originalDetails = { ...billDetails };
     const currentReaction = billDetails.user_reaction;
     const newReaction = currentReaction === reactionType ? null : reactionType;
-    
+
     const newCounts = { ...(billDetails.reaction_counts || {}) };
     if (currentReaction) {
-        newCounts[currentReaction] = (newCounts[currentReaction] || 1) - 1;
+      newCounts[currentReaction] = (newCounts[currentReaction] || 1) - 1;
     }
     if (newReaction) {
-        newCounts[newReaction] = (newCounts[newReaction] || 0) + 1;
+      newCounts[newReaction] = (newCounts[newReaction] || 0) + 1;
     }
 
     setBillDetails({ ...billDetails, user_reaction: newReaction, reaction_counts: newCounts });
 
-    const { error } = await supabase.rpc('handle_reaction', {
+    const { error } = await supabase.rpc("handle_reaction", {
       p_bill_id: bill.id,
       p_user_id: userId,
       p_reaction_type: reactionType,
@@ -110,7 +113,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
 
     if (error) {
       setBillDetails(originalDetails);
-      Toast.show({ type: 'error', text1: 'Error', text2: 'Could not save your reaction.' });
+      Toast.show({ type: "error", text1: "Error", text2: "Could not save your reaction." });
     }
   };
 
@@ -123,7 +126,9 @@ export default function BillComponent({ bill }: { bill: Bill }) {
       <Pressable onPress={handlePress}>
         <Card.Content>
           <View style={styles.header}>
-            <Text variant="titleMedium" style={styles.billNumber}>{bill.bill_number}</Text>
+            <Text variant="titleMedium" style={styles.billNumber}>
+              {bill.bill_number}
+            </Text>
             <IconButton
               icon={billDetails.is_bookmarked ? "bookmark" : "bookmark-outline"}
               iconColor={theme.colors.primary}
@@ -133,9 +138,13 @@ export default function BillComponent({ bill }: { bill: Bill }) {
               accessibilityLabel="Bookmark this bill"
             />
           </View>
-          <Text variant="bodyLarge" style={styles.title}>{bill.title}</Text>
+          <Text variant="bodyLarge" style={styles.title}>
+            {bill.title}
+          </Text>
           {bill.summary_simple && (
-            <Text variant="bodyMedium" numberOfLines={3} style={styles.summary}>{bill.summary_simple}</Text>
+            <Text variant="bodyMedium" numberOfLines={3} style={styles.summary}>
+              {bill.summary_simple}
+            </Text>
           )}
         </Card.Content>
       </Pressable>
@@ -165,10 +174,15 @@ export default function BillComponent({ bill }: { bill: Bill }) {
 
 const styles = StyleSheet.create({
   card: { marginBottom: 16 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
   billNumber: { fontWeight: "bold" },
   title: { marginBottom: 8, lineHeight: 22 },
-  summary: { color: 'grey' },
+  summary: { color: "grey" },
   actions: { paddingHorizontal: 8, paddingTop: 0 },
-  reactionContainer: { flexDirection: 'row' },
+  reactionContainer: { flexDirection: "row" },
 });

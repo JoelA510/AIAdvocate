@@ -1,73 +1,63 @@
 // mobile-app/app/(tabs)/lnf.tsx
+import React from "react";
+import { StyleSheet, View, Platform, Linking, Pressable } from "react-native";
+import { Stack } from "expo-router";
+import { useTranslation } from "react-i18next";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { WebView } from "react-native-webview";
+import { ThemedView } from "../../components/ThemedView";
+import { ThemedText } from "../../components/ThemedText";
+import { useTheme, Card, Button } from "react-native-paper";
 
-import React from 'react';
-import { StyleSheet, Platform } from 'react-native';
-import { WebView } from 'react-native-webview';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Linking from 'expo-linking';
-import { ThemedView } from '../../components/ThemedView';
-import { Text, Button } from 'react-native-paper';
-
-const LNF_URL = 'https://www.loveneverfailsus.com/ai-advocate';
+const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
+  "https://www.loveneverfailsus.com/") as string;
 
 export default function LnfScreen() {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
 
-  if (Platform.OS === 'web') {
-    return (
-      <ThemedView style={[styles.containerWeb, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <Text variant="headlineSmall" style={styles.titleWeb}>
-          Visit Love Never Fails
-        </Text>
-        <Text variant="bodyLarge" style={styles.textWeb}>
-          Our web view is best experienced on our full site.
-        </Text>
-        <Button
-          mode="contained"
-          onPress={() => Linking.openURL(LNF_URL)}
-          style={styles.buttonWeb}
-        >
-          Open loveneverfailsus.com
-        </Button>
-      </ThemedView>
-    );
-  }
-
-  // On native, wrap the WebView in a ThemedView with padding
   return (
-    <ThemedView style={[styles.containerNative, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <WebView
-        source={{ uri: LNF_URL }}
-        style={styles.webview}
-        allowsInlineMediaPlayback
-        javaScriptEnabled
-        domStorageEnabled
+    <ThemedView style={styles.container}>
+      <Stack.Screen
+        options={{ title: t("tabs.lnf", { defaultValue: "LNF" }), headerShown: false }}
       />
+      <View style={[styles.content, { paddingTop: insets.top }]}>
+        {Platform.OS === "web" ? (
+          <Card mode="elevated" style={styles.heroCard}>
+            <Pressable onPress={() => Linking.openURL(FEED_URL)} style={{ flex: 1 }}>
+              <View style={styles.heroBody}>
+                <ThemedText type="title" style={{ marginBottom: 8 }}>
+                  {t("lnf.webBestAtSource", { defaultValue: "Best experienced on the website" })}
+                </ThemedText>
+                <ThemedText style={{ opacity: 0.8, marginBottom: 16 }}>
+                  {t("lnf.webCspNote", {
+                    defaultValue:
+                      "This publisher blocks embedding for security. Click below to open the feed directly.",
+                  })}
+                </ThemedText>
+                <Button mode="contained" onPress={() => Linking.openURL(FEED_URL)}>
+                  {t("lnf.open", { defaultValue: "Open Feed" })}
+                </Button>
+              </View>
+            </Pressable>
+          </Card>
+        ) : (
+          <WebView
+            source={{ uri: FEED_URL }}
+            startInLoadingState
+            setSupportMultipleWindows={false}
+            style={{ flex: 1 }}
+          />
+        )}
+      </View>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  containerNative: {
-    flex: 1,
-  },
-  webview: {
-    flex: 1,
-  },
-  containerWeb: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    gap: 16,
-  },
-  titleWeb: {
-    fontWeight: 'bold',
-  },
-  textWeb: {
-    textAlign: 'center',
-  },
-  buttonWeb: {
-    marginTop: 16,
-  },
+  container: { flex: 1 },
+  content: { flex: 1, paddingHorizontal: 16 },
+  heroCard: { flex: 1, justifyContent: "center" },
+  heroBody: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 8 },
 });

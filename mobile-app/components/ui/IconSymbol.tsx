@@ -4,10 +4,7 @@ import { SymbolWeight, SymbolViewProps } from "expo-symbols";
 import { ComponentProps } from "react";
 import { OpaqueColorValue, type StyleProp, type TextStyle } from "react-native";
 
-type IconMapping = Record<
-  SymbolViewProps["name"],
-  ComponentProps<typeof MaterialIcons>["name"]
->;
+type IconMapping = Record<SymbolViewProps["name"], ComponentProps<typeof MaterialIcons>["name"]>;
 type IconSymbolName = keyof typeof MAPPING;
 
 const MAPPING = {
@@ -17,7 +14,7 @@ const MAPPING = {
   "bookmark.fill": "bookmark",
   "paperplane.fill": "send", // Re-adding in case it's used in EmptyState
   "file-search-outline": "find-in-page", // NEW: Mapping for the search empty state
-  "sparkles": "auto-awesome",
+  sparkles: "auto-awesome",
   "person.2.fill": "group",
 } as IconMapping;
 
@@ -33,12 +30,5 @@ export function IconSymbol({
   style?: StyleProp<TextStyle>;
   weight?: SymbolWeight;
 }) {
-  return (
-    <MaterialIcons
-      color={color}
-      size={size}
-      name={MAPPING[name]}
-      style={style}
-    />
-  );
+  return <MaterialIcons color={color} size={size} name={MAPPING[name]} style={style} />;
 }

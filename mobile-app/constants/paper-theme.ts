@@ -1,34 +1,33 @@
-import { MD3LightTheme, MD3DarkTheme } from "react-native-paper";
+import { MD3LightTheme, MD3DarkTheme, configureFonts } from "react-native-paper";
 
-// Define a custom font configuration if needed, or use the default
+// Map MD3 type tokens to your font family.
+// Make sure the font is loaded with the same key in app/_layout.tsx.
 const fontConfig = {
-  fontFamily: "System",
+  displayLarge: { fontFamily: "SpaceMono-Regular" },
+  displayMedium: { fontFamily: "SpaceMono-Regular" },
+  headlineLarge: { fontFamily: "SpaceMono-Regular" },
+  headlineMedium: { fontFamily: "SpaceMono-Regular" },
+  titleLarge: { fontFamily: "SpaceMono-Regular" },
+  titleMedium: { fontFamily: "SpaceMono-Regular" },
+  bodyLarge: { fontFamily: "SpaceMono-Regular" },
+  bodyMedium: { fontFamily: "SpaceMono-Regular" },
+  labelLarge: { fontFamily: "SpaceMono-Regular" },
 };
 
 export const LightTheme = {
   ...MD3LightTheme,
-  fonts: {
-    ...MD3LightTheme.fonts,
-    // You can override specific font styles here
-    // default: { ...MD3LightTheme.fonts.default, fontFamily: fontConfig.fontFamily },
-  },
-  // You can also add custom colors here
+  fonts: configureFonts({ config: fontConfig }),
   colors: {
     ...MD3LightTheme.colors,
     primary: "#0a7ea4",
-    accent: "#c7e0f4",
   },
 };
 
 export const DarkTheme = {
   ...MD3DarkTheme,
-  fonts: {
-    ...MD3DarkTheme.fonts,
-    // default: { ...MD3DarkTheme.fonts.default, fontFamily: fontConfig.fontFamily },
-  },
+  fonts: configureFonts({ config: fontConfig }),
   colors: {
     ...MD3DarkTheme.colors,
     primary: "#ffffff",
-    accent: "#3a3a3a",
   },
 };

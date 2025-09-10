@@ -1,13 +1,101 @@
 {
-  "tabs": {
-    "bills": "Bills",
-    "saved": "Saved",
-    "highlighted": "Highlighted",
-    "lnf": "LNF",
-    "advocacy": "Advocacy"
+  "bill": {
+    "attribution": { "legiscan": "Original text provided by LegiScan" },
+    "missing": "Bill Not Found",
+    "missingMsg": "The bill with ID #{{id}} could not be found.",
+    "panel": { "recommendation": "Recommendation: {{r}}", "title": "Survivor Panel Review" },
+    "shareMessage": "Check out this bill: {{num}} - {{title}}.",
+    "translating": "Translating…"
   },
-  "billDetails": {
-    "share": "Share",
-    "speak": "Speak summary"
+  "chamber": { "lower": "Assembly", "upper": "Senate" },
+  "common": {
+    "apply": "Apply",
+    "back": "Back",
+    "call": "Call",
+    "cancel": "Cancel",
+    "email": "Email",
+    "search": "Search",
+    "share": "Share"
+  },
+  "config": {
+    "errorTitle": "Configuration Error",
+    "errorHint": "Check your mobile-app/.env and restart the dev server."
+  },
+  "email": {
+    "to": "To",
+    "subject": "Subject",
+    "copy": "Copy",
+    "openInApp": "Open in Email App",
+    "subjectLine": "Regarding Bill: {{num}} - {{title}}",
+    "bodyTemplate": "Dear {{name}},\n\nI am writing to you as a concerned constituent regarding bill {{num}}.\n\n[Your message here - explain your position]\n\nThank you for your time and service.\n\nSincerely,\n[Your Name]",
+    "noEmailTitle": "No Email Found",
+    "noEmailMessage": "No email address is available for this legislator.",
+    "copiedTitle": "Copied!",
+    "copiedMessage": "The email template has been copied to your clipboard.",
+    "composeTo": "Compose an Email"
+  },
+  "error": { "title": "An Error Occurred" },
+  "findYourRep": {
+    "error": {
+      "empty": "Please enter an address or ZIP code.",
+      "generic": "Failed to look up representatives.",
+      "none": "No representatives found for that location."
+    },
+    "placeholder": "Enter address or ZIP (e.g., 94546)",
+    "searching": "Searching…",
+    "title": "Find Your Representatives",
+    "viewProfile": "View profile"
+  },
+  "language": {
+    "name": { "en": "English", "es": "Español", "qps": "Pseudo" },
+    "title": "Language"
+  },
+  "legislator": {
+    "partyLabel": "Party: {{party}}",
+    "ally": "LNF Ally",
+    "cta": { "takeAction": "Take Action" },
+    "votingRecord": "Voting Record",
+    "vote": "Vote: {{option}}",
+    "district": "District"
+  },
+  "lnf": {
+    "visitTitle": "Visit Love Never Fails",
+    "bestOnWeb": "Our web view is best experienced on our full site.",
+    "openSite": "Open loveneverfailsus.com"
+  },
+  "notFound": { "title": "This screen does not exist.", "homeCta": "Go to home screen!" },
+  "party": {
+    "democratic": "Democratic",
+    "independent": "Independent",
+    "nonpartisan": "Nonpartisan",
+    "republican": "Republican"
+  },
+  "relatedBills": {
+    "title": "Related Bills",
+    "error": "Could not load related bills.",
+    "loading": "Finding related bills..."
+  },
+  "summary": { "aiTitle": "AI-Generated Summary" },
+  "share": {
+    "copied": "Link copied to clipboard",
+    "error": { "title": "Share failed" },
+    "nothing": "Nothing to share",
+    "legislatorMessage": "Check out {{name}}"
+  },
+  "tabs": {
+    "advocacy": "advocacy",
+    "bills": "bills",
+    "highlighted": "highlighted",
+    "lnf": "lnf",
+    "saved": "saved",
+    "explore": { "title": "Explore Bills" },
+    "highlightedSection": { "title": "Highlighted Bills" },
+    "savedSection": { "title": "Saved Bills" }
+  },
+  "tts": {
+    "empty": "Nothing to read yet",
+    "error": { "title": "Text-to-speech error" },
+    "label": "Speak summary",
+    "unsupported": "Text-to-speech not supported in this browser."
   }
 }

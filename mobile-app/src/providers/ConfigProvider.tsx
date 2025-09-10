@@ -1,14 +1,14 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../lib/supabase';
-import { AppConfig, setConfig } from '../lib/config';
+import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "../lib/supabase";
+import { AppConfig, setConfig } from "../lib/config";
 
 const ConfigContext = createContext<AppConfig | null>(null);
 
 export const useConfig = () => {
   const context = useContext(ConfigContext);
   if (!context) {
-    throw new Error('useConfig must be used within a ConfigProvider');
+    throw new Error("useConfig must be used within a ConfigProvider");
   }
   return context;
 };
@@ -19,57 +19,55 @@ interface ConfigProviderProps {
 
 export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
   const [config, setStateConfig] = useState<AppConfig | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchAndCacheConfig = async () => {
       try {
-        // Try to get config from cache first
-        const cachedConfig = await AsyncStorage.getItem('app_config');
+        // 1) Try cache first
+        const cachedConfig = await AsyncStorage.getItem("app_config");
         if (cachedConfig) {
           const parsedConfig = JSON.parse(cachedConfig);
           setStateConfig(parsedConfig);
           setConfig(parsedConfig);
         }
 
-        // Fetch config from Supabase
-        const { data, error } = await supabase.from('app_config').select('key, value');
-
-        if (error) {
-          throw error;
-        }
+        // 2) Fetch the latest from Supabase
+        const { data, error } = await supabase.from("app_config").select("key, value");
+        if (error) throw error;
 
         if (data) {
           const newConfig = data.reduce((acc: AppConfig, { key, value }) => {
             acc[key] = value;
             return acc;
-          }, {});
+          }, {} as AppConfig);
 
-          // Update state, cache, and global config
           setStateConfig(newConfig);
           setConfig(newConfig);
-          await AsyncStorage.setItem('app_config', JSON.stringify(newConfig));
+          await AsyncStorage.setItem("app_config", JSON.stringify(newConfig));
         }
-      } catch (error) {
-        console.error('Error fetching app configuration:', error);
-        // If fetching fails, rely on cached config if available
-        if (!config) {
-          // Handle case where there is no cached config and fetching fails
-          // You might want to show an error message to the user
-        }
+      } catch (e) {
+        console.error("Error fetching app configuration:", e);
+        // Optional: surface a UI error flag here if no cache was applied
+        // (we intentionally avoid referencing `config` inside this effect
+        // to keep the deps array empty and avoid fetch loops)
+      } finally {
+        setLoading(false);
       }
     };
 
     fetchAndCacheConfig();
-  }, []);
+  }, []); // mounted once; no external values read inside
 
-  if (!config) {
-    // You can render a loading indicator here while the config is being fetched
-    return null; // Or a loading spinner
+  if (loading && !config) {
+    // Render nothing or a spinner while fetching the initial config
+    return null;
   }
 
-  return (
-    <ConfigContext.Provider value={config}>
-      {children}
-    </ConfigContext.Provider>
-  );
+  if (!config) {
+    // If still no config after loading, you could return an error screen instead.
+    return null;
+  }
+
+  return <ConfigContext.Provider value={config}>{children}</ConfigContext.Provider>;
 };

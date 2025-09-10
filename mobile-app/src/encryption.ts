@@ -1,9 +1,9 @@
 // mobile-app/src/lib/encryption.ts
 
-import * as SecureStore from 'expo-secure-store';
-import CryptoJS from 'crypto-js';
+import * as SecureStore from "expo-secure-store";
+import CryptoJS from "crypto-js";
 
-const ENCRYPTION_KEY_NAME = 'user_notes_encryption_key';
+const ENCRYPTION_KEY_NAME = "user_notes_encryption_key";
 
 /**
  * Retrieves the user's unique encryption key from secure storage.
@@ -16,7 +16,7 @@ async function getEncryptionKey(): Promise<string> {
   if (!key) {
     key = CryptoJS.lib.WordArray.random(32).toString(CryptoJS.enc.Hex);
     await SecureStore.setItemAsync(ENCRYPTION_KEY_NAME, key);
-    console.log('New encryption key generated and saved.');
+    console.log("New encryption key generated and saved.");
   }
 
   return key;
@@ -28,7 +28,7 @@ async function getEncryptionKey(): Promise<string> {
  * @returns A promise that resolves to the ciphertext string.
  */
 export async function encryptNote(plaintext: string): Promise<string> {
-  if (!plaintext) return '';
+  if (!plaintext) return "";
   const key = await getEncryptionKey();
   const ciphertext = CryptoJS.AES.encrypt(plaintext, key).toString();
   return ciphertext;
@@ -40,7 +40,7 @@ export async function encryptNote(plaintext: string): Promise<string> {
  * @returns A promise that resolves to the original plaintext string.
  */
 export async function decryptNote(ciphertext: string): Promise<string> {
-  if (!ciphertext) return '';
+  if (!ciphertext) return "";
   try {
     const key = await getEncryptionKey();
     const bytes = CryptoJS.AES.decrypt(ciphertext, key);

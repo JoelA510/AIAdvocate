@@ -5,7 +5,7 @@ import { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Toast from "react-native-toast-message";
 // NEW: Import our push notification registration function
-import { registerForPushNotificationsAsync } from '../lib/push';
+import { registerForPushNotificationsAsync } from "../lib/push";
 
 type AuthContextType = {
   session: Session | null;
@@ -24,9 +24,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     const fetchSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       setSession(session);
-      
+
       // If there's no session, we need to sign in anonymously.
       if (!session) {
         try {
@@ -44,12 +46,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     fetchSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
-        setLoading(false); // Also set loading to false when the session changes
-      }
-    );
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setLoading(false); // Also set loading to false when the session changes
+    });
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -64,11 +64,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [session]); // This effect runs whenever the session changes
 
-  return (
-    <AuthContext.Provider value={{ session, loading }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={{ session, loading }}>{children}</AuthContext.Provider>;
 };
 
 // Use the slightly cleaner useAuth hook from the proposed version

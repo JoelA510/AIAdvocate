@@ -8,10 +8,5 @@ export function ThemedView({ style, ...otherProps }: ThemedViewProps) {
   // Get the theme from the PaperProvider context.
   const theme = useTheme();
 
-  return (
-    <View
-      style={[{ backgroundColor: theme.colors.background }, style]}
-      {...otherProps}
-    />
-  );
+  return <View style={[{ backgroundColor: theme.colors.background }, style]} {...otherProps} />;
 }

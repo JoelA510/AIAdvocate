@@ -1,162 +1,149 @@
-// mobile-app/src/components/FindYourRep.tsx
+import React, { useState } from "react";
+import { View, StyleSheet, Linking, Platform } from "react-native";
+import {
+  Text,
+  TextInput,
+  Button,
+  Card,
+  ActivityIndicator,
+  useTheme,
+  Divider,
+} from "react-native-paper";
+import { useTranslation } from "react-i18next";
+import { findYourRep } from "@/lib/find-your-representative";
 
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
-import { TextInput, Button, Card, Text, ActivityIndicator, useTheme, Divider } from 'react-native-paper';
-import RNPickerSelect from 'react-native-picker-select';
-import { findYourRep } from '../lib/find-your-representative';
-import { supabase } from '../lib/supabase';
-import { Bill } from './Bill';
-import EmailTemplate from './EmailTemplate';
-
-type FindYourRepProps = {
-  bill?: Bill;
+type Person = {
+  id?: string | number;
+  name?: string;
+  email?: string | null;
+  current_role?: {
+    org_classification?: "upper" | "lower" | null;
+    district?: string | number | null;
+    title?: string | null;
+  } | null;
+  party?: string | null;
+  offices?: { email?: string | null }[] | null;
 };
-type SearchStatus = 'idle' | 'loading' | 'success' | 'empty';
 
-export default function FindYourRep({ bill: initialBill }: FindYourRepProps) {
+function nameOf(p: Person) {
+  return p?.name ?? "—";
+}
+
+export default function FindYourRep({ bill }: { bill?: any }) {
+  const { t } = useTranslation();
   const theme = useTheme();
-  const [address, setAddress] = useState('');
-  const [representatives, setRepresentatives] = useState<any[]>([]);
-  const [status, setStatus] = useState<SearchStatus>('idle');
-  const [allBills, setAllBills] = useState<Bill[]>([]);
-  const [selectedBillId, setSelectedBillId] = useState<number | null>(initialBill?.id || null);
-  const [selectedLegislator, setSelectedLegislator] = useState<any | null>(null);
 
-  useEffect(() => {
-    if (!initialBill) {
-      const fetchBills = async () => {
-        const { data } = await supabase.from('bills').select('*').order('bill_number');
-        if (data) setAllBills(data);
-      };
-      fetchBills();
+  const [value, setValue] = useState("");
+  const [results, setResults] = useState<Person[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const onSearch = async () => {
+    setErr(null);
+    if (!value.trim()) {
+      setErr(t("findYourRep.error.empty", "Please enter an address or ZIP code."));
+      return;
     }
-  }, [initialBill]);
-
-  const handleFindRep = async () => {
-    if (!address) return;
-    setStatus('loading');
-    setRepresentatives([]);
-    setSelectedLegislator(null);
-    const repsData = await findYourRep(address);
-    if (repsData?.results) {
-      const stateRepsOnly = repsData.results.filter(
-        (rep: any) => rep.jurisdiction.name !== 'United States'
-      );
-      setRepresentatives(stateRepsOnly);
-      setStatus(stateRepsOnly.length > 0 ? 'success' : 'empty');
-    } else {
-      setRepresentatives([]);
-      setStatus('empty');
+    setLoading(true);
+    try {
+      const res = await findYourRep(value);
+      const people: Person[] = Array.isArray(res?.results)
+        ? (res?.results as Person[])
+        : (res as unknown as Person[]);
+      if (!people?.length) {
+        setErr(t("findYourRep.error.none", "No representatives found for that location."));
+      }
+      setResults(people || []);
+    } catch (e: any) {
+      setErr(e?.message ?? t("findYourRep.error.generic", "Failed to look up representatives."));
+    } finally {
+      setLoading(false);
     }
   };
 
-  const selectedBill = initialBill || allBills.find(b => b.id === Number(selectedBillId));
-
-  if (selectedLegislator && selectedBill) {
-    return (
-      <View style={styles.container}>
-        <Button icon="arrow-left" onPress={() => setSelectedLegislator(null)} style={{ alignSelf: 'flex-start' }}>
-          Back to Representatives
-        </Button>
-        <EmailTemplate legislator={selectedLegislator} bill={selectedBill} />
-      </View>
-    );
-  }
-
-  const pickerItems = allBills.map(bill => ({
-    label: `${bill.bill_number}: ${bill.title}`,
-    value: bill.id,
-  }));
-
   return (
-    <View style={styles.container}>
-      <Card mode="contained" style={{ backgroundColor: theme.colors.surfaceVariant }}>
-        <Card.Content>
-          <Text variant="titleLarge">{initialBill ? `Contact Legislators About ${initialBill.bill_number}` : 'Contact Your Legislators'}</Text>
-          <Text variant="bodyMedium" style={{ marginBottom: 16 }}>
-            Step 1: Find your representatives by address.
-          </Text>
-          <TextInput
-            label="Enter your full address"
-            value={address}
-            onChangeText={setAddress}
-            style={styles.input}
-            mode="outlined"
-          />
-          <Button mode="contained" onPress={handleFindRep} loading={status === 'loading'}>
-            Find My Representatives
-          </Button>
-        </Card.Content>
-      </Card>
+    <View style={styles.wrap}>
+      <Text variant="titleLarge" style={styles.title}>
+        {t("findYourRep.title", "Find Your Representatives")}
+      </Text>
 
-      {status === 'loading' && <ActivityIndicator style={{ marginTop: 24 }} />}
+      <TextInput
+        value={value}
+        onChangeText={setValue}
+        placeholder={t("findYourRep.placeholder", "Enter address or ZIP (e.g., 94546)")}
+        keyboardType={Platform.OS === "web" ? "default" : "default"}
+      />
 
-      {(status === 'success' || status === 'empty') && (
-        <View style={styles.resultsContainer}>
-          <Divider style={styles.divider} />
-          {!initialBill && (
-            <>
-              <Text variant="titleMedium" style={styles.stepHeader}>Step 2: Select a Bill to Discuss</Text>
-              <View style={styles.pickerContainer}>
-                <RNPickerSelect
-                  placeholder={{ label: "Select a bill...", value: null }}
-                  items={pickerItems}
-                  onValueChange={(value) => setSelectedBillId(value)}
-                  style={pickerSelectStyles(theme)}
-                />
-              </View>
-            </>
-          )}
-          
-          <Text variant="titleMedium" style={styles.stepHeader}>
-            {initialBill ? 'Your Representatives' : 'Step 3: Choose a Representative'}
-          </Text>
-          
-          {status === 'empty' && (
-            <Text style={{ marginTop: 8 }}>No representatives found for this address.</Text>
-          )}
-          
-          {status === 'success' && representatives.map(rep => {
-            // --- FINAL CLEANUP: Removed the 'phone' variable ---
-            const email = rep.email;
+      <View style={{ height: 12 }} />
 
-            return (
-              <Card key={rep.id} style={styles.repCard} mode="outlined">
-                <Card.Title title={rep.name} subtitle={rep.current_role.district ? `${rep.current_role.title}, District ${rep.current_role.district}` : rep.current_role.title} />
-                <Card.Content>
-                  {email && <Text variant="bodyMedium">Email: {email}</Text>}
-                  {!email && <Text variant="bodyMedium" style={{ fontStyle: 'italic' }}>No contact information available.</Text>}
-                </Card.Content>
-                <Card.Actions>
-                  <Button 
-                    onPress={() => setSelectedLegislator(rep)} 
-                    disabled={!selectedBill}
-                  >
-                    Contact Now
+      <Button mode="contained" onPress={onSearch} disabled={loading}>
+        {loading ? t("findYourRep.searching", "Searching…") : t("common.search", "Search")}
+      </Button>
+
+      {!!err && (
+        <>
+          <View style={{ height: 12 }} />
+          <Text style={{ color: theme.colors.error }}>{err}</Text>
+        </>
+      )}
+
+      <Divider style={{ marginVertical: 16 }} />
+
+      {loading ? (
+        <ActivityIndicator />
+      ) : (
+        results.map((p, idx) => {
+          const email = p?.email || p?.offices?.find((o) => !!o?.email)?.email || null;
+
+          const chamberKey = p?.current_role?.org_classification === "upper" ? "upper" : "lower";
+          const chamber = t(
+            `chamber.${chamberKey}`,
+            chamberKey === "upper" ? "Senate" : "Assembly",
+          );
+          const district = p?.current_role?.district;
+
+          return (
+            <Card key={p.id ?? `${nameOf(p)}-${idx}`} style={{ marginBottom: 12 }} mode="outlined">
+              <Card.Title
+                title={nameOf(p)}
+                subtitle={[
+                  p.party,
+                  chamber && `(${chamber} Dist. ${district ?? "?"})`,
+                  p.current_role?.title,
+                ]
+                  .filter(Boolean)
+                  .join(" • ")}
+              />
+              <Card.Actions>
+                {email && (
+                  <Button icon="email-outline" onPress={() => Linking.openURL(`mailto:${email}`)}>
+                    {t("common.email", "Email")}
                   </Button>
-                </Card.Actions>
-              </Card>
-            )
-          })}
-        </View>
+                )}
+                <Button
+                  mode="text"
+                  onPress={() => {
+                    if (p?.id) {
+                      // If you have a router here, use router.push(`/legislator/${p.id}`)
+                      if (typeof window !== "undefined") {
+                        // web fallback
+                        window.location.href = `/legislator/${p.id}`;
+                      }
+                    }
+                  }}
+                >
+                  {t("findYourRep.viewProfile", "View profile")}
+                </Button>
+              </Card.Actions>
+            </Card>
+          );
+        })
       )}
     </View>
   );
 }
 
-// Styles
 const styles = StyleSheet.create({
-  container: { marginTop: 16 },
-  input: { marginVertical: 16 },
-  resultsContainer: { marginTop: 24 },
-  divider: { marginVertical: 24 },
-  stepHeader: { marginBottom: 16, fontWeight: 'bold' },
-  repCard: { marginBottom: 12 },
-  pickerContainer: { backgroundColor: 'white', borderRadius: 8, marginBottom: 24 },
-});
-
-const pickerSelectStyles = (theme: any) => StyleSheet.create({
-  inputIOS: { fontSize: 16, paddingVertical: 12, paddingHorizontal: 10, borderWidth: 1, borderColor: theme.dark ? 'grey' : '#D3D3D3', borderRadius: 8, color: 'black', paddingRight: 30 },
-  inputAndroid: { fontSize: 16, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: theme.dark ? 'grey' : '#D3D3D3', borderRadius: 8, color: 'black', paddingRight: 30 },
+  wrap: { marginVertical: 8 },
+  title: { marginBottom: 8 },
 });

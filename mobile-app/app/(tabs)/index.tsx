@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar } from "react-native-paper";
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTranslation } from "react-i18next";
 
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
@@ -13,11 +14,12 @@ import { ThemedText } from "../../components/ThemedText";
 import { supabase } from "../../src/lib/supabase";
 
 export default function HomeScreen() {
+  const { t } = useTranslation();
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const insets = useSafeAreaInsets(); // Get safe area insets
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     const fetchBills = async () => {
@@ -29,8 +31,8 @@ export default function HomeScreen() {
 
         if (trimmedQuery) {
           if (billNumberRegex.test(trimmedQuery)) {
-            const processedBillNumber = trimmedQuery.replace(/\s/g, '');
-            query = query.ilike('bill_number', `%${processedBillNumber}%`);
+            const processedBillNumber = trimmedQuery.replace(/\s/g, "");
+            query = query.ilike("bill_number", `%${processedBillNumber}%`);
           } else {
             query = query.textSearch("title,description", trimmedQuery, { type: "websearch" });
           }
@@ -46,22 +48,56 @@ export default function HomeScreen() {
       }
     };
 
-    const searchTimeout = setTimeout(() => { fetchBills(); }, 300);
+    const searchTimeout = setTimeout(() => {
+      fetchBills();
+    }, 300);
     return () => clearTimeout(searchTimeout);
-  }, [searchQuery]);
+  }, [searchQuery]); // Option A: includes what the effect uses
 
   const renderContent = () => {
-    if (loading) { return <FlatList data={Array.from({ length: 5 })} renderItem={() => <BillSkeleton />} keyExtractor={(_, index) => `skeleton-${index}`} scrollEnabled={false} />; }
-    if (error) { return <EmptyState icon="chevron.left.forwardslash.chevron.right" title="An Error Occurred" message={`We couldn't fetch the bills. Please try again later. \n(${error})`} />; }
+    if (loading) {
+      return (
+        <FlatList
+          data={Array.from({ length: 5 })}
+          renderItem={() => <BillSkeleton />}
+          keyExtractor={(_, index) => `skeleton-${index}`}
+          scrollEnabled={false}
+        />
+      );
+    }
+    if (error) {
+      return (
+        <EmptyState
+          icon="chevron.left.forwardslash.chevron.right"
+          title={t("error.title", "An Error Occurred")}
+          message={t(
+            "home.error",
+            `We couldn't fetch the bills. Please try again later. \n(${error})`,
+          )}
+        />
+      );
+    }
     if (bills.length === 0) {
-      return <EmptyState icon="file-search-outline" title="No Bills Found" message={searchQuery ? `We couldn't find any bills matching "${searchQuery}". Try another search.` : "There are no bills to display at the moment."} />;
+      return (
+        <EmptyState
+          icon="file-search-outline"
+          title={t("home.emptyTitle", "No Bills Found")}
+          message={
+            searchQuery
+              ? t(
+                  "home.emptyWithQuery",
+                  `We couldn't find any bills matching "${searchQuery}". Try another search.`,
+                )
+              : t("home.emptyNoQuery", "There are no bills to display at the moment.")
+          }
+        />
+      );
     }
     return (
       <FlatList
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
-        // Apply bottom padding for the navigation bar
         contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
       />
@@ -69,14 +105,14 @@ export default function HomeScreen() {
   };
 
   return (
-    // Apply top padding to the container to push content below status bar
     <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <ThemedText type="title" style={styles.title}>
-          Explore Bills
+          {t("tabs.explore.title", "Explore Bills")}
         </ThemedText>
+
         <Searchbar
-          placeholder="Search by keyword or bill..."
+          placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
           onChangeText={setSearchQuery}
           value={searchQuery}
           style={styles.searchbar}

@@ -1,46 +1,51 @@
 // mobile-app/src/lib/analytics.ts
-
-import { supabase } from './supabase';
-
-type EventType = 'bill_view' | 'share' | 'save' | 'email_open';
-
-interface EventPayload {
-  bill_id?: number;
-  // You can add other relevant fields here in the future
-}
+import { Platform } from "react-native";
+import { supabase } from "./supabase";
 
 /**
- * Tracks an analytics event and sends it to the Supabase database.
- * This is a "fire-and-forget" function and will not throw errors.
+ * Lightweight, no-throw analytics logger.
+ * - Always returns a Promise<void>
+ * - Never throws (swallows RLS/HTTP errors)
+ * - Safe to call on web and native
  *
- * @param type The type of event to track.
- * @param userId The anonymous ID of the user performing the action.
- * @param payload Additional data associated with the event.
+ * NOTE: With RLS on `events`, direct inserts may 403 on the client.
+ * This function intentionally swallows those failures.
+ * Later we can switch this to an Edge Function (service role) and keep the API intact.
  */
-export function trackEvent(
-  type: EventType,
-  userId: string | undefined,
-  payload: EventPayload = {},
-): void {
-  if (!userId) {
-    // We can still track events without a user ID if we choose,
-    // but for now, we'll only track events for authenticated (anonymous) users.
-    return;
-  }
 
-  const eventData = {
-    user_id: userId,
-    type: type,
-    ...payload,
-  };
+export type AnalyticsPayload = Record<string, unknown>;
 
-  // We don't await this call. It runs in the background.
-  supabase
-    .from('events')
-    .insert(eventData)
-    .then(({ error }) => {
-      if (error) {
-        console.warn(`Analytics trackEvent failed for type '${type}':`, error.message);
+export async function trackEvent(
+  type: string,
+  userId?: string | null,
+  payload?: AnalyticsPayload,
+): Promise<void> {
+  try {
+    // If there is no user (anon or not yet available), just no-op.
+    if (!userId) return;
+
+    // Attempt a direct insert; RLS may block this (expected in dev).
+    const { error } = await supabase.from("events").insert([
+      {
+        type,
+        user_id: userId,
+        payload: payload ?? {},
+        platform: Platform.OS,
+      },
+    ]);
+
+    if (error) {
+      // Don’t throw—just log at debug level to avoid noisy consoles.
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.debug("trackEvent suppressed error:", error.message);
       }
-    });
+    }
+  } catch (e: any) {
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.debug("trackEvent caught exception:", e?.message ?? e);
+    }
+    // swallow
+  }
 }

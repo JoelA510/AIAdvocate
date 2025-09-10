@@ -1,6 +1,6 @@
-import React from 'react';
-import { Image, StyleSheet } from 'react-native';
-import { useTheme } from 'react-native-paper';
+import React from "react";
+import { Image, StyleSheet } from "react-native";
+import { useTheme } from "react-native-paper";
 
 const LnfIcon = () => {
   const theme = useTheme();
@@ -8,7 +8,7 @@ const LnfIcon = () => {
 
   return (
     <Image
-      source={require('../../assets/images/adaptive-icon.png')}
+      source={require("../../assets/images/adaptive-icon.png")}
       style={[styles.icon, { tintColor: iconColor }]}
     />
   );

@@ -28,9 +28,9 @@ export async function safeFetch(
         const totalWait = waitTime + jitter;
 
         console.warn(`safeFetch: Received status 429. Retrying in ${totalWait.toFixed(0)}ms...`);
-        await new Promise(resolve => setTimeout(resolve, totalWait));
-        
-        continue; 
+        await new Promise((resolve) => setTimeout(resolve, totalWait));
+
+        continue;
       }
 
       if (!response.ok) {
@@ -39,7 +39,6 @@ export async function safeFetch(
       }
 
       return response;
-
     } catch (error) {
       lastError = error;
       console.error(`safeFetch: Attempt ${i + 1} failed.`, error);

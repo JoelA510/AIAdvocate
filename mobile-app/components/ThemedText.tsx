@@ -6,11 +6,7 @@ export type ThemedTextProps = TextProps & {
   type?: "default" | "title" | "defaultSemiBold" | "subtitle" | "link";
 };
 
-export function ThemedText({
-  style,
-  type = "default",
-  ...rest
-}: ThemedTextProps) {
+export function ThemedText({ style, type = "default", ...rest }: ThemedTextProps) {
   const theme = useTheme();
 
   return (
@@ -23,9 +19,7 @@ export function ThemedText({
         type === "defaultSemiBold" ? styles.defaultSemiBold : undefined,
         type === "subtitle" ? styles.subtitle : undefined,
         // Use the theme's primary color for links for consistency.
-        type === "link"
-          ? [styles.link, { color: theme.colors.primary }]
-          : undefined,
+        type === "link" ? [styles.link, { color: theme.colors.primary }] : undefined,
         style,
       ]}
       {...rest}

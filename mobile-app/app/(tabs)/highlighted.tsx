@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTranslation } from "react-i18next";
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
@@ -14,6 +15,7 @@ export default function HighlightedScreen() {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -23,7 +25,7 @@ export default function HighlightedScreen() {
         let query = supabase
           .from("bills")
           .select("*")
-          .eq('is_curated', true)
+          .eq("is_curated", true)
           .order("id", { ascending: false });
 
         const { data, error } = await query;
@@ -81,7 +83,7 @@ export default function HighlightedScreen() {
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <ThemedText type="title">Highlighted Bills</ThemedText>
+        <ThemedText type="title">{t("tabs.highlighted.title", "Highlighted Bills")}</ThemedText>
       </View>
       <View style={styles.content}>{renderContent()}</View>
     </ThemedView>

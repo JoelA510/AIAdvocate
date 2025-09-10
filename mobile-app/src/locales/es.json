@@ -1,13 +1,101 @@
 {
-  "tabs": {
-    "bills": "Proyectos",
-    "saved": "Guardado",
-    "highlighted": "Destacado",
-    "lnf": "LNF",
-    "advocacy": "Abogacía"
+  "bill": {
+    "attribution": { "legiscan": "Texto original proporcionado por LegiScan" },
+    "missing": "Proyecto no encontrado",
+    "missingMsg": "No se pudo encontrar el proyecto con ID #{{id}}.",
+    "panel": {
+      "recommendation": "Recomendación: {{r}}",
+      "title": "Revisión del panel de sobrevivientes"
+    },
+    "shareMessage": "Mira este proyecto de ley: {{num}} - {{title}}.",
+    "translating": "Traduciendo…"
   },
-  "billDetails": {
-    "share": "Compartir",
-    "speak": "Leer resumen"
+  "chamber": { "lower": "Asamblea", "upper": "Senado" },
+  "common": {
+    "apply": "Aplicar",
+    "back": "Atrás",
+    "call": "Llamar",
+    "cancel": "Cancelar",
+    "email": "Correo",
+    "search": "Buscar",
+    "share": "Compartir"
+  },
+  "config": {
+    "errorTitle": "Error de configuración",
+    "errorHint": "Revisa tu mobile-app/.env y reinicia el servidor de desarrollo."
+  },
+  "email": {
+    "to": "Para",
+    "subject": "Asunto",
+    "copy": "Copiar",
+    "openInApp": "Abrir en la app de correo",
+    "subjectLine": "Sobre el proyecto: {{num}} - {{title}}",
+    "bodyTemplate": "Estimado/a {{name}},\n\nLe escribo como un/a constituyente preocupado/a sobre el proyecto {{num}}.\n\n[Su mensaje aquí - explique su posición]\n\nGracias por su tiempo y servicio.\n\nAtentamente,\n[Su nombre]",
+    "noEmailTitle": "No se encontró un correo",
+    "noEmailMessage": "No hay dirección de correo disponible para este legislador.",
+    "copiedTitle": "¡Copiado!",
+    "copiedMessage": "La plantilla de correo se copió al portapapeles.",
+    "composeTo": "Redactar un correo"
+  },
+  "error": { "title": "Ocurrió un error" },
+  "findYourRep": {
+    "error": {
+      "empty": "Ingresa una dirección o código postal.",
+      "generic": "No se pudo buscar a los representantes.",
+      "none": "No se encontraron representantes para esa ubicación."
+    },
+    "placeholder": "Ingresa dirección o código postal (p. ej., 94546)",
+    "searching": "Buscando…",
+    "title": "Busca a tus representantes",
+    "viewProfile": "Ver perfil"
+  },
+  "language": { "name": { "en": "Inglés", "es": "Español", "qps": "Pseudo" }, "title": "Idioma" },
+  "legislator": {
+    "partyLabel": "Partido: {{party}}",
+    "ally": "Aliado de LNF",
+    "cta": { "takeAction": "Tomar acción" },
+    "votingRecord": "Historial de votación",
+    "vote": "Voto: {{option}}",
+    "district": "Distrito"
+  },
+  "lnf": {
+    "visitTitle": "Visita Love Never Fails",
+    "bestOnWeb": "Nuestra vista web se disfruta mejor en el sitio completo.",
+    "openSite": "Abrir loveneverfailsus.com"
+  },
+  "notFound": { "title": "Esta pantalla no existe.", "homeCta": "¡Ir a la pantalla principal!" },
+  "party": {
+    "democratic": "Demócrata",
+    "independent": "Independiente",
+    "nonpartisan": "No partidista",
+    "republicano": "Republicano"
+  },
+  "relatedBills": {
+    "title": "Proyectos relacionados",
+    "error": "No se pudieron cargar los proyectos relacionados.",
+    "loading": "Buscando proyectos relacionados..."
+  },
+  "summary": { "aiTitle": "Resumen generado por IA" },
+  "share": {
+    "copied": "Enlace copiado al portapapeles",
+    "error": { "title": "Error al compartir" },
+    "nothing": "Nada para compartir",
+    "legislatorMessage": "Mira a {{name}}"
+  },
+  "tabs": {
+    "advocacy": "defensa",
+    "bills": "proyectos",
+    "highlighted": "destacados",
+    "lnf": "lnf",
+    "saved": "guardados",
+    "explore": { "title": "Explorar proyectos" },
+    "highlightedSection": { "title": "Proyectos destacados" },
+    "savedSection": { "title": "Proyectos guardados" }
+  },
+  "tts": {
+    "empty": "Nada para leer todavía",
+    "error": { "title": "Error de síntesis de voz" },
+    "label": "Leer resumen",
+    "unsupported": "La síntesis de voz no es compatible en este navegador."
   }
 }

@@ -1,0 +1,26 @@
+# .prettierignore — keep Prettier away from generated/build stuff & noise
+.expo/
+android/
+ios/
+dist/
+web-build/
+build/
+coverage/
+node_modules/
+
+# logs & temp files
+*.log
+*.lock
+*.tmp
+*.bak
+*.swp
+
+# editor/OS junk
+.vscode/
+.idea/
+.DS_Store
+
+# env files
+.env
+.env.local
+.env.*.local

@@ -15,13 +15,22 @@ export default function BillSkeleton() {
     // The border color is also updated to use the theme.
     <ThemedView style={[styles.billContainer, { borderColor: theme.colors.outline }]}>
       <View
-        style={[styles.placeholder, { backgroundColor: placeholderColor, width: "50%", height: 24 }]}
+        style={[
+          styles.placeholder,
+          { backgroundColor: placeholderColor, width: "50%", height: 24 },
+        ]}
       />
       <View
-        style={[styles.placeholder, { backgroundColor: placeholderColor, width: "90%", marginTop: 12 }]}
+        style={[
+          styles.placeholder,
+          { backgroundColor: placeholderColor, width: "90%", marginTop: 12 },
+        ]}
       />
       <View
-        style={[styles.placeholder, { backgroundColor: placeholderColor, width: "70%", marginTop: 8 }]}
+        style={[
+          styles.placeholder,
+          { backgroundColor: placeholderColor, width: "70%", marginTop: 8 },
+        ]}
       />
       <View style={styles.toolbar}>
         <View style={[styles.placeholderButton, { backgroundColor: placeholderColor }]} />
