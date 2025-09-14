@@ -1,5 +1,5 @@
-// mobile-app/app/(tabs)/saved.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+// mobile-app/app/(tabs)/saved.tsx (modified)
+import React, { useCallback, useMemo, useState } from "react";
 import { StyleSheet, FlatList, View, RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, Stack } from "expo-router";
@@ -20,6 +20,14 @@ type SavedRow = {
   bill_number?: string | null;
 };
 
+/**
+ * Renders the Saved Bills tab.  This screen listens for changes to the
+ * `saved_bills` table via Supabase and fetches the associated bills.  A
+ * join-based query is attempted first; if that fails, it falls back to
+ * individually querying by id/slug/bill_number.  The EmptyState component
+ * now uses the correct `icon` and `message` props, and the fallback query
+ * references the correct `bill_number` column.
+ */
 export default function SavedBillsScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -52,7 +60,7 @@ export default function SavedBillsScreen() {
         return;
       }
 
-      // B) Fallbacks: pull keys, fetch bills by id/slug/number, then preserve order
+      // B) Fallbacks: pull keys, fetch bills by id/slug/bill_number, then preserve order
       const { data: savedRows, error: e1 } = await supabase
         .from("saved_bills")
         .select("created_at,bill_id,bill_slug,bill_number")
@@ -84,9 +92,12 @@ export default function SavedBillsScreen() {
         (data ?? []).forEach((b: any) => map.set(`slug:${String(b.slug)}`, b));
       }
       if (nums.length) {
-        const { data, error } = await supabase.from("bills").select("*").in("number", nums);
+        const { data, error } = await supabase
+          .from("bills")
+          .select("*")
+          .in("bill_number", nums);
         if (error) throw error;
-        (data ?? []).forEach((b: any) => map.set(`num:${String(b.number)}`, b));
+        (data ?? []).forEach((b: any) => map.set(`num:${String(b.bill_number)}`, b));
       }
 
       const ordered: Bill[] = [];
@@ -149,8 +160,9 @@ export default function SavedBillsScreen() {
     if (!bills.length) {
       return (
         <EmptyState
+          icon="bookmark.fill"
           title={t("saved.emptyTitle", { defaultValue: "No saved bills yet" })}
-          subtitle={t("saved.emptySubtitle", {
+          message={t("saved.emptySubtitle", {
             defaultValue: "Tap the bookmark icon on any bill to save it here.",
           })}
         />
@@ -169,11 +181,11 @@ export default function SavedBillsScreen() {
   }, [loading, bills, insets.bottom, refreshing, onRefresh, t]);
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <Stack.Screen
         options={{ title: t("tabs.saved", { defaultValue: "Saved" }), headerShown: false }}
       />
-      <View style={[styles.content, { paddingTop: insets.top }]}>{content}</View>
+      <View style={styles.content}>{content}</View>
     </ThemedView>
   );
 }

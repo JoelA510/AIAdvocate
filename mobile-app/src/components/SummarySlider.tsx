@@ -1,9 +1,9 @@
-// mobile-app/src/components/SummarySlider.tsx
+// mobile-app/src/components/SummarySlider.tsx (modified)
+
 import React, { useEffect, useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { Text, useTheme } from "react-native-paper";
-import { Slider } from "react-native-awesome-slider";
-import { useSharedValue } from "react-native-reanimated";
+import Slider from "@react-native-community/slider";
 import { useTranslation } from "react-i18next";
 import { Bill } from "./Bill";
 
@@ -12,9 +12,15 @@ type Props = {
   onSummaryChange: (text: string) => void;
 };
 
+/**
+ * A summary picker that lets the user switch between simple, medium, complex
+ * summaries or the original text.  Uses a discrete slider with four
+ * positions (0–3) and emits the appropriate text via `onSummaryChange`.
+ * It also displays the currently selected summary below the slider.
+ */
 export default function SummarySlider({ bill, onSummaryChange }: Props) {
   const theme = useTheme();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const LEVELS = useMemo(
     () => [
@@ -28,56 +34,41 @@ export default function SummarySlider({ bill, onSummaryChange }: Props) {
 
   const [level, setLevel] = useState(0);
 
-  // Slider shared values
-  const min = useSharedValue(0);
-  const max = useSharedValue(LEVELS.length - 1);
-  const progress = useSharedValue(level);
-
-  const summaries = [
-    bill.summary_simple,
-    bill.summary_medium,
-    bill.summary_complex,
-    bill.original_text,
-  ];
-
-  const activeText = summaries[level] ?? t("summary.empty", "No content available for this level.");
-
-  // Keep the knob in sync when level changes
-  useEffect(() => {
-    progress.value = level;
-  }, [level, progress]);
-
-  // Emit text whenever it changes
-  useEffect(() => {
-    onSummaryChange(activeText);
-  }, [activeText, onSummaryChange]);
-
-  const snap = (v: number) => {
-    const snapped = Math.round(v);
-    if (snapped !== level) setLevel(snapped);
+  // Compute the summary text for the given level and language.  Spanish
+  // summaries are used when available; otherwise fall back to English.
+  const getSummaryForLevel = (lvl: number) => {
+    const lang = i18n.language ?? "en";
+    const texts: (string | null | undefined)[] = [
+      lang.startsWith("es") && bill.summary_simple_es ? bill.summary_simple_es : bill.summary_simple,
+      lang.startsWith("es") && bill.summary_medium_es ? bill.summary_medium_es : bill.summary_medium,
+      lang.startsWith("es") && bill.summary_complex_es ? bill.summary_complex_es : bill.summary_complex,
+      bill.original_text,
+    ];
+    const text = texts[lvl] ?? null;
+    return text || t("summary.empty", "No content available for this level.");
   };
+
+  // Emit the summary to the parent whenever the level or language changes.
+  useEffect(() => {
+    onSummaryChange(getSummaryForLevel(level));
+  }, [level, i18n.language, bill, onSummaryChange]);
 
   return (
     <View style={styles.container}>
       <Text variant="titleLarge" style={styles.title}>
         {t("summary.aiTitle", "AI-Generated Summary")}
       </Text>
-
       <View style={styles.sliderContainer}>
         <Slider
+          minimumValue={0}
+          maximumValue={LEVELS.length - 1}
+          step={1}
+          value={level}
+          onValueChange={(value) => setLevel(value)}
+          minimumTrackTintColor={theme.colors.primary}
+          maximumTrackTintColor={theme.colors.surfaceVariant}
+          thumbTintColor={theme.colors.primary}
           style={styles.slider}
-          progress={progress}
-          minimumValue={min}
-          maximumValue={max}
-          steps={LEVELS.length - 1} // 0..3
-          onValueChange={snap}
-          onSlidingComplete={snap}
-          thumbWidth={20}
-          theme={{
-            maximumTrackTintColor: theme.colors.surfaceVariant,
-            minimumTrackTintColor: theme.colors.primary,
-            disableMinTrackTintColor: theme.colors.primary,
-          }}
         />
         <View style={styles.labels}>
           {LEVELS.map((label, idx) => (
@@ -85,7 +76,9 @@ export default function SummarySlider({ bill, onSummaryChange }: Props) {
               key={label}
               style={[
                 styles.label,
-                { color: idx === level ? theme.colors.primary : theme.colors.onSurfaceDisabled },
+                {
+                  color: idx === level ? theme.colors.primary : theme.colors.onSurfaceDisabled,
+                },
               ]}
               accessibilityRole="button"
               onPress={() => setLevel(idx)}
@@ -95,8 +88,7 @@ export default function SummarySlider({ bill, onSummaryChange }: Props) {
           ))}
         </View>
       </View>
-
-      <Text style={styles.summaryText}>{activeText}</Text>
+      <Text style={styles.summaryText}>{getSummaryForLevel(level)}</Text>
     </View>
   );
 }

@@ -1,13 +1,10 @@
-// mobile-app/babel.config.js
+// mobile-app/babel.config.js (modified)
 module.exports = function (api) {
   api.cache(true);
   return {
     presets: ["babel-preset-expo"],
     plugins: [
-      // Expo Router transforms
-      "expo-router/babel",
-
-      // Path alias for "@/..."
+      // Path alias for "@/...". This resolves imports like "@/src/components".
       [
         "module-resolver",
         {
@@ -17,7 +14,7 @@ module.exports = function (api) {
         },
       ],
 
-      // MUST be last
+      // MUST be last to support React Native Reanimated.
       "react-native-reanimated/plugin",
     ],
   };

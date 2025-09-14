@@ -61,7 +61,10 @@
   "lnf": {
     "visitTitle": "Visit Love Never Fails",
     "bestOnWeb": "Our web view is best experienced on our full site.",
-    "openSite": "Open loveneverfailsus.com"
+    "openSite": "Open loveneverfailsus.com",
+    "webBestAtSource": "Best experienced on the website",
+    "webCspNote": "This publisher blocks embedding for security. Click below to open the feed directly.",
+    "open": "Open Feed"
   },
   "notFound": { "title": "This screen does not exist.", "homeCta": "Go to home screen!" },
   "party": {
@@ -75,7 +78,21 @@
     "error": "Could not load related bills.",
     "loading": "Finding related bills..."
   },
-  "summary": { "aiTitle": "AI-Generated Summary" },
+  "summary": {
+    "aiTitle": "AI-Generated Summary",
+    "level": {
+      "simple": "Simple",
+      "medium": "Medium",
+      "complex": "Complex",
+      "original": "Original Text"
+    },
+    "empty": "No content available for this level."
+  },
+  "advocacy": {
+    "lookupTitle": "Find Your Representatives",
+    "selectBill": "Select Bill (optional)",
+    "noneOption": "None"
+  },
   "share": {
     "copied": "Link copied to clipboard",
     "error": { "title": "Share failed" },
@@ -83,14 +100,18 @@
     "legislatorMessage": "Check out {{name}}"
   },
   "tabs": {
-    "advocacy": "advocacy",
-    "bills": "bills",
-    "highlighted": "highlighted",
-    "lnf": "lnf",
-    "saved": "saved",
+    "advocacy": "Advocacy",
+    "bills": "Bills",
+    "highlighted": "Highlighted",
+    "lnf": "LNF",
+    "saved": "Saved",
+    "language": "Language",
     "explore": { "title": "Explore Bills" },
     "highlightedSection": { "title": "Highlighted Bills" },
     "savedSection": { "title": "Saved Bills" }
+  },
+  "home": {
+    "searchPlaceholder": "Search by keyword or bill…"
   },
   "tts": {
     "empty": "Nothing to read yet",

@@ -1,12 +1,12 @@
-// mobile-app/src/components/Bill.tsx
+// mobile-app/src/components/Bill.tsx (modified)
 
 import { useRouter } from "expo-router";
 import React, { useState, useEffect } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Card, IconButton, Text, useTheme, Button } from "react-native-paper";
 import Toast from "react-native-toast-message";
+import { useTranslation } from "react-i18next";
 
-// CORRECTED: Using path aliases for robustness
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/AuthProvider";
 
@@ -20,6 +20,12 @@ export interface Bill {
   summary_simple: string | null;
   summary_medium: string | null;
   summary_complex: string | null;
+  // Optional language‑specific summaries.  When switching to a non‑English
+  // language, these fields will be used if present; otherwise the English
+  // summaries are used as a fallback.
+  summary_simple_es?: string | null;
+  summary_medium_es?: string | null;
+  summary_complex_es?: string | null;
   is_curated: boolean;
   original_text: string | null;
   change_hash: string;
@@ -31,11 +37,12 @@ export default function BillComponent({ bill }: { bill: Bill }) {
   const theme = useTheme();
   const router = useRouter();
   const { session } = useAuth();
+  const { i18n } = useTranslation();
   const userId = session?.user?.id;
 
   const [billDetails, setBillDetails] = useState({
-    reaction_counts: {},
-    user_reaction: null,
+    reaction_counts: {} as Record<string, number>,
+    user_reaction: null as string | null,
     is_bookmarked: false,
   });
   const [loading, setLoading] = useState(true);
@@ -83,8 +90,8 @@ export default function BillComponent({ bill }: { bill: Bill }) {
       Toast.show({ type: "error", text1: "Error", text2: "Could not save your change." });
     } else {
       Toast.show({
-        type: "success",
-        text1: previousBookmarkState ? "Bookmark Removed" : "Bookmark Saved",
+      type: "success",
+      text1: previousBookmarkState ? "Bookmark Removed" : "Bookmark Saved",
       });
     }
   };
@@ -95,7 +102,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
     const currentReaction = billDetails.user_reaction;
     const newReaction = currentReaction === reactionType ? null : reactionType;
 
-    const newCounts = { ...(billDetails.reaction_counts || {}) };
+    const newCounts = { ...(billDetails.reaction_counts || {}) } as Record<string, number>;
     if (currentReaction) {
       newCounts[currentReaction] = (newCounts[currentReaction] || 1) - 1;
     }
@@ -121,6 +128,15 @@ export default function BillComponent({ bill }: { bill: Bill }) {
     router.push(`/bill/${bill.id}`);
   };
 
+  // Choose summary based on current language.  If we're viewing the app in
+  // Spanish and a Spanish summary is available, use it; otherwise fall back
+  // to the English simple summary.  We only show a short preview on the card.
+  const lang = i18n?.language ?? "en";
+  const summary =
+    lang.startsWith("es") && bill.summary_simple_es
+      ? bill.summary_simple_es
+      : bill.summary_simple;
+
   return (
     <Card style={styles.card}>
       <Pressable onPress={handlePress}>
@@ -141,9 +157,9 @@ export default function BillComponent({ bill }: { bill: Bill }) {
           <Text variant="bodyLarge" style={styles.title}>
             {bill.title}
           </Text>
-          {bill.summary_simple && (
+          {summary && (
             <Text variant="bodyMedium" numberOfLines={3} style={styles.summary}>
-              {bill.summary_simple}
+              {summary}
             </Text>
           )}
         </Card.Content>
@@ -181,8 +197,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   billNumber: { fontWeight: "bold" },
-  title: { marginBottom: 8, lineHeight: 22 },
-  summary: { color: "grey" },
-  actions: { paddingHorizontal: 8, paddingTop: 0 },
-  reactionContainer: { flexDirection: "row" },
+  title: { marginBottom: 8 },
+  summary: { color: "#555" },
+  actions: { paddingHorizontal: 8, paddingBottom: 8 },
+  reactionContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
 });

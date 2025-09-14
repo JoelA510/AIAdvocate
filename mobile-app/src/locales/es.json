@@ -49,7 +49,10 @@
     "title": "Busca a tus representantes",
     "viewProfile": "Ver perfil"
   },
-  "language": { "name": { "en": "Inglés", "es": "Español", "qps": "Pseudo" }, "title": "Idioma" },
+  "language": {
+    "name": { "en": "Inglés", "es": "Español", "qps": "Pseudo" },
+    "title": "Idioma"
+  },
   "legislator": {
     "partyLabel": "Partido: {{party}}",
     "ally": "Aliado de LNF",
@@ -61,21 +64,38 @@
   "lnf": {
     "visitTitle": "Visita Love Never Fails",
     "bestOnWeb": "Nuestra vista web se disfruta mejor en el sitio completo.",
-    "openSite": "Abrir loveneverfailsus.com"
+    "openSite": "Abrir loveneverfailsus.com",
+    "webBestAtSource": "Se disfruta mejor en el sitio web",
+    "webCspNote": "Este editor bloquea la incrustación por seguridad. Haz clic abajo para abrir el feed directamente.",
+    "open": "Abrir feed"
   },
   "notFound": { "title": "Esta pantalla no existe.", "homeCta": "¡Ir a la pantalla principal!" },
   "party": {
     "democratic": "Demócrata",
     "independent": "Independiente",
     "nonpartisan": "No partidista",
-    "republicano": "Republicano"
+    "republican": "Republicano"
   },
   "relatedBills": {
     "title": "Proyectos relacionados",
     "error": "No se pudieron cargar los proyectos relacionados.",
     "loading": "Buscando proyectos relacionados..."
   },
-  "summary": { "aiTitle": "Resumen generado por IA" },
+  "summary": {
+    "aiTitle": "Resumen generado por IA",
+    "level": {
+      "simple": "Simple",
+      "medium": "Medio",
+      "complex": "Complejo",
+      "original": "Texto original"
+    },
+    "empty": "No hay contenido disponible para este nivel."
+  },
+  "advocacy": {
+    "lookupTitle": "Busca a tus representantes",
+    "selectBill": "Seleccionar proyecto (opcional)",
+    "noneOption": "Ninguno"
+  },
   "share": {
     "copied": "Enlace copiado al portapapeles",
     "error": { "title": "Error al compartir" },
@@ -83,14 +103,18 @@
     "legislatorMessage": "Mira a {{name}}"
   },
   "tabs": {
-    "advocacy": "defensa",
-    "bills": "proyectos",
-    "highlighted": "destacados",
-    "lnf": "lnf",
-    "saved": "guardados",
+    "advocacy": "Defensa",
+    "bills": "Proyectos",
+    "highlighted": "Destacados",
+    "lnf": "LNF",
+    "saved": "Guardados",
+    "language": "Idioma",
     "explore": { "title": "Explorar proyectos" },
     "highlightedSection": { "title": "Proyectos destacados" },
     "savedSection": { "title": "Proyectos guardados" }
+  },
+  "home": {
+    "searchPlaceholder": "Busca por palabra clave o proyecto…"
   },
   "tts": {
     "empty": "Nada para leer todavía",

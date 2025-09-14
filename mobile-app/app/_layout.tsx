@@ -1,5 +1,9 @@
 // mobile-app/app/_layout.tsx
-import "react-native-reanimated"; // must be first for Reanimated
+// Root layout sets up providers and the navigation stack.  The global
+// header/banner is intentionally omitted here so the splash screen can
+// animate without a second banner underneath.
+
+import "react-native-reanimated";
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Stack } from "expo-router";
@@ -12,35 +16,27 @@ import Toast from "react-native-toast-message";
 import { useFonts } from "expo-font";
 import i18next from "i18next";
 
-import "../src/lib/i18n"; // initialize i18n singleton early
+import "../src/lib/i18n";
 import { useColorScheme } from "../hooks/useColorScheme";
 import { AuthProvider } from "../src/providers/AuthProvider";
 import { initConfig } from "../src/lib/config";
-import HeaderBanner from "../components/ui/HeaderBanner";
-
-// i18n helpers (keep)
 import { LanguageProvider } from "../src/providers/LanguageProvider";
-
-// React Query (TanStack)
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const queryClient = new QueryClient();
 
 const BRAND = "#078A97" as const;
 
-// Keep the splash screen visible while assets/config load.
+// Prevent splash auto-hide until assets/config load.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
-  // Load any custom fonts you reference in components/themes
   const [fontsLoaded, fontError] = useFonts({
-    // IMPORTANT: keys must match `fontFamily` where used
     "SpaceMono-Regular": require("../assets/fonts/SpaceMono-Regular.ttf"),
   });
-
   const [configError, setConfigError] = useState<string | null>(null);
   const colorScheme = useColorScheme();
 
-  // Initialize runtime config ASAP (surface missing envs, etc.)
+  // Initialize runtime config on mount.
   useEffect(() => {
     try {
       initConfig();
@@ -49,14 +45,14 @@ export default function RootLayout() {
     }
   }, []);
 
-  // Hide splash when fonts are ready OR we hit a config error
+  // Hide splash when fonts and config are ready.
   useEffect(() => {
     if (fontsLoaded || fontError || configError) {
       SplashScreen.hideAsync().catch(() => {});
     }
   }, [fontsLoaded, fontError, configError]);
 
-  // If config is invalid, render minimal error UI (no providers required)
+  // If config failed, show a minimal error screen.
   if (configError) {
     const t = (k: string, d: string) => i18next.t(k, d);
     return (
@@ -70,21 +66,16 @@ export default function RootLayout() {
     );
   }
 
-  // Keep the Splash visible until fonts load (and no error)
   if (!fontsLoaded && !fontError) return null;
   if (fontError) console.error("Font loading error:", fontError);
 
-  // ----- Paper theme (MD3) with brand accent -----
-  // Minimal, safe overrides that make #078A97 the accent in both schemes.
-  // We set `primary` and `surfaceTint` so headers, FABs, switches, etc. pick up the brand.
+  // Theme overrides for MD3.
   const Light = {
     ...MD3LightTheme,
     colors: {
       ...MD3LightTheme.colors,
       primary: BRAND,
       surfaceTint: BRAND,
-      // Optionally also:
-      // secondary: BRAND,
     },
   };
   const Dark = {
@@ -93,7 +84,6 @@ export default function RootLayout() {
       ...MD3DarkTheme.colors,
       primary: BRAND,
       surfaceTint: BRAND,
-      // secondary: BRAND,
     },
   };
   const theme = colorScheme === "dark" ? Dark : Light;
@@ -105,20 +95,12 @@ export default function RootLayout() {
           <QueryClientProvider client={queryClient}>
             <LanguageProvider>
               <AuthProvider>
-                {/* Global header/banner across the entire app */}
-                <HeaderBanner />
-
-                {/* Status bar adapts to color scheme */}
                 <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-
-                {/* Root stack: keep headers off here; tabs/screens set their own */}
                 <Stack>
                   <Stack.Screen name="index" options={{ headerShown: false }} />
                   <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 </Stack>
-
-                {/* App-wide toast/snackbar host */}
                 <Toast />
               </AuthProvider>
             </LanguageProvider>
