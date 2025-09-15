@@ -1,32 +1,24 @@
-// mobile-app/app/(tabs)/_layout.tsx (modified)
+// mobile-app/app/(tabs)/_layout.tsx
 import React from "react";
-import { Text, Platform } from "react-native";
+import { Text, Platform, Image } from "react-native";
 import { Tabs } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "react-native-paper";
-import { IconSymbol } from "../../components/ui/IconSymbol";
 import HeaderBanner from "../../components/ui/HeaderBanner";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-/**
- * Defines the bottom tab navigation for the app.  The language selector has
- * been removed from the tab bar in favor of a floating menu in the header.
- */
+// LNF tab icon: mobile-app/assets/images/LNFmini.png
+const lnfIcon = require("../../assets/images/LNFmini.png");
+
 export default function TabsLayout() {
   const { t } = useTranslation();
   const theme = useTheme();
 
-  // Render tab labels without forcing uppercase/lowercase.  We rely on
-  // translations in en.json/es.json to provide title‑cased names.
   const labelEl =
     (s: string) =>
     ({ color }: { focused: boolean; color: string }) => (
       <Text
-        style={{
-          color,
-          fontSize: 12,
-          fontWeight: "500",
-          textTransform: "none",
-        }}
+        style={{ color, fontSize: 12, fontWeight: "500", textTransform: "none" }}
         numberOfLines={1}
       >
         {s}
@@ -35,19 +27,15 @@ export default function TabsLayout() {
 
   return (
     <>
-      {/* Render the global header/banner inside the tab layout (so it's not shown on the splash) */}
-      <HeaderBanner />
+      {/* Force the banner to show on all tabs, including the index/Bills tab */}
+      <HeaderBanner forceShow />
       <Tabs
         initialRouteName="highlighted"
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: theme.colors.primary,
           tabBarInactiveTintColor: theme.colors.onSurfaceDisabled ?? "#888",
-          tabBarLabelStyle: {
-            fontSize: 12,
-            fontWeight: "500",
-            textTransform: "none",
-          },
+          tabBarLabelStyle: { fontSize: 12, fontWeight: "500", textTransform: "none" },
           tabBarStyle: {
             borderTopWidth: Platform.OS === "web" ? 0 : undefined,
             backgroundColor: theme.colors.surface,
@@ -60,7 +48,7 @@ export default function TabsLayout() {
           options={{
             tabBarLabel: labelEl(t("tabs.highlighted", { defaultValue: "Highlighted" })),
             tabBarIcon: ({ color, size }) => (
-              <IconSymbol name="star" color={color} size={size} />
+              <MaterialCommunityIcons name="star" color={color} size={size} />
             ),
           }}
         />
@@ -69,7 +57,7 @@ export default function TabsLayout() {
           options={{
             tabBarLabel: labelEl(t("tabs.saved", { defaultValue: "Saved" })),
             tabBarIcon: ({ color, size }) => (
-              <IconSymbol name="bookmark" color={color} size={size} />
+              <MaterialCommunityIcons name="bookmark" color={color} size={size} />
             ),
           }}
         />
@@ -78,7 +66,7 @@ export default function TabsLayout() {
           options={{
             tabBarLabel: labelEl(t("tabs.bills", { defaultValue: "Bills" })),
             tabBarIcon: ({ color, size }) => (
-              <IconSymbol name="doc.text" color={color} size={size} />
+              <MaterialCommunityIcons name="file-document" color={color} size={size} />
             ),
           }}
         />
@@ -86,8 +74,13 @@ export default function TabsLayout() {
           name="lnf"
           options={{
             tabBarLabel: labelEl(t("tabs.lnf", { defaultValue: "LNF" })),
+            // Use image + tintColor so it behaves like other icons
             tabBarIcon: ({ color, size }) => (
-              <IconSymbol name="bolt" color={color} size={size} />
+              <Image
+                source={lnfIcon}
+                style={{ width: size, height: size, tintColor: color }}
+                resizeMode="contain"
+              />
             ),
           }}
         />
@@ -96,8 +89,16 @@ export default function TabsLayout() {
           options={{
             tabBarLabel: labelEl(t("tabs.advocacy", { defaultValue: "Advocacy" })),
             tabBarIcon: ({ color, size }) => (
-              <IconSymbol name="megaphone" color={color} size={size} />
+              <MaterialCommunityIcons name="bullhorn" color={color} size={size} />
             ),
+          }}
+        />
+
+        {/* Explicitly register the Language route and hide it from the tab bar */}
+        <Tabs.Screen
+          name="language"
+          options={{
+            tabBarButton: () => null, // hide from UI (do not combine with href: null)
           }}
         />
       </Tabs>

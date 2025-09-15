@@ -1,4 +1,3 @@
-// mobile-app/app/(tabs)/saved.tsx (modified)
 import React, { useCallback, useMemo, useState } from "react";
 import { StyleSheet, FlatList, View, RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6,38 +5,28 @@ import { useFocusEffect, Stack } from "expo-router";
 import { useTranslation } from "react-i18next";
 
 import { ThemedView } from "../../components/ThemedView";
-import BillComponent, { Bill } from "../../src/components/Bill";
+import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 
-type SavedRow = {
-  created_at: string;
-  bill?: Bill | null;
-  bill_id?: string | number | null;
-  bill_slug?: string | null;
-  bill_number?: string | null;
-};
-
-/**
- * Renders the Saved Bills tab.  This screen listens for changes to the
- * `saved_bills` table via Supabase and fetches the associated bills.  A
- * join-based query is attempted first; if that fails, it falls back to
- * individually querying by id/slug/bill_number.  The EmptyState component
- * now uses the correct `icon` and `message` props, and the fallback query
- * references the correct `bill_number` column.
- */
 export default function SavedBillsScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
 
-  const [bills, setBills] = useState<Bill[]>([]);
+  const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const userId = session?.user?.id;
+
+  const fetchBillsByIds = async (ids: (string | number)[]) => {
+    if (!ids.length) return [] as any[];
+    const { data, error } = await supabase.from("bills").select("*").in("id", ids);
+    if (error) throw error;
+    return data ?? [];
+  };
 
   const load = useCallback(async () => {
     if (!userId) {
@@ -47,69 +36,20 @@ export default function SavedBillsScreen() {
     }
     setLoading(true);
     try {
-      // A) Try a joined select, e.g. select bill via FK (fast path)
-      const { data: joined, error: jErr } = await supabase
-        .from("saved_bills")
-        .select("created_at, bill:bills(*)")
+      const { data: marks, error } = await supabase
+        .from("bookmarks")
+        .select("bill_id, created_at")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(200);
+        .order("created_at", { ascending: false });
+      if (error) throw error;
 
-      if (!jErr && joined && joined.length && joined[0]?.bill) {
-        setBills((joined as any[]).map((r) => r.bill).filter(Boolean));
-        return;
-      }
+      const ids = (marks ?? []).map((m) => m.bill_id);
+      const data = await fetchBillsByIds(ids);
 
-      // B) Fallbacks: pull keys, fetch bills by id/slug/bill_number, then preserve order
-      const { data: savedRows, error: e1 } = await supabase
-        .from("saved_bills")
-        .select("created_at,bill_id,bill_slug,bill_number")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (e1) throw e1;
-
-      const rows = (savedRows ?? []).filter(Boolean) as SavedRow[];
-      if (!rows.length) {
-        setBills([]);
-        return;
-      }
-
-      const ids = rows.map((r) => r.bill_id).filter(Boolean) as (string | number)[];
-      const slugs = rows.map((r) => r.bill_slug).filter(Boolean) as string[];
-      const nums = rows.map((r) => r.bill_number).filter(Boolean) as string[];
-
-      const map = new Map<string, Bill>();
-
-      if (ids.length) {
-        const { data, error } = await supabase.from("bills").select("*").in("id", ids);
-        if (error) throw error;
-        (data ?? []).forEach((b: any) => map.set(`id:${String(b.id)}`, b));
-      }
-      if (slugs.length) {
-        const { data, error } = await supabase.from("bills").select("*").in("slug", slugs);
-        if (error) throw error;
-        (data ?? []).forEach((b: any) => map.set(`slug:${String(b.slug)}`, b));
-      }
-      if (nums.length) {
-        const { data, error } = await supabase
-          .from("bills")
-          .select("*")
-          .in("bill_number", nums);
-        if (error) throw error;
-        (data ?? []).forEach((b: any) => map.set(`num:${String(b.bill_number)}`, b));
-      }
-
-      const ordered: Bill[] = [];
-      for (const r of rows) {
-        const a = r.bill_id != null ? map.get(`id:${String(r.bill_id)}`) : undefined;
-        const b = !a && r.bill_slug ? map.get(`slug:${r.bill_slug}`) : undefined;
-        const c = !a && !b && r.bill_number ? map.get(`num:${r.bill_number}`) : undefined;
-        const found = (a || b || c) as Bill | undefined;
-        if (found) ordered.push(found);
-      }
-
-      setBills(ordered);
+      // preserve order by mapping back to ids
+      const map = new Map(data.map((b) => [String(b.id), b]));
+      const ordered = ids.map((id) => map.get(String(id))).filter(Boolean);
+      setBills(ordered as any[]);
     } catch {
       setBills([]);
     } finally {
@@ -123,14 +63,14 @@ export default function SavedBillsScreen() {
     }, [load]),
   );
 
-  // Realtime refresh on inserts/updates/deletes
   React.useEffect(() => {
     if (!userId) return;
+    // Realtime subscription (publication enabled in SQL)
     const ch = supabase
-      .channel(`saved_bills_${userId}`)
+      .channel(`bookmarks_${userId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "saved_bills", filter: `user_id=eq.${userId}` },
+        { event: "*", schema: "public", table: "bookmarks", filter: `user_id=eq.${userId}` },
         () => load(),
       )
       .subscribe();
@@ -144,8 +84,6 @@ export default function SavedBillsScreen() {
     await load();
     setRefreshing(false);
   }, [load]);
-
-  const renderItem = ({ item }: { item: Bill }) => <BillComponent bill={item} />;
 
   const content = useMemo(() => {
     if (loading) {
@@ -171,8 +109,8 @@ export default function SavedBillsScreen() {
     return (
       <FlatList
         data={bills}
-        keyExtractor={(b) => String((b as any).id ?? Math.random())}
-        renderItem={renderItem}
+        keyExtractor={(b) => String((b as any).id)}
+        renderItem={({ item }) => <BillComponent bill={item} />}
         contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}

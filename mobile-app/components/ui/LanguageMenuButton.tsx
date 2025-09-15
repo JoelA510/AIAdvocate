@@ -15,7 +15,7 @@ export default function LanguageMenuButton() {
 
   // Filter out special i18next codes like cimode/dev
   const supported = (i18n.options?.supportedLngs as string[] | undefined)?.filter(
-    (lng) => lng && lng !== "cimode" && lng !== "dev"
+    (lng) => lng && lng !== "cimode" && lng !== "dev",
   ) || ["en"];
 
   /**

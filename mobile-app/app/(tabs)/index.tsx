@@ -1,6 +1,4 @@
-// mobile-app/app/(tabs)/index.tsx
-
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,11 +8,11 @@ import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
 import { ThemedView } from "../../components/ThemedView";
-import { ThemedText } from "../../components/ThemedText";
 import { supabase } from "../../src/lib/supabase";
+import { fetchTranslationsForBills } from "../../src/lib/translation";
 
-export default function HomeScreen() {
-  const { t } = useTranslation();
+export default function BillsHomeScreen() {
+  const { t, i18n } = useTranslation();
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -25,34 +23,87 @@ export default function HomeScreen() {
     const fetchBills = async () => {
       setLoading(true);
       try {
-        let query = supabase.from("bills").select("*").order("id", { ascending: false });
-        const trimmedQuery = searchQuery.trim();
+        const trimmed = searchQuery.trim();
         const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
+        let data: any[] = [];
 
-        if (trimmedQuery) {
-          if (billNumberRegex.test(trimmedQuery)) {
-            const processedBillNumber = trimmedQuery.replace(/\s/g, "");
-            query = query.ilike("bill_number", `%${processedBillNumber}%`);
-          } else {
-            query = query.textSearch("title,description", trimmedQuery, { type: "websearch" });
-          }
+        if (!trimmed) {
+          const { data: d, error: e } = await supabase
+            .from("bills")
+            .select("*")
+            .order("id", { ascending: false });
+          if (e) throw e;
+          data = d ?? [];
+        } else if (billNumberRegex.test(trimmed)) {
+          const processed = trimmed.replace(/\s/g, "");
+          const { data: d, error: e } = await supabase
+            .from("bills")
+            .select("*")
+            .ilike("bill_number", `%${processed}%`)
+            .order("id", { ascending: false });
+          if (e) throw e;
+          data = d ?? [];
+        } else {
+          // Ranked full-text search via RPC
+          const { data: d, error: e } = await supabase.rpc("search_bills", {
+            p_query: trimmed,
+          });
+          if (e) throw e;
+          data = d ?? [];
         }
 
-        const { data, error } = await query;
-        if (error) throw error;
-        setBills(data || []);
+        setBills(data);
+        setError(null);
       } catch (err: any) {
         setError(err.message);
+        setBills([]);
       } finally {
         setLoading(false);
       }
     };
 
-    const searchTimeout = setTimeout(() => {
-      fetchBills();
-    }, 300);
+    const searchTimeout = setTimeout(fetchBills, 300); // debounce
     return () => clearTimeout(searchTimeout);
-  }, [searchQuery]); // Option A: includes what the effect uses
+  }, [searchQuery]);
+
+  // Hydrate visible items with translations when language != en
+  const idsKey = useMemo(() => bills.map((b) => b.id).join(","), [bills]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (i18n.language === "en") return;
+      if (!bills.length) return;
+
+      try {
+        const map = await fetchTranslationsForBills(
+          bills.map((b) => b.id),
+          i18n.language,
+        );
+        if (!alive || !Object.keys(map).length) return;
+
+        setBills((prev) =>
+          prev.map((b) => {
+            const tr = map[b.id];
+            if (!tr) return b;
+            return {
+              ...b,
+              title: tr.title ?? b.title,
+              description: tr.description ?? b.description,
+              summary_simple_es: tr.summary_simple ?? (b as any).summary_simple_es,
+              summary_medium_es: tr.summary_medium ?? (b as any).summary_medium_es,
+              summary_complex_es: tr.summary_complex ?? (b as any).summary_complex_es,
+              original_text_es: tr.original_text ?? (b as any).original_text_es,
+            };
+          }),
+        );
+      } catch {
+        /* non-fatal */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [i18n.language, idsKey]);
 
   const renderContent = () => {
     if (loading) {
@@ -62,6 +113,7 @@ export default function HomeScreen() {
           renderItem={() => <BillSkeleton />}
           keyExtractor={(_, index) => `skeleton-${index}`}
           scrollEnabled={false}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
         />
       );
     }
@@ -105,12 +157,8 @@ export default function HomeScreen() {
   };
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
+    <ThemedView style={styles.container}>
       <View style={styles.header}>
-        <ThemedText type="title" style={styles.title}>
-          {t("tabs.explore.title", "Explore Bills")}
-        </ThemedText>
-
         <Searchbar
           placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
           onChangeText={setSearchQuery}
@@ -125,8 +173,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
-  title: { fontWeight: "bold", marginBottom: 16, fontSize: 32, lineHeight: 32 },
+  header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
   searchbar: {},
   content: { flex: 1, paddingHorizontal: 16 },
 });

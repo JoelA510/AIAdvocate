@@ -24,3 +24,7 @@ import_map = "./functions/sync-legislators-and-votes/deno.json"
 [functions.translate-bill]
 verify_jwt = false
 import_map = "./functions/translate-bill/deno.json"
+
+[functions.translate-bills]
+verify_jwt = false
+import_map = "./functions/translate-bills/deno.json"

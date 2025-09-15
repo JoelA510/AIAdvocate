@@ -1,21 +1,18 @@
 // mobile-app/app/index.tsx
-
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef } from "react";
-import { Animated, Image, StyleSheet, useWindowDimensions } from "react-native";
-import { useTheme } from "react-native-paper";
-import { ThemedView } from "../components/ThemedView";
+import { Animated, Image, StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const HEADER_HEIGHT = 50; // The final height of the header banner
+const HEADER_HEIGHT = 50; // Final height of the header banner
+const BRAND = "#078A97"; // Same brand color as your banner
 
 export default function SplashScreen() {
   const router = useRouter();
-  const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
 
-  // Compute the starting Y so the banner is vertically centered within the safe area
+  // Start vertically centered within the safe area
   const initialPosition = useMemo(() => {
     const safeAreaHeight = screenHeight - insets.top - insets.bottom;
     return insets.top + safeAreaHeight / 2 - HEADER_HEIGHT / 2;
@@ -25,7 +22,7 @@ export default function SplashScreen() {
   const hasNavigatedRef = useRef(false);
 
   useEffect(() => {
-    // If safe area / dimensions changed, re-center before animating
+    // Re-center before animating if safe area / dimensions change
     bannerPosition.setValue(initialPosition);
 
     Animated.timing(bannerPosition, {
@@ -38,12 +35,10 @@ export default function SplashScreen() {
         router.replace("/(tabs)");
       }
     });
-  }, [bannerPosition, initialPosition, insets.top, router]); // Option A: include what we use
-
-  const bannerTintColor = theme.dark ? "#FFFFFF" : "#000000";
+  }, [bannerPosition, initialPosition, insets.top, router]);
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={[styles.container, { backgroundColor: BRAND }]}>
       <Animated.View
         style={{
           position: "absolute",
@@ -54,16 +49,17 @@ export default function SplashScreen() {
         }}
       >
         <Image
+          // Keep your original splash asset; change to header-banner.png here if you prefer
           source={require("../assets/images/banner.png")}
-          style={[styles.banner, { tintColor: bannerTintColor }]}
+          style={styles.banner} // no tint — preserves the asset’s native colors
           resizeMode="contain"
         />
       </Animated.View>
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1 }, // backgroundColor set inline above
   banner: { width: "100%", height: HEADER_HEIGHT },
 });

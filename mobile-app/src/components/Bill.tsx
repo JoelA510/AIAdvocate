@@ -90,8 +90,8 @@ export default function BillComponent({ bill }: { bill: Bill }) {
       Toast.show({ type: "error", text1: "Error", text2: "Could not save your change." });
     } else {
       Toast.show({
-      type: "success",
-      text1: previousBookmarkState ? "Bookmark Removed" : "Bookmark Saved",
+        type: "success",
+        text1: previousBookmarkState ? "Bookmark Removed" : "Bookmark Saved",
       });
     }
   };
@@ -133,9 +133,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
   // to the English simple summary.  We only show a short preview on the card.
   const lang = i18n?.language ?? "en";
   const summary =
-    lang.startsWith("es") && bill.summary_simple_es
-      ? bill.summary_simple_es
-      : bill.summary_simple;
+    lang.startsWith("es") && bill.summary_simple_es ? bill.summary_simple_es : bill.summary_simple;
 
   return (
     <Card style={styles.card}>

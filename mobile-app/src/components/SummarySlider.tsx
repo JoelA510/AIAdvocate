@@ -1,9 +1,9 @@
-// mobile-app/src/components/SummarySlider.tsx (modified)
+// mobile-app/src/components/SummarySlider.tsx
+// Replaces external slider dep with Paper SegmentedButtons (no new packages).
 
 import React, { useEffect, useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
-import { Text, useTheme } from "react-native-paper";
-import Slider from "@react-native-community/slider";
+import { Text, useTheme, SegmentedButtons } from "react-native-paper";
 import { useTranslation } from "react-i18next";
 import { Bill } from "./Bill";
 
@@ -12,93 +12,73 @@ type Props = {
   onSummaryChange: (text: string) => void;
 };
 
-/**
- * A summary picker that lets the user switch between simple, medium, complex
- * summaries or the original text.  Uses a discrete slider with four
- * positions (0–3) and emits the appropriate text via `onSummaryChange`.
- * It also displays the currently selected summary below the slider.
- */
+type Level = "simple" | "medium" | "complex" | "original";
+
 export default function SummarySlider({ bill, onSummaryChange }: Props) {
   const theme = useTheme();
   const { t, i18n } = useTranslation();
 
-  const LEVELS = useMemo(
-    () => [
-      t("summary.level.simple", "Simple"),
-      t("summary.level.medium", "Medium"),
-      t("summary.level.complex", "Complex"),
-      t("summary.level.original", "Original Text"),
-    ],
+  const LABELS = useMemo(
+    () => ({
+      simple: t("summary.level.simple", "Simple"),
+      medium: t("summary.level.medium", "Medium"),
+      complex: t("summary.level.complex", "Complex"),
+      original: t("summary.level.original", "Original Text"),
+    }),
     [t],
   );
 
-  const [level, setLevel] = useState(0);
+  const [level, setLevel] = useState<Level>("simple");
 
-  // Compute the summary text for the given level and language.  Spanish
-  // summaries are used when available; otherwise fall back to English.
-  const getSummaryForLevel = (lvl: number) => {
+  const getSummaryForLevel = (lvl: Level) => {
     const lang = i18n.language ?? "en";
-    const texts: (string | null | undefined)[] = [
-      lang.startsWith("es") && bill.summary_simple_es ? bill.summary_simple_es : bill.summary_simple,
-      lang.startsWith("es") && bill.summary_medium_es ? bill.summary_medium_es : bill.summary_medium,
-      lang.startsWith("es") && bill.summary_complex_es ? bill.summary_complex_es : bill.summary_complex,
-      bill.original_text,
-    ];
-    const text = texts[lvl] ?? null;
+    const choose = (en?: string | null, es?: string | null) =>
+      lang.startsWith("es") && es ? es : en;
+
+    const textByLevel: Record<Level, string | null | undefined> = {
+      simple: choose(bill.summary_simple, (bill as any).summary_simple_es),
+      medium: choose(bill.summary_medium, (bill as any).summary_medium_es),
+      complex: choose(bill.summary_complex, (bill as any).summary_complex_es),
+      original: bill.original_text,
+    };
+
+    const text = textByLevel[lvl] ?? null;
     return text || t("summary.empty", "No content available for this level.");
   };
 
-  // Emit the summary to the parent whenever the level or language changes.
   useEffect(() => {
     onSummaryChange(getSummaryForLevel(level));
-  }, [level, i18n.language, bill, onSummaryChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [level, i18n.language, bill]);
 
   return (
     <View style={styles.container}>
       <Text variant="titleLarge" style={styles.title}>
         {t("summary.aiTitle", "AI-Generated Summary")}
       </Text>
-      <View style={styles.sliderContainer}>
-        <Slider
-          minimumValue={0}
-          maximumValue={LEVELS.length - 1}
-          step={1}
-          value={level}
-          onValueChange={(value) => setLevel(value)}
-          minimumTrackTintColor={theme.colors.primary}
-          maximumTrackTintColor={theme.colors.surfaceVariant}
-          thumbTintColor={theme.colors.primary}
-          style={styles.slider}
-        />
-        <View style={styles.labels}>
-          {LEVELS.map((label, idx) => (
-            <Text
-              key={label}
-              style={[
-                styles.label,
-                {
-                  color: idx === level ? theme.colors.primary : theme.colors.onSurfaceDisabled,
-                },
-              ]}
-              accessibilityRole="button"
-              onPress={() => setLevel(idx)}
-            >
-              {label}
-            </Text>
-          ))}
-        </View>
-      </View>
-      <Text style={styles.summaryText}>{getSummaryForLevel(level)}</Text>
+
+      <SegmentedButtons
+        value={level}
+        onValueChange={(v) => setLevel(v as Level)}
+        buttons={[
+          { label: LABELS.simple, value: "simple" },
+          { label: LABELS.medium, value: "medium" },
+          { label: LABELS.complex, value: "complex" },
+          { label: LABELS.original, value: "original" },
+        ]}
+        style={styles.segmented}
+      />
+
+      <Text style={[styles.summaryText, { color: theme.colors.onSurface }]}>
+        {getSummaryForLevel(level)}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { marginVertical: 16 },
-  title: { marginBottom: 16, paddingHorizontal: 4 },
-  sliderContainer: { paddingHorizontal: 10, marginBottom: 16 },
-  slider: { height: 40 },
-  labels: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 5 },
-  label: { fontSize: 12 },
+  title: { marginBottom: 12, paddingHorizontal: 4 },
+  segmented: { marginBottom: 12 },
   summaryText: { fontSize: 16, lineHeight: 24, textAlign: "left", paddingHorizontal: 4 },
 });

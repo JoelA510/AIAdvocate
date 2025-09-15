@@ -1,5 +1,3 @@
-// mobile-app/app/bill/[id].tsx (modified)
-
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState, useEffect } from "react";
 import {
@@ -19,25 +17,30 @@ import {
   Card,
   ActivityIndicator as PaperActivityIndicator,
 } from "react-native-paper";
-import * as Speech from "expo-speech";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import Toast from "react-native-toast-message";
 
 import { IconSymbol } from "../../components/ui/IconSymbol";
 import HeaderBanner from "../../components/ui/HeaderBanner";
-import { trackEvent } from "@/lib/analytics";
-import { useAuth } from "@/providers/AuthProvider";
-import { supabase } from "@/lib/supabase";
-import { Bill } from "@/components/Bill";
-import SummarySlider from "@/components/SummarySlider";
-import FindYourRep from "@/components/FindYourRep";
-import RelatedBills from "@/components/RelatedBills";
-import EmptyState from "@/components/EmptyState";
+
+import { trackEvent } from "../../src/lib/analytics";
+import { useAuth } from "../../src/providers/AuthProvider";
+import { supabase } from "../../src/lib/supabase";
+import { Bill } from "../../src/components/Bill";
+import SummarySlider from "../../src/components/SummarySlider";
+import FindYourRep from "../../src/components/FindYourRep";
+import RelatedBills from "../../src/components/RelatedBills";
+import EmptyState from "../../src/components/EmptyState";
 
 type TranslatedContent = Pick<
   Bill,
-  "title" | "description" | "summary_simple" | "summary_medium" | "summary_complex"
+  | "title"
+  | "description"
+  | "summary_simple"
+  | "summary_medium"
+  | "summary_complex"
+  | "original_text"
 >;
 
 export default function BillDetailsScreen() {
@@ -53,12 +56,10 @@ export default function BillDetailsScreen() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeSummaryText, setActiveSummaryText] = useState("");
 
   useEffect(() => {
     let isMounted = true;
     const fetchBill = async () => {
-      Speech.stop();
       setLoading(true);
       try {
         const { data, error } = await supabase.from("bills").select("*").eq("id", id).single();
@@ -66,7 +67,7 @@ export default function BillDetailsScreen() {
         if (!isMounted) return;
         setBill(data as Bill);
         if (data && session?.user?.id) {
-          trackEvent("bill_view", session.user.id, { bill_id: data.id }).catch(() => {});
+          trackEvent("bill_view", session.user.id, { bill_id: (data as any).id }).catch(() => {});
         }
       } catch (err: any) {
         if (isMounted) setError(err.message);
@@ -77,25 +78,21 @@ export default function BillDetailsScreen() {
     fetchBill();
     return () => {
       isMounted = false;
-      Speech.stop();
     };
   }, [id, session]);
 
-  // Trigger on-demand translation when language changes and not English.
   useEffect(() => {
     if (!bill) return;
     if (i18n.language === "en") {
       setTranslatedContent(null);
       return;
     }
-
     let isMounted = true;
     const fetchTranslation = async () => {
       setIsTranslating(true);
-      Speech.stop();
       try {
         const { data, error } = await supabase.functions.invoke("translate-bill", {
-          body: { bill_id: bill.id, language_code: i18n.language },
+          body: { bill_id: (bill as any).id, language_code: i18n.language },
         });
         if (error) throw error;
         if (isMounted) setTranslatedContent(data as any);
@@ -138,13 +135,10 @@ export default function BillDetailsScreen() {
       } else {
         await RNShare.share({ message: `${text} ${url}`.trim() });
       }
-    } catch {
-      // swallow share errors
-    }
+    } catch {}
   };
 
   const handleGoBack = () => {
-    Speech.stop();
     router.back();
   };
 
@@ -169,7 +163,9 @@ export default function BillDetailsScreen() {
         </Button>
         <EmptyState
           icon="x.circle"
-          title={error ? t("error.title", "An Error Occurred") : t("bill.missing", "Bill Not Found")}
+          title={
+            error ? t("error.title", "An Error Occurred") : t("bill.missing", "Bill Not Found")
+          }
           message={
             error
               ? error
@@ -180,17 +176,15 @@ export default function BillDetailsScreen() {
     );
   }
 
-  const displayContent = (translatedContent || bill) as any;
+  const display = (translatedContent || bill) as any;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      {/* Render the global banner atop the bill details */}
-      <HeaderBanner />
+      <HeaderBanner forceShow />
       <ScrollView
         style={[styles.scrollView]}
         contentContainerStyle={{ paddingBottom: insets.bottom }}
         showsVerticalScrollIndicator={false}
-        onScrollBeginDrag={() => Speech.stop()}
       >
         <View style={styles.container}>
           <Button
@@ -213,7 +207,7 @@ export default function BillDetailsScreen() {
             </View>
           ) : (
             <Text variant="titleLarge" style={styles.subtitle}>
-              {displayContent.title}
+              {display.title}
             </Text>
           )}
 
@@ -221,7 +215,11 @@ export default function BillDetailsScreen() {
             <Button icon="share-variant" mode="text" onPress={handleShare}>
               {t("common.share", "Share")}
             </Button>
-            {/* TTS button removed.  If re-enabled, place the TTS button here and call handleSpeak() */}
+            {bill.state_link ? (
+              <Button mode="text" onPress={() => Linking.openURL(bill.state_link!)}>
+                {t("bill.readMore", "Read on Legislature site")}
+              </Button>
+            ) : null}
           </View>
 
           {bill.panel_review && (
@@ -230,10 +228,10 @@ export default function BillDetailsScreen() {
               <Card.Content>
                 <Text variant="labelLarge" style={styles.reviewRecommendation}>
                   {t("bill.panel.recommendation", "Recommendation: {{r}}", {
-                    r: bill.panel_review.recommendation,
+                    r: (bill as any).panel_review?.recommendation,
                   })}
                 </Text>
-                <Text variant="bodyMedium">{bill.panel_review.comment}</Text>
+                <Text variant="bodyMedium">{(bill as any).panel_review?.comment}</Text>
               </Card.Content>
             </Card>
           )}
@@ -241,18 +239,9 @@ export default function BillDetailsScreen() {
           <Divider style={styles.divider} />
           <FindYourRep bill={bill} />
           <Divider style={styles.divider} />
-          <SummarySlider bill={{ ...bill, ...displayContent }} onSummaryChange={setActiveSummaryText} />
+          <SummarySlider bill={{ ...bill, ...display }} onSummaryChange={() => {}} />
           <Divider style={styles.divider} />
-          <RelatedBills billId={bill.id} />
-
-          {bill.original_text && (
-            <Text
-              style={styles.attributionText}
-              onPress={() => Linking.openURL("https://legiscan.com")}
-            >
-              {t("bill.attribution.legiscan", "Original text provided by LegiScan")}
-            </Text>
-          )}
+          <RelatedBills billId={(bill as any).id} />
         </View>
       </ScrollView>
     </View>
@@ -271,17 +260,11 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     marginBottom: 8,
     marginLeft: -8,
+    gap: 8,
   },
   divider: { marginVertical: 16 },
   reviewCard: { marginVertical: 8 },
   reviewRecommendation: { fontWeight: "bold", marginBottom: 8 },
   translatingContainer: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
   translatingText: { marginLeft: 12, fontSize: 18, fontStyle: "italic", color: "gray" },
-  attributionText: {
-    fontSize: 12,
-    color: "gray",
-    textAlign: "center",
-    marginTop: 24,
-    textDecorationLine: "underline",
-  },
 });

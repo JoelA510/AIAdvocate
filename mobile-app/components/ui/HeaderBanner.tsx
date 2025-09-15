@@ -1,90 +1,83 @@
-// mobile-app/components/ui/HeaderBanner.tsx (modified)
-
-import React, { useEffect } from "react";
-import { StyleSheet, Image, Platform } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Animated, Image, Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { usePathname } from "expo-router";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  Easing,
-} from "react-native-reanimated";
-import { ThemedView } from "../ThemedView";
-import LanguageMenuButton from "./LanguageMenuButton";
+import { useRouter, usePathname } from "expo-router";
+import { useTheme } from "react-native-paper";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-// Path to the banner asset. Update if your asset location changes.
-const bannerSource = require("../../assets/images/header-banner.png");
+const banner = require("../../assets/images/header-banner.png");
 
-// ensure only one animation per app run
-let hasAnimatedOnce = false;
+type Props = { forceShow?: boolean };
 
-/**
- * HeaderBanner renders a small banner at the top of every screen.  It slides
- * gently into place on first render and includes a floating language selector
- * anchored to the top right.  When the pathname is "/" (splash), the header
- * returns null so that the animated splash banner is shown by itself.
- */
-export default function HeaderBanner() {
+export default function HeaderBanner({ forceShow }: Props) {
+  const theme = useTheme();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
-  // Hide the global header when we are on the root splash screen.  The
-  // animated splash (app/index.tsx) already displays the banner.
-  if (pathname === "/") {
-    return null;
-  }
+  const router = useRouter();
 
-  const progress = useSharedValue(hasAnimatedOnce ? 1 : 0);
+  const isOnSplash = pathname === "/" || pathname === "/index";
+  const visible = forceShow ? true : !isOnSplash;
 
-  const styleA = useAnimatedStyle(() => {
-    const translateY = (1 - progress.value) * 24; // gentle slide up
-    const opacity = progress.value < 0.05 ? 0 : 1;
-    return { transform: [{ translateY }], opacity };
-  });
+  const slide = useRef(new Animated.Value(-20)).current;
+  const fade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (hasAnimatedOnce) return;
-    progress.value = withTiming(1, {
-      duration: 600,
-      easing: Easing.out(Easing.cubic),
-    });
-    hasAnimatedOnce = true;
-  }, [progress]);
+    if (!visible) return;
+    Animated.parallel([
+      Animated.timing(slide, { toValue: 0, duration: 300, useNativeDriver: true }),
+      Animated.timing(fade, { toValue: 1, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, [visible, slide, fade]);
+
+  if (!visible) return null;
 
   return (
-    <ThemedView style={[styles.wrap, { paddingTop: insets.top }]}>
-      {/* Slide-in banner */}
+    <View style={{ paddingTop: insets.top, backgroundColor: theme.colors.background }}>
       <Animated.View
         style={[
-          styleA,
-          Platform.select({
-            web: { position: "relative" },
-            default: { position: "relative" },
-          }),
+          styles.row,
+          {
+            transform: [{ translateY: slide }],
+            opacity: fade,
+            borderBottomColor: theme.colors.surfaceVariant,
+          },
         ]}
       >
-        <Image
-          source={bannerSource}
-          resizeMode="contain"
-          style={styles.bannerImage}
-          accessibilityRole="image"
-          accessibilityLabel="AI Advocate"
-        />
+        <Image source={banner} style={styles.banner} resizeMode="contain" />
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push("/language")}
+          style={({ pressed }) => [
+            styles.langBtn,
+            {
+              opacity: pressed ? 0.7 : 1,
+              backgroundColor: theme.colors.elevation?.level2 ?? "transparent",
+            },
+          ]}
+        >
+          <MaterialCommunityIcons name="translate" size={18} color={theme.colors.primary} />
+        </Pressable>
       </Animated.View>
-      {/* Floating language selector anchored to the top right */}
-      <LanguageMenuButton />
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    width: "100%",
-    paddingHorizontal: 16,
-    paddingBottom: 8,
+  row: {
+    height: 50,
+    paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
   },
-  bannerImage: {
-    width: "100%",
-    height: 48,
+  banner: { flex: 1, height: 32 },
+  langBtn: {
+    height: 28,
+    minWidth: 28,
+    marginLeft: 8,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
