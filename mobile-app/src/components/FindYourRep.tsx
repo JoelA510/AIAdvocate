@@ -16,6 +16,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { useRouter } from "expo-router";
 import { findYourRep } from "@/lib/find-your-representative";
+import { supabase } from "@/lib/supabase";
+import { createLegislatorLookupKey } from "@/lib/legislatorLookup";
 
 type Person = {
   id?: string | number;
@@ -30,6 +32,11 @@ type Person = {
   offices?: { email?: string | null }[] | null;
 };
 
+type PersonWithMatch = Person & {
+  lookupKey?: string;
+  supabaseId?: number | null;
+};
+
 function nameOf(p: Person) {
   return p?.name ?? "—";
 }
@@ -40,7 +47,7 @@ export default function FindYourRep({ bill }: { bill?: any }) {
   const router = useRouter();
 
   const [value, setValue] = useState("");
-  const [results, setResults] = useState<Person[]>([]);
+  const [results, setResults] = useState<PersonWithMatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -59,12 +66,50 @@ export default function FindYourRep({ bill }: { bill?: any }) {
       if (!people?.length) {
         setErr(t("findYourRep.error.none", "No representatives found for that location."));
       }
-      setResults(people || []);
+      const enriched = await attachSupabaseMatches(people || []);
+      setResults(enriched);
     } catch (e: any) {
       setErr(e?.message ?? t("findYourRep.error.generic", "Failed to look up representatives."));
     } finally {
       setLoading(false);
     }
+  };
+
+  const attachSupabaseMatches = async (people: Person[]): Promise<PersonWithMatch[]> => {
+    if (!people.length) return [];
+
+    const lookupEntries = people.map((p) => ({
+      lookup: createLegislatorLookupKey(p.name, p.current_role?.org_classification, p.current_role?.district),
+      person: p,
+    }));
+
+    const uniqueLookups = Array.from(
+      new Set(
+        lookupEntries
+          .map((entry) => entry.lookup)
+          .filter((lookup) => lookup && lookup.replace(/:/g, "").length > 0),
+      ),
+    );
+
+    let matches = new Map<string, number>();
+    if (uniqueLookups.length) {
+      const { data, error: lookupError } = await supabase
+        .from("legislators")
+        .select("id, lookup_key")
+        .in("lookup_key", uniqueLookups);
+
+      if (lookupError) console.error("Failed to match legislators", lookupError);
+
+      data?.forEach((row: { id: number; lookup_key: string | null }) => {
+        if (row.lookup_key) matches.set(row.lookup_key, Number(row.id));
+      });
+    }
+
+    return lookupEntries.map(({ lookup, person }) => ({
+      ...person,
+      lookupKey: lookup,
+      supabaseId: lookup ? matches.get(lookup) ?? null : null,
+    }));
   };
 
   /**
@@ -124,6 +169,7 @@ export default function FindYourRep({ bill }: { bill?: any }) {
             chamberKey === "upper" ? "Senate" : "Assembly",
           );
           const district = p?.current_role?.district;
+          const hasMatch = !!p.supabaseId;
           return (
             <Card key={p.id ?? `${nameOf(p)}-${idx}`} style={{ marginBottom: 12 }} mode="outlined">
               <Card.Title
@@ -136,6 +182,16 @@ export default function FindYourRep({ bill }: { bill?: any }) {
                   .filter(Boolean)
                   .join(" • ")}
               />
+              {!hasMatch && (
+                <Card.Content>
+                  <Text variant="bodyMedium" style={{ opacity: 0.7 }}>
+                    {t(
+                      "findYourRep.noRecord",
+                      "Voting record not available yet for this representative.",
+                    )}
+                  </Text>
+                </Card.Content>
+              )}
               <Card.Actions>
                 {email && (
                   <Button icon="email-outline" onPress={() => composeEmail(p, email)}>
@@ -144,9 +200,10 @@ export default function FindYourRep({ bill }: { bill?: any }) {
                 )}
                 <Button
                   mode="text"
+                  disabled={!hasMatch}
                   onPress={() => {
-                    if (p?.id) {
-                      router.push(`/legislator/${p.id}`);
+                    if (hasMatch) {
+                      router.push({ pathname: "/legislator/[id]", params: { id: String(p.supabaseId) } });
                     }
                   }}
                 >

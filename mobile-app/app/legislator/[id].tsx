@@ -10,6 +10,7 @@ import EmptyState from "../../src/components/EmptyState";
 
 type VoteRow = {
   id?: string | number;
+  vote_id?: number | null;
   bill_id?: number;
   bill_number?: string | null;
   bill_title?: string | null;
@@ -20,6 +21,7 @@ type VoteRow = {
   no_count?: number | null;
   other_count?: number | null;
   date?: string | null;
+  motion?: string | null;
 };
 
 type Legislator = {
@@ -27,6 +29,41 @@ type Legislator = {
   name?: string;
   party?: string | null;
   district?: string | number | null;
+  chamber?: string | null;
+};
+
+const OPTION_LABELS: Record<string, string> = {
+  yea: "Yes",
+  yay: "Yes",
+  yea2: "Yes",
+  yea3: "Yes",
+  nay: "No",
+  nay2: "No",
+  nay3: "No",
+  aye: "Yes",
+  aye2: "Yes",
+  aye3: "Yes",
+  y: "Yes",
+  n: "No",
+  abstain: "Abstain",
+  present: "Present",
+  excused: "Excused",
+  absent: "Absent",
+  nv: "Present",
+  not_voting: "Not voting",
+};
+
+const formatOption = (input?: string | null) => {
+  if (!input) return "—";
+  const key = input.toLowerCase().replace(/\s+/g, "");
+  return OPTION_LABELS[key] ?? input;
+};
+
+const formatResult = (input?: string | null) => {
+  if (!input) return "—";
+  const trimmed = input.trim();
+  if (!trimmed) return "—";
+  return trimmed.replace(/_/g, " ");
 };
 
 export default function LegislatorScreen() {
@@ -39,109 +76,76 @@ export default function LegislatorScreen() {
   const [leg, setLeg] = useState<Legislator | null>(null);
   const [votes, setVotes] = useState<VoteRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     const load = async () => {
       setLoading(true);
+      setError(null);
       try {
-        // Try a straightforward legislator lookup
-        const L = await supabase.from("legislators").select("*").eq("id", id).maybeSingle();
-        if (!L.error && L.data) setLeg(L.data as any);
-
-        // Try a few possible vote table shapes
-        let rows: VoteRow[] = [];
-
-        // A) votes table with joins flattened by a view
-        const A = await supabase
-          .from("votes_view")
-          .select("*")
-          .eq("legislator_id", id)
-          .order("date", { ascending: false })
-          .limit(100);
-        if (!A.error && A.data?.length) rows = A.data as any[];
-
-        // B) votes table + bills join manually
-        if (!rows.length) {
-          const V = await supabase
-            .from("votes")
-            .select("id,bill_id,option,result,yes_count,no_count,other_count,date")
-            .eq("legislator_id", id)
-            .order("date", { ascending: false })
-            .limit(100);
-          if (!V.error && V.data?.length) {
-            const ids = (V.data as any[]).map((r) => r.bill_id).filter(Boolean);
-            let billsMap = new Map<string, any>();
-            if (ids.length) {
-              const B = await supabase
-                .from("bills")
-                .select("id,bill_number,title,slug")
-                .in("id", ids);
-              if (!B.error && B.data) {
-                billsMap = new Map(B.data.map((b: any) => [String(b.id), b]));
-              }
-            }
-            rows = (V.data as any[]).map((r) => {
-              const b = billsMap.get(String(r.bill_id));
-              return {
-                id: r.id,
-                bill_id: r.bill_id,
-                bill_number: b?.bill_number,
-                bill_title: b?.title,
-                bill_slug: b?.slug,
-                option: r.option,
-                result: r.result,
-                yes_count: r.yes_count,
-                no_count: r.no_count,
-                other_count: r.other_count,
-                date: r.date,
-              } as VoteRow;
-            });
-          }
+        if (!id) {
+          throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
         }
 
-        // C) roll_calls by legislator_id (another common shape)
-        if (!rows.length) {
-          const R = await supabase
-            .from("roll_calls")
-            .select("id,bill_id,option,result,yes_count,no_count,other_count,date,legislator_id")
-            .eq("legislator_id", id)
-            .order("date", { ascending: false })
-            .limit(100);
-          if (!R.error && R.data?.length) {
-            const ids = (R.data as any[]).map((r) => r.bill_id).filter(Boolean);
-            let billsMap = new Map<string, any>();
-            if (ids.length) {
-              const B = await supabase
-                .from("bills")
-                .select("id,bill_number,title,slug")
-                .in("id", ids);
-              if (!B.error && B.data) {
-                billsMap = new Map(B.data.map((b: any) => [String(b.id), b]));
-              }
+        const numericId = Number(id);
+        if (Number.isNaN(numericId)) {
+          throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
+        }
+
+        const { data: legislatorData, error: legislatorError } = await supabase
+          .from("legislators")
+          .select("id,name,party,district,chamber")
+          .eq("id", numericId)
+          .maybeSingle();
+        if (legislatorError) throw legislatorError;
+        if (!legislatorData) {
+          throw new Error(t("legislator.missing", "We do not have that legislator on file yet."));
+        }
+        if (isMounted) setLeg(legislatorData as Legislator);
+
+        const { data: rawVotes, error: votesError } = await supabase
+          .from("votes")
+          .select("id,vote_id,bill_id,option,result,yes_count,no_count,other_count,date,motion")
+          .eq("legislator_id", numericId)
+          .order("date", { ascending: false })
+          .limit(100);
+        if (votesError) throw votesError;
+
+        let rows: VoteRow[] = (rawVotes as VoteRow[]) ?? [];
+
+        if (rows.length) {
+          const billIds = Array.from(new Set(rows.map((r) => r.bill_id).filter(Boolean))) as number[];
+          if (billIds.length) {
+            const { data: billData, error: billsError } = await supabase
+              .from("bills")
+              .select("id,bill_number,title,slug")
+              .in("id", billIds);
+            if (!billsError && billData) {
+              const billsMap = new Map<number, { bill_number?: string; title?: string; slug?: string }>();
+              billData.forEach((bill: any) => {
+                billsMap.set(Number(bill.id), bill);
+              });
+              rows = rows.map((vote) => {
+                const bill = vote.bill_id ? billsMap.get(Number(vote.bill_id)) : null;
+                return {
+                  ...vote,
+                  bill_number: vote.bill_number ?? (bill?.bill_number ?? null),
+                  bill_title: vote.bill_title ?? (bill?.title ?? null),
+                  bill_slug: vote.bill_slug ?? (bill?.slug ?? null),
+                };
+              });
             }
-            rows = (R.data as any[]).map((r) => {
-              const b = billsMap.get(String(r.bill_id));
-              return {
-                id: r.id,
-                bill_id: r.bill_id,
-                bill_number: b?.bill_number,
-                bill_title: b?.title,
-                bill_slug: b?.slug,
-                option: r.option,
-                result: r.result,
-                yes_count: r.yes_count,
-                no_count: r.no_count,
-                other_count: r.other_count,
-                date: r.date,
-              } as VoteRow;
-            });
           }
         }
 
         if (isMounted) setVotes(rows);
-      } catch {
-        if (isMounted) setVotes([]);
+      } catch (err: any) {
+        if (isMounted) {
+          setVotes([]);
+          setLeg(null);
+          setError(err?.message ?? t("legislator.loadError", "Unable to load that legislator."));
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -150,20 +154,35 @@ export default function LegislatorScreen() {
     return () => {
       isMounted = false;
     };
-  }, [id]);
+  }, [id, t]);
 
   const header = useMemo(() => {
     const parts = [];
     if (leg?.name) parts.push(leg.name);
     if (leg?.party) parts.push(leg.party);
     if (leg?.district) parts.push(`${t("legislator.district", "District")} ${leg.district}`);
+    if (leg?.chamber) parts.push(leg.chamber);
     return parts.join(" • ");
   }, [leg, t]);
 
   if (loading) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
+        <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
         <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+        <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
+        <EmptyState
+          icon="person.crop.circle.badge.exclamationmark"
+          title={t("legislator.votingRecord", "Voting Record")}
+          message={error}
+        />
       </View>
     );
   }
@@ -182,7 +201,7 @@ export default function LegislatorScreen() {
           <EmptyState
             icon="person.crop.circle.badge.questionmark"
             title={t("legislator.votingRecord", "Voting Record")}
-            message={t("relatedBills.error", "Could not load related bills.")}
+            message={t("legislator.noVotes", "We have not recorded any votes for this legislator yet.")}
           />
         ) : (
           votes.map((v) => (
@@ -193,9 +212,16 @@ export default function LegislatorScreen() {
               />
               <Card.Content>
                 <Text>
-                  {t("legislator.vote", "Vote: {{option}}", { option: String(v.option ?? "—") })}
+                  {t("legislator.vote", "Vote: {{option}}", { option: formatOption(v.option) })}
                 </Text>
-                <Text>{`${t("legislator.votingRecord", "Voting Record")}: ${String(v.result ?? "—")}`}</Text>
+                <Text>
+                  {t("legislator.result", "Result: {{result}}", { result: formatResult(v.result) })}
+                </Text>
+                {v.motion && (
+                  <Text style={{ marginTop: 4, opacity: 0.8 }}>
+                    {t("legislator.motion", "Motion: {{motion}}", { motion: v.motion })}
+                  </Text>
+                )}
                 <Divider style={{ marginVertical: 8 }} />
                 <Text>{`Yes: ${v.yes_count ?? 0} • No: ${v.no_count ?? 0} • Other: ${v.other_count ?? 0}`}</Text>
                 {v.date && (
@@ -205,8 +231,16 @@ export default function LegislatorScreen() {
                 )}
               </Card.Content>
               <Card.Actions>
-                <Button mode="text" onPress={() => router.push(`/bill/${v.bill_id}`)}>
-                  {t("tabs.bills", "Bills")}
+                <Button
+                  mode="text"
+                  disabled={!v.bill_id}
+                  onPress={() => {
+                    if (v.bill_id) {
+                      router.push({ pathname: "/bill/[id]", params: { id: String(v.bill_id) } });
+                    }
+                  }}
+                >
+                  {t("legislator.openBill", "Open bill")}
                 </Button>
               </Card.Actions>
             </Card>

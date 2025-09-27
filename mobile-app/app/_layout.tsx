@@ -99,6 +99,7 @@ export default function RootLayout() {
                 <Stack>
                   <Stack.Screen name="index" options={{ headerShown: false }} />
                   <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
+                  <Stack.Screen name="legislator/[id]" options={{ headerShown: false }} />
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 </Stack>
                 <Toast />
