@@ -17,6 +17,7 @@ export interface Bill {
   description: string | null;
   status: string | null;
   state_link: string | null;
+  slug?: string | null;
   summary_simple: string | null;
   summary_medium: string | null;
   summary_complex: string | null;

@@ -60,10 +60,8 @@ export default function FindYourRep({ bill }: { bill?: any }) {
     setLoading(true);
     try {
       const res = await findYourRep(value);
-      const people: Person[] = Array.isArray(res?.results)
-        ? (res?.results as Person[])
-        : (res as unknown as Person[]);
-      if (!people?.length) {
+      const people: Person[] = Array.isArray(res) ? (res as Person[]) : [];
+      if (!people.length) {
         setErr(t("findYourRep.error.none", "No representatives found for that location."));
       }
       const enriched = await attachSupabaseMatches(people || []);

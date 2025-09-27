@@ -1,14 +1,14 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "types": ["expo-router"]
+    "types": ["expo-router"],
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "~/*": ["*"]
+    },
+    "resolveJsonModule": true
   },
-  "strict": true,
-  "baseUrl": ".",
-  "paths": {
-    "@/*": ["src/*"],
-    "~/*": ["*"]
-  },
-  "resolveJsonModule": true,
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts", "env.d.ts"]
 }

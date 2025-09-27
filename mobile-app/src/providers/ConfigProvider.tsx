@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../lib/supabase";
-import { AppConfig, setConfig } from "../lib/config";
+import { AppConfig, initConfig, setConfig } from "../lib/config";
 
 const ConfigContext = createContext<AppConfig | null>(null);
 
@@ -37,10 +37,13 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
         if (error) throw error;
 
         if (data) {
-          const newConfig = data.reduce((acc: AppConfig, { key, value }) => {
-            acc[key] = value;
+          const baseConfig = config ?? initConfig();
+          const overrides = data.reduce<Partial<AppConfig>>((acc, { key, value }) => {
+            (acc as Record<string, string | undefined>)[key] = value;
             return acc;
-          }, {} as AppConfig);
+          }, {});
+
+          const newConfig = { ...baseConfig, ...overrides } as AppConfig;
 
           setStateConfig(newConfig);
           setConfig(newConfig);

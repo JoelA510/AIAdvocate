@@ -15,7 +15,7 @@ type OpenStatesGeoResponse = {
  * Returns an ARRAY of people, not { results }.
  * Throws with a helpful message on failure (caller should catch and display).
  */
-export async function findYourRep(address: string) {
+export async function findYourRep(address: string): Promise<any[]> {
   const { openstatesApiKey, locationIqApiKey } = getConfig();
 
   if (!openstatesApiKey || !locationIqApiKey) {

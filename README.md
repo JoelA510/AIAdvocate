@@ -61,10 +61,10 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 
 - **Expo Router & Navigation:** Most screens live under `mobile-app/app/`. File system routing means renaming files will change URLs automatically.
 - **Authentication:** Anonymous sessions are provisioned on app launch inside `src/providers/AuthProvider.tsx` and persisted through Supabase’s client SDK.
-- **Data Fetching:** `safeFetch` wraps critical network requests with retry and backoff. React Query manages client caching for bill lists, translations, and related entities.
+- **Data Fetching:** `safeFetch` wraps critical network requests with configurable retry/backoff/timeout handling. React Query manages client caching for bill lists, translations, and related entities.
 - **Translations:** `src/lib/translation.ts` orchestrates Gemini calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`.
 - **Advocacy Flow:** `FindYourRep` performs a LocationIQ → OpenStates pipeline, reconciles the results with the Supabase `legislators` table, and routes to Legislator detail screens.
-- **CI Expectations:** Type-check with `yarn tsc --noEmit`, run unit tests with `yarn test`, and lint via `yarn lint`. (The repository currently has known TypeScript alias issues that must be resolved before CI can pass.)
+- **CI Expectations:** Type-check with `yarn tsc --noEmit`, run unit tests with `yarn test`, and lint via `yarn lint` before opening pull requests.
 
 ---
 
@@ -181,7 +181,7 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 - `i18n.ts` – i18next initialization + language detector wiring.
 - `legislatorLookup.ts` – deterministic key generator for matching OpenStates results to Supabase records.
 - `push.ts` – Expo push token registration helper.
-- `safeFetch.ts` – fetch wrapper with retry, exponential backoff, and timeout handling.
+- `safeFetch.ts` – fetch wrapper with configurable retries, exponential backoff, and optional per-attempt timeouts.
 - `supabase.ts` / `supabase.native.ts` – Supabase clients optimized for web vs native storage layers.
 - `translation.ts` – high-level helpers for invoking translation edge functions and caching outcomes.
 

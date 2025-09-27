@@ -1,53 +1,85 @@
 // mobile-app/src/lib/safeFetch.ts
 
-/**
- * A wrapper around the native fetch API that provides automatic retries
- * with exponential backoff for transient errors, particularly for handling
- * rate-limiting (HTTP 429) responses.
- *
- * @param url The URL to fetch.
- * @param init The request initialization options (e.g., method, headers, body).
- * @param maxTries The maximum number of attempts to make before failing.
- * @returns A Promise that resolves to the Response object on success.
- * @throws Will throw the last encountered error after all retries fail.
- */
+type SafeFetchOptions = {
+  /** Native fetch init options (method, headers, body, etc.). */
+  init?: RequestInit;
+  /** Total number of attempts (defaults to 3). */
+  retries?: number;
+  /** Base delay in ms used for exponential backoff (defaults to 1000ms). */
+  retryDelayMs?: number;
+  /** Optional request timeout per attempt (ms). */
+  timeoutMs?: number;
+};
+
+function isOptions(arg: RequestInit | SafeFetchOptions | undefined): arg is SafeFetchOptions {
+  if (!arg) return false;
+  return "retries" in arg || "retryDelayMs" in arg || "timeoutMs" in arg || "init" in arg;
+}
+
+export async function safeFetch(url: string, options?: SafeFetchOptions): Promise<Response>;
+export async function safeFetch(url: string, init?: RequestInit, retries?: number): Promise<Response>;
 export async function safeFetch(
   url: string,
-  init: RequestInit = {},
-  maxTries: number = 3,
+  initOrOptions: RequestInit | SafeFetchOptions = {},
+  maybeRetries?: number,
 ): Promise<Response> {
+  const options: SafeFetchOptions = isOptions(initOrOptions)
+    ? initOrOptions
+    : { init: initOrOptions as RequestInit, retries: maybeRetries };
+
+  const {
+    init = {},
+    retries = typeof options.retries === "number" ? options.retries : 3,
+    retryDelayMs = 1000,
+    timeoutMs,
+  } = options;
+
   let lastError: any;
 
-  for (let i = 0; i < maxTries; i++) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const controller = timeoutMs ? new AbortController() : undefined;
+    const timer = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : null;
+
     try {
-      const response = await fetch(url, init);
+      const response = await fetch(url, {
+        ...init,
+        signal: controller?.signal ?? init.signal,
+      });
 
       if (response.status === 429) {
-        const waitTime = Math.pow(2, i) * 1000;
-        const jitter = Math.random() * 500;
+        const waitTime = Math.pow(2, attempt) * retryDelayMs;
+        const jitter = Math.random() * 0.5 * retryDelayMs;
         const totalWait = waitTime + jitter;
-
         console.warn(`safeFetch: Received status 429. Retrying in ${totalWait.toFixed(0)}ms...`);
         await new Promise((resolve) => setTimeout(resolve, totalWait));
-
         continue;
       }
 
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = await response.text().catch(() => "");
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       return response;
-    } catch (error) {
+    } catch (error: any) {
       lastError = error;
-      console.error(`safeFetch: Attempt ${i + 1} failed.`, error);
+      const isLastAttempt = attempt === retries - 1;
 
-      if (i === maxTries - 1) {
-        break;
+      if (error?.name === "AbortError") {
+        console.error(`safeFetch: Attempt ${attempt + 1} aborted after ${timeoutMs}ms.`);
+      } else {
+        console.error(`safeFetch: Attempt ${attempt + 1} failed.`, error);
       }
+
+      if (isLastAttempt) break;
+
+      const waitTime = Math.pow(2, attempt) * retryDelayMs;
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
-  throw new Error(`safeFetch: All ${maxTries} attempts failed. Last error: ${lastError.message}`);
+  const message = lastError?.message ?? "Unknown error";
+  throw new Error(`safeFetch: All ${retries} attempts failed. Last error: ${message}`);
 }
