@@ -19,14 +19,49 @@ export async function fetchTranslationsForBills(
 ): Promise<Record<number, TranslationRecord>> {
   if (!billIds.length || language === "en") return {};
 
-  // 1) Bulk function (recommended)
+  const map: Record<number, TranslationRecord> = {};
+  const normalizedIds = Array.from(
+    new Set(billIds.map((id) => Number(id)).filter((id) => !Number.isNaN(id))),
+  );
+
+  // 1) Pull any cached translations directly from Supabase first
+  try {
+    const { data: cached, error: cachedError } = await supabase
+      .from("bill_translations")
+      .select(
+        "bill_id, language_code, title, description, summary_simple, summary_medium, summary_complex, original_text",
+      )
+      .eq("language_code", language)
+      .in("bill_id", normalizedIds);
+
+    if (!cachedError && Array.isArray(cached)) {
+      cached.forEach((record) => {
+        if (record?.bill_id != null) {
+          map[Number(record.bill_id)] = record;
+        }
+      });
+    }
+  } catch {
+    // Soft fail; we'll fall back to edge function below.
+  }
+
+  const missing = normalizedIds.filter((id) => !map[id]);
+
+  if (!missing.length) {
+    return map;
+  }
+
+  // 2) Ask the bulk translation edge function for any gaps.
   try {
     const { data, error } = await supabase.functions.invoke("translate-bills", {
-      body: { bill_ids: billIds, language_code: language },
+      body: { bill_ids: missing, language_code: language },
     });
     if (!error && Array.isArray(data)) {
-      const map: Record<number, TranslationRecord> = {};
-      (data as TranslationRecord[]).forEach((r) => (map[r.bill_id] = r));
+      (data as TranslationRecord[]).forEach((record) => {
+        if (record?.bill_id != null) {
+          map[Number(record.bill_id)] = record;
+        }
+      });
       return map;
     }
   } catch {
@@ -34,10 +69,9 @@ export async function fetchTranslationsForBills(
   }
 
   // 2) Fallback: call single-bill function concurrently (in small batches)
-  const out: Record<number, TranslationRecord> = {};
   const batch = 5;
-  for (let i = 0; i < billIds.length; i += batch) {
-    const slice = billIds.slice(i, i + batch);
+  for (let i = 0; i < missing.length; i += batch) {
+    const slice = missing.slice(i, i + batch);
     const results = await Promise.allSettled(
       slice.map((id) =>
         supabase.functions.invoke("translate-bill", {
@@ -48,9 +82,9 @@ export async function fetchTranslationsForBills(
     results.forEach((res, idx) => {
       if (res.status === "fulfilled" && res.value?.data) {
         const id = slice[idx];
-        out[id] = { bill_id: id, language_code: language, ...(res.value.data as any) };
+        map[id] = { bill_id: id, language_code: language, ...(res.value.data as any) };
       }
     });
   }
-  return out;
+  return map;
 }

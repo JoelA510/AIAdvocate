@@ -63,6 +63,8 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 - **Authentication:** Anonymous sessions are provisioned on app launch inside `src/providers/AuthProvider.tsx` and persisted through Supabase’s client SDK.
 - **Data Fetching:** `safeFetch` wraps critical network requests with configurable retry/backoff/timeout handling. React Query manages client caching for bill lists, translations, and related entities.
 - **Translations:** `src/lib/translation.ts` orchestrates Gemini calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`.
+- **Splash Animation:** `app/index.tsx` animates the mission banner from center-to-header, fading and scaling it while the initial tab bundle loads.
+- **Translations:** `src/lib/translation.ts` orchestrates Gemini calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`, and cached records are fetched before any new translation work is triggered.
 - **Advocacy Flow:** `FindYourRep` performs a LocationIQ → OpenStates pipeline, reconciles the results with the Supabase `legislators` table, and routes to Legislator detail screens.
 - **CI Expectations:** Type-check with `yarn tsc --noEmit`, run unit tests with `yarn test`, and lint via `yarn lint` before opening pull requests.
 
@@ -183,7 +185,7 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 - `push.ts` – Expo push token registration helper.
 - `safeFetch.ts` – fetch wrapper with configurable retries, exponential backoff, and optional per-attempt timeouts.
 - `supabase.ts` / `supabase.native.ts` – Supabase clients optimized for web vs native storage layers.
-- `translation.ts` – high-level helpers for invoking translation edge functions and caching outcomes.
+- `translation.ts` – high-level helpers for invoking translation edge functions, reusing `bill_translations` cache before queueing new work so pre-generated content loads instantly.
 
 #### `mobile-app/src/providers/`
 - `AuthProvider.tsx` – anonymous session bootstrap and context surface.
