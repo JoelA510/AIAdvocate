@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
-import { useTheme, Card, Button } from "react-native-paper";
+import { Card, Button } from "react-native-paper";
 
 const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
   "https://www.loveneverfailsus.com/") as string;
@@ -15,7 +15,6 @@ const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
 export default function LnfScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const theme = useTheme();
 
   return (
     <ThemedView style={styles.container}>

@@ -70,15 +70,26 @@ export default function BillsHomeScreen() {
   const idsKey = useMemo(() => bills.map((b) => b.id).join(","), [bills]);
   useEffect(() => {
     let alive = true;
-    (async () => {
-      if (i18n.language === "en") return;
-      if (!bills.length) return;
+    if (i18n.language === "en" || !idsKey) {
+      return () => {
+        alive = false;
+      };
+    }
 
+    const ids = idsKey
+      .split(",")
+      .map((id) => Number(id))
+      .filter((id) => !Number.isNaN(id));
+
+    if (!ids.length) {
+      return () => {
+        alive = false;
+      };
+    }
+
+    (async () => {
       try {
-        const map = await fetchTranslationsForBills(
-          bills.map((b) => b.id),
-          i18n.language,
-        );
+        const map = await fetchTranslationsForBills(ids, i18n.language);
         if (!alive || !Object.keys(map).length) return;
 
         setBills((prev) =>
@@ -100,6 +111,7 @@ export default function BillsHomeScreen() {
         /* non-fatal */
       }
     })();
+
     return () => {
       alive = false;
     };

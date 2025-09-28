@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { useTheme, Card, Text, Button, ActivityIndicator, Divider } from "react-native-paper";
+import { Card, Text, Button, ActivityIndicator, Divider } from "react-native-paper";
 import { supabase } from "../../src/lib/supabase";
 import EmptyState from "../../src/components/EmptyState";
 
@@ -70,7 +70,6 @@ export default function LegislatorScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const theme = useTheme();
   const { t } = useTranslation();
 
   const [leg, setLeg] = useState<Legislator | null>(null);
@@ -115,14 +114,19 @@ export default function LegislatorScreen() {
         let rows: VoteRow[] = (rawVotes as VoteRow[]) ?? [];
 
         if (rows.length) {
-          const billIds = Array.from(new Set(rows.map((r) => r.bill_id).filter(Boolean))) as number[];
+          const billIds = Array.from(
+            new Set(rows.map((r) => r.bill_id).filter(Boolean)),
+          ) as number[];
           if (billIds.length) {
             const { data: billData, error: billsError } = await supabase
               .from("bills")
               .select("id,bill_number,title,slug")
               .in("id", billIds);
             if (!billsError && billData) {
-              const billsMap = new Map<number, { bill_number?: string; title?: string; slug?: string }>();
+              const billsMap = new Map<
+                number,
+                { bill_number?: string; title?: string; slug?: string }
+              >();
               billData.forEach((bill: any) => {
                 billsMap.set(Number(bill.id), bill);
               });
@@ -130,9 +134,9 @@ export default function LegislatorScreen() {
                 const bill = vote.bill_id ? billsMap.get(Number(vote.bill_id)) : null;
                 return {
                   ...vote,
-                  bill_number: vote.bill_number ?? (bill?.bill_number ?? null),
-                  bill_title: vote.bill_title ?? (bill?.title ?? null),
-                  bill_slug: vote.bill_slug ?? (bill?.slug ?? null),
+                  bill_number: vote.bill_number ?? bill?.bill_number ?? null,
+                  bill_title: vote.bill_title ?? bill?.title ?? null,
+                  bill_slug: vote.bill_slug ?? bill?.slug ?? null,
                 };
               });
             }
@@ -201,7 +205,10 @@ export default function LegislatorScreen() {
           <EmptyState
             icon="person.crop.circle.badge.questionmark"
             title={t("legislator.votingRecord", "Voting Record")}
-            message={t("legislator.noVotes", "We have not recorded any votes for this legislator yet.")}
+            message={t(
+              "legislator.noVotes",
+              "We have not recorded any votes for this legislator yet.",
+            )}
           />
         ) : (
           votes.map((v) => (

@@ -17,7 +17,11 @@ function isOptions(arg: RequestInit | SafeFetchOptions | undefined): arg is Safe
 }
 
 export async function safeFetch(url: string, options?: SafeFetchOptions): Promise<Response>;
-export async function safeFetch(url: string, init?: RequestInit, retries?: number): Promise<Response>;
+export async function safeFetch(
+  url: string,
+  init?: RequestInit,
+  retries?: number,
+): Promise<Response>;
 export async function safeFetch(
   url: string,
   initOrOptions: RequestInit | SafeFetchOptions = {},

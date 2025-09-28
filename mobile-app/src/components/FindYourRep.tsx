@@ -77,7 +77,11 @@ export default function FindYourRep({ bill }: { bill?: any }) {
     if (!people.length) return [];
 
     const lookupEntries = people.map((p) => ({
-      lookup: createLegislatorLookupKey(p.name, p.current_role?.org_classification, p.current_role?.district),
+      lookup: createLegislatorLookupKey(
+        p.name,
+        p.current_role?.org_classification,
+        p.current_role?.district,
+      ),
       person: p,
     }));
 
@@ -106,7 +110,7 @@ export default function FindYourRep({ bill }: { bill?: any }) {
     return lookupEntries.map(({ lookup, person }) => ({
       ...person,
       lookupKey: lookup,
-      supabaseId: lookup ? matches.get(lookup) ?? null : null,
+      supabaseId: lookup ? (matches.get(lookup) ?? null) : null,
     }));
   };
 
@@ -201,7 +205,10 @@ export default function FindYourRep({ bill }: { bill?: any }) {
                   disabled={!hasMatch}
                   onPress={() => {
                     if (hasMatch) {
-                      router.push({ pathname: "/legislator/[id]", params: { id: String(p.supabaseId) } });
+                      router.push({
+                        pathname: "/legislator/[id]",
+                        params: { id: String(p.supabaseId) },
+                      });
                     }
                   }}
                 >

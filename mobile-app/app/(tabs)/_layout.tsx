@@ -10,20 +10,25 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 // LNF tab icon: mobile-app/assets/images/LNFmini.png
 const lnfIcon = require("../../assets/images/LNFmini.png");
 
-export default function TabsLayout() {
+type TabLabelProps = { focused: boolean; color: string };
+
+const createTabLabel = (text: string) => {
+  const render = ({ color }: TabLabelProps) => (
+    <Text
+      style={{ color, fontSize: 12, fontWeight: "500", textTransform: "none" }}
+      numberOfLines={1}
+    >
+      {text}
+    </Text>
+  );
+
+  Object.assign(render, { displayName: `TabLabel(${text})` });
+  return render;
+};
+
+const TabsLayout: React.FC = () => {
   const { t } = useTranslation();
   const theme = useTheme();
-
-  const labelEl =
-    (s: string) =>
-    ({ color }: { focused: boolean; color: string }) => (
-      <Text
-        style={{ color, fontSize: 12, fontWeight: "500", textTransform: "none" }}
-        numberOfLines={1}
-      >
-        {s}
-      </Text>
-    );
 
   return (
     <>
@@ -46,7 +51,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="highlighted"
           options={{
-            tabBarLabel: labelEl(t("tabs.highlighted", { defaultValue: "Highlighted" })),
+            tabBarLabel: createTabLabel(t("tabs.highlighted", { defaultValue: "Highlighted" })),
             tabBarIcon: ({ color, size }) => (
               <MaterialCommunityIcons name="star" color={color} size={size} />
             ),
@@ -55,7 +60,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="saved"
           options={{
-            tabBarLabel: labelEl(t("tabs.saved", { defaultValue: "Saved" })),
+            tabBarLabel: createTabLabel(t("tabs.saved", { defaultValue: "Saved" })),
             tabBarIcon: ({ color, size }) => (
               <MaterialCommunityIcons name="bookmark" color={color} size={size} />
             ),
@@ -64,7 +69,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="index"
           options={{
-            tabBarLabel: labelEl(t("tabs.bills", { defaultValue: "Bills" })),
+            tabBarLabel: createTabLabel(t("tabs.bills", { defaultValue: "Bills" })),
             tabBarIcon: ({ color, size }) => (
               <MaterialCommunityIcons name="file-document" color={color} size={size} />
             ),
@@ -73,7 +78,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="lnf"
           options={{
-            tabBarLabel: labelEl(t("tabs.lnf", { defaultValue: "LNF" })),
+            tabBarLabel: createTabLabel(t("tabs.lnf", { defaultValue: "LNF" })),
             // Use image + tintColor so it behaves like other icons
             tabBarIcon: ({ color, size }) => (
               <Image
@@ -87,7 +92,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="advocacy"
           options={{
-            tabBarLabel: labelEl(t("tabs.advocacy", { defaultValue: "Advocacy" })),
+            tabBarLabel: createTabLabel(t("tabs.advocacy", { defaultValue: "Advocacy" })),
             tabBarIcon: ({ color, size }) => (
               <MaterialCommunityIcons name="bullhorn" color={color} size={size} />
             ),
@@ -104,4 +109,8 @@ export default function TabsLayout() {
       </Tabs>
     </>
   );
-}
+};
+
+TabsLayout.displayName = "TabsLayout";
+
+export default TabsLayout;

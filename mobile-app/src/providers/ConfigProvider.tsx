@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../lib/supabase";
 import { AppConfig, initConfig, setConfig } from "../lib/config";
@@ -18,57 +18,60 @@ interface ConfigProviderProps {
 }
 
 export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
-  const [config, setStateConfig] = useState<AppConfig | null>(null);
+  const baseConfig = useMemo(() => initConfig(), []);
+  const [config, setStateConfig] = useState<AppConfig>(baseConfig);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchAndCacheConfig = async () => {
       try {
-        // 1) Try cache first
         const cachedConfig = await AsyncStorage.getItem("app_config");
         if (cachedConfig) {
-          const parsedConfig = JSON.parse(cachedConfig);
-          setStateConfig(parsedConfig);
-          setConfig(parsedConfig);
+          try {
+            const parsedConfig = JSON.parse(cachedConfig) as Partial<AppConfig>;
+            if (!cancelled) {
+              const merged = { ...baseConfig, ...parsedConfig } as AppConfig;
+              setStateConfig(merged);
+              setConfig(merged);
+            }
+          } catch (parseErr) {
+            console.warn("ConfigProvider: Failed to parse cached config", parseErr);
+          }
         }
 
-        // 2) Fetch the latest from Supabase
         const { data, error } = await supabase.from("app_config").select("key, value");
         if (error) throw error;
 
-        if (data) {
-          const baseConfig = config ?? initConfig();
+        if (data && data.length && !cancelled) {
           const overrides = data.reduce<Partial<AppConfig>>((acc, { key, value }) => {
             (acc as Record<string, string | undefined>)[key] = value;
             return acc;
           }, {});
 
-          const newConfig = { ...baseConfig, ...overrides } as AppConfig;
-
-          setStateConfig(newConfig);
-          setConfig(newConfig);
-          await AsyncStorage.setItem("app_config", JSON.stringify(newConfig));
+          const merged = { ...baseConfig, ...overrides } as AppConfig;
+          setStateConfig(merged);
+          setConfig(merged);
+          await AsyncStorage.setItem("app_config", JSON.stringify(merged));
         }
       } catch (e) {
-        console.error("Error fetching app configuration:", e);
-        // Optional: surface a UI error flag here if no cache was applied
-        // (we intentionally avoid referencing `config` inside this effect
-        // to keep the deps array empty and avoid fetch loops)
+        if (!cancelled) {
+          console.error("Error fetching app configuration:", e);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     fetchAndCacheConfig();
-  }, []); // mounted once; no external values read inside
+    return () => {
+      cancelled = true;
+    };
+  }, [baseConfig]);
 
   if (loading && !config) {
-    // Render nothing or a spinner while fetching the initial config
-    return null;
-  }
-
-  if (!config) {
-    // If still no config after loading, you could return an error screen instead.
     return null;
   }
 

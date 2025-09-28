@@ -9,7 +9,11 @@ export const normalizeChamberForLookup = (value?: string | null) => {
   const normalized = (value ?? "").toLowerCase();
   if (!normalized) return "";
   if (normalized.includes("upper") || normalized.includes("senate")) return "upper";
-  if (normalized.includes("lower") || normalized.includes("house") || normalized.includes("assembly")) {
+  if (
+    normalized.includes("lower") ||
+    normalized.includes("house") ||
+    normalized.includes("assembly")
+  ) {
     return "lower";
   }
   return normalized.replace(NON_ALPHANUMERIC_REGEX, "");
