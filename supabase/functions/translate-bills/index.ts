@@ -1,8 +1,4 @@
 // supabase/functions/translate-bills/index.ts
-// Bulk translate & cache bill fields into public.bill_translations.
-// Input: { bill_ids: number[], language_code: string }
-// Output: Translation rows for requested ids (cached + newly created).
-
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "npm:@google/generative-ai";
@@ -37,17 +33,16 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // 1) Use cache first
+    // Cache-first
     const { data: cached, error: cacheErr } = await supabase
       .from("bill_translations")
       .select("*")
       .eq("language_code", language_code)
       .in("bill_id", bill_ids);
-
     if (cacheErr) throw cacheErr;
+
     const cachedMap = new Map<number, TranslationRow>();
     (cached ?? []).forEach((r) => cachedMap.set(r.bill_id, r as TranslationRow));
-
     const missingIds = bill_ids.filter((id: number) => !cachedMap.has(id));
     if (!missingIds.length) {
       return new Response(JSON.stringify(cached ?? []), {
@@ -56,12 +51,11 @@ serve(async (req) => {
       });
     }
 
-    // 2) Pull source fields to translate
+    // Fetch source rows to translate
     const { data: sources, error: srcErr } = await supabase
       .from("bills")
       .select("id, title, description, summary_simple, summary_medium, summary_complex, original_text")
       .in("id", missingIds);
-
     if (srcErr) throw srcErr;
     if (!sources?.length) {
       return new Response(JSON.stringify(cached ?? []), {
@@ -70,7 +64,7 @@ serve(async (req) => {
       });
     }
 
-    // 3) Translate in small batches
+    // Translate in small batches
     const apiKey = Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
     const genAI = new GoogleGenerativeAI(apiKey);

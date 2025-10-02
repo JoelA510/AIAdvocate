@@ -44,10 +44,7 @@ export default function BillsHomeScreen() {
           if (e) throw e;
           data = d ?? [];
         } else {
-          // Ranked full-text search via RPC
-          const { data: d, error: e } = await supabase.rpc("search_bills", {
-            p_query: trimmed,
-          });
+          const { data: d, error: e } = await supabase.rpc("search_bills", { p_query: trimmed });
           if (e) throw e;
           data = d ?? [];
         }
@@ -62,32 +59,20 @@ export default function BillsHomeScreen() {
       }
     };
 
-    const searchTimeout = setTimeout(fetchBills, 300); // debounce
+    const searchTimeout = setTimeout(fetchBills, 300);
     return () => clearTimeout(searchTimeout);
   }, [searchQuery]);
 
-  // Hydrate visible items with translations when language != en
-  const idsKey = useMemo(() => bills.map((b) => b.id).join(","), [bills]);
+  // Stable list of visible IDs; avoids listing `bills` as a dependency.
+  const ids = useMemo(() => bills.map((b) => b.id), [bills]);
+  const idsKey = useMemo(() => ids.join(","), [ids]);
+
   useEffect(() => {
     let alive = true;
-    if (i18n.language === "en" || !idsKey) {
-      return () => {
-        alive = false;
-      };
-    }
-
-    const ids = idsKey
-      .split(",")
-      .map((id) => Number(id))
-      .filter((id) => !Number.isNaN(id));
-
-    if (!ids.length) {
-      return () => {
-        alive = false;
-      };
-    }
-
     (async () => {
+      if (i18n.language === "en") return;
+      if (!ids.length) return;
+
       try {
         const map = await fetchTranslationsForBills(ids, i18n.language);
         if (!alive || !Object.keys(map).length) return;
@@ -105,7 +90,7 @@ export default function BillsHomeScreen() {
               summary_complex_es: tr.summary_complex ?? (b as any).summary_complex_es,
               original_text_es: tr.original_text ?? (b as any).original_text_es,
             };
-          }),
+          })
         );
       } catch {
         /* non-fatal */
@@ -136,7 +121,7 @@ export default function BillsHomeScreen() {
           title={t("error.title", "An Error Occurred")}
           message={t(
             "home.error",
-            `We couldn't fetch the bills. Please try again later. \n(${error})`,
+            `We couldn't fetch the bills. Please try again later. \n(${error})`
           )}
         />
       );
@@ -150,7 +135,7 @@ export default function BillsHomeScreen() {
             searchQuery
               ? t(
                   "home.emptyWithQuery",
-                  `We couldn't find any bills matching "${searchQuery}". Try another search.`,
+                  `We couldn't find any bills matching "${searchQuery}". Try another search.`
                 )
               : t("home.emptyNoQuery", "There are no bills to display at the moment.")
           }

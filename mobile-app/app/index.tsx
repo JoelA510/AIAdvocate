@@ -57,17 +57,23 @@ export default function SplashScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: BRAND }]}>
-      <Animated.Image
-        source={require("../assets/images/banner.png")}
-        resizeMode="contain"
-        style={[
-          styles.banner,
-          {
-            transform: [{ translateY: bannerPosition }, { scale: bannerScale }],
-            opacity: bannerOpacity,
-          } as any,
-        ]}
-      />
+      <Animated.View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          transform: [{ translateY: bannerPosition }, { scale: bannerScale }],
+          opacity: bannerOpacity,
+          alignItems: "center",
+        }}
+      >
+        <Animated.Image
+          source={require("../assets/images/banner.png")}
+          resizeMode="contain"
+          style={styles.banner}
+        />
+      </Animated.View>
     </View>
   );
 }
@@ -75,8 +81,6 @@ export default function SplashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
   },
-  banner: { width: "80%", maxWidth: 480, height: HEADER_HEIGHT },
+  banner: { width: "72%", maxWidth: 420, height: HEADER_HEIGHT },
 });
