@@ -51,7 +51,11 @@ export default function HeaderBanner({ forceShow }: Props) {
       {/* Language toggle aligned with banner */}
       {!collapsed && (
         <View style={styles.right}>
-          <TouchableOpacity onPress={onToggleLang} style={styles.langButton} accessibilityRole="button">
+          <TouchableOpacity
+            onPress={onToggleLang}
+            style={styles.langButton}
+            accessibilityRole="button"
+          >
             <Text style={{ color: theme.colors.onPrimary, fontWeight: "600" }}>
               {i18n.language === "es" ? "ES" : "EN"}
             </Text>

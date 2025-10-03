@@ -90,7 +90,7 @@ export default function BillsHomeScreen() {
               summary_complex_es: tr.summary_complex ?? (b as any).summary_complex_es,
               original_text_es: tr.original_text ?? (b as any).original_text_es,
             };
-          })
+          }),
         );
       } catch {
         /* non-fatal */
@@ -100,7 +100,7 @@ export default function BillsHomeScreen() {
     return () => {
       alive = false;
     };
-  }, [i18n.language, idsKey]);
+  }, [i18n.language, idsKey, ids]);
 
   const renderContent = () => {
     if (loading) {
@@ -121,7 +121,7 @@ export default function BillsHomeScreen() {
           title={t("error.title", "An Error Occurred")}
           message={t(
             "home.error",
-            `We couldn't fetch the bills. Please try again later. \n(${error})`
+            `We couldn't fetch the bills. Please try again later. \n(${error})`,
           )}
         />
       );
@@ -135,7 +135,7 @@ export default function BillsHomeScreen() {
             searchQuery
               ? t(
                   "home.emptyWithQuery",
-                  `We couldn't find any bills matching "${searchQuery}". Try another search.`
+                  `We couldn't find any bills matching "${searchQuery}". Try another search.`,
                 )
               : t("home.emptyNoQuery", "There are no bills to display at the moment.")
           }
