@@ -5,7 +5,7 @@
 
 import "react-native-reanimated";
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Image } from "react-native";
+import { View, Text, StyleSheet, Image, useWindowDimensions } from "react-native";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
@@ -26,6 +26,7 @@ const queryClient = new QueryClient();
 
 const BRAND = "#078A97" as const;
 const BANNER = require("../assets/images/header-banner.png");
+const LOGO_ASPECT_RATIO = 1500 / 257;
 
 // Prevent splash auto-hide until assets/config load.
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -36,6 +37,10 @@ export default function RootLayout() {
   });
   const [configError, setConfigError] = useState<string | null>(null);
   const colorScheme = useColorScheme();
+  const { width: screenWidth } = useWindowDimensions();
+  const resolvedWidth = screenWidth > 0 ? screenWidth : 360;
+  const fallbackLogoWidth = Math.min(resolvedWidth * 0.7, 360);
+  const fallbackLogoHeight = fallbackLogoWidth / LOGO_ASPECT_RATIO;
 
   // Initialize runtime config on mount.
   useEffect(() => {
@@ -85,7 +90,10 @@ export default function RootLayout() {
         <Image
           source={BANNER}
           resizeMode="contain"
-          style={styles.fallbackLogo}
+          style={[
+            styles.fallbackLogo,
+            { width: fallbackLogoWidth, height: fallbackLogoHeight },
+          ]}
           accessibilityRole="image"
           accessibilityLabel="AI Advocate"
         />
@@ -167,8 +175,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   fallbackLogo: {
-    width: "70%",
-    maxWidth: 360,
-    aspectRatio: 3,
+    alignSelf: "center",
   },
 });

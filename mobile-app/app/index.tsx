@@ -1,16 +1,21 @@
 import { useRouter } from "expo-router";
 import React, { useEffect } from "react";
-import { Image, StyleSheet, View } from "react-native";
+import { Image, StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useColorScheme } from "../hooks/useColorScheme";
 
 const BANNER = require("../assets/images/header-banner.png");
+const LOGO_ASPECT_RATIO = 1500 / 257;
 
 export default function EntryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
+  const { width: screenWidth } = useWindowDimensions();
+  const resolvedWidth = screenWidth > 0 ? screenWidth : 360;
+  const logoWidth = Math.min(resolvedWidth * 0.7, 360);
+  const logoHeight = logoWidth / LOGO_ASPECT_RATIO;
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -31,7 +36,7 @@ export default function EntryScreen() {
       <Image
         source={BANNER}
         resizeMode="contain"
-        style={styles.logo}
+        style={{ width: logoWidth, height: logoHeight }}
         accessibilityRole="image"
         accessibilityLabel="AI Advocate"
       />
@@ -44,10 +49,5 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-  },
-  logo: {
-    width: "70%",
-    maxWidth: 360,
-    aspectRatio: 3,
   },
 });
