@@ -16,6 +16,11 @@ export interface Bill {
   title: string;
   description: string | null;
   status: string | null;
+  status_text?: string | null;
+  status_date?: string | null;
+  progress?: any;
+  calendar?: any;
+  history?: any;
   state_link: string | null;
   slug?: string | null;
   summary_simple: string | null;

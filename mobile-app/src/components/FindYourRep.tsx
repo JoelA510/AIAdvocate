@@ -2,7 +2,7 @@
 // Provides address/ZIP lookup for representatives.  Includes optional
 // email template fill when a bill prop is provided.
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { View, StyleSheet, Linking, Platform } from "react-native";
 import {
   Text,
@@ -18,6 +18,8 @@ import { useRouter } from "expo-router";
 import { findYourRep } from "@/lib/find-your-representative";
 import { supabase } from "@/lib/supabase";
 import { createLegislatorLookupKey } from "@/lib/legislatorLookup";
+import { extractBillStatusDetails } from "@/lib/billStatus";
+import type { Bill } from "./Bill";
 
 type Person = {
   id?: string | number;
@@ -42,7 +44,9 @@ function nameOf(p: Person) {
   return p?.name ?? "—";
 }
 
-export default function FindYourRep({ bill }: { bill?: any }) {
+const extractBillStatus = (bill?: Bill | null) => extractBillStatusDetails(bill ?? null);
+
+export default function FindYourRep({ bill }: { bill?: Bill | null }) {
   const { t } = useTranslation();
   const theme = useTheme();
   const router = useRouter();
@@ -51,6 +55,13 @@ export default function FindYourRep({ bill }: { bill?: any }) {
   const [results, setResults] = useState<PersonWithMatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const statusDetails = useMemo(() => extractBillStatus(bill ?? null), [bill]);
+  const statusDateDisplay = useMemo(() => {
+    if (!statusDetails.statusDate) return null;
+    const parsed = new Date(statusDetails.statusDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toLocaleDateString();
+  }, [statusDetails.statusDate]);
 
   const onSearch = async () => {
     setErr(null);
@@ -185,6 +196,18 @@ export default function FindYourRep({ bill }: { bill?: any }) {
             openstatesUrl: p.openstates_url ?? null,
             contactUrl: !email && rawEmail ? rawEmail : null,
           });
+          const nextEventDescriptor = statusDetails.nextEvent
+            ? [
+                statusDetails.nextEvent.description,
+                statusDetails.nextEvent.chamber,
+                statusDetails.nextEvent.location,
+              ]
+                .filter(Boolean)
+                .join(" • ")
+            : null;
+          const showStatusContent = Boolean(
+            statusDetails.statusLabel || statusDetails.nextEvent || !hasMatch,
+          );
           return (
             <Card key={p.id ?? `${nameOf(p)}-${idx}`} style={{ marginBottom: 12 }} mode="outlined">
               <Card.Title
@@ -197,14 +220,35 @@ export default function FindYourRep({ bill }: { bill?: any }) {
                   .filter(Boolean)
                   .join(" • ")}
               />
-              {!hasMatch && (
+              {showStatusContent && (
                 <Card.Content>
-                  <Text variant="bodyMedium" style={{ opacity: 0.7 }}>
-                    {t(
-                      "findYourRep.noRecord",
-                      "Voting record not available yet for this representative.",
-                    )}
-                  </Text>
+                  {statusDetails.statusLabel && (
+                    <Text variant="bodyMedium" style={{ opacity: 0.75 }}>
+                      {t("bill.currentStatus", "Current status: {{status}}", {
+                        status: statusDetails.statusLabel,
+                      })}
+                      {statusDateDisplay ? ` • ${statusDateDisplay}` : ""}
+                    </Text>
+                  )}
+                  {statusDetails.nextEvent && nextEventDescriptor && (
+                    <Text variant="bodyMedium" style={{ opacity: 0.75, marginTop: 4 }}>
+                      {t("bill.nextEventLine", "Next event: {{desc}} on {{date}}", {
+                        desc: nextEventDescriptor,
+                        date: statusDetails.nextEvent.displayDate,
+                      })}
+                    </Text>
+                  )}
+                  {!hasMatch && (
+                    <Text
+                      variant="bodyMedium"
+                      style={{ opacity: 0.7, marginTop: statusDetails.nextEvent ? 8 : 0 }}
+                    >
+                      {t(
+                        "findYourRep.noRecord",
+                        "Voting record not available yet for this representative.",
+                      )}
+                    </Text>
+                  )}
                 </Card.Content>
               )}
               <Card.Actions>

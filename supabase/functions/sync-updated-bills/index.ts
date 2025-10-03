@@ -127,13 +127,30 @@ serve(async (req) => {
     const embedding = embeddingResult.embedding.values;
 
     // --- Step 3: Update Database with Summaries, Text, and Embedding ---
+    const statusText = billData.status_text ?? null;
+    const statusDate = billData.status_date ?? null;
+    const progress = Array.isArray(billData.progress) ? billData.progress : [];
+    const calendar = Array.isArray(billData.calendar) ? billData.calendar : [];
+    const history = Array.isArray(billData.history) ? billData.history : [];
+
     const billToUpsert = {
-        id: billData.bill_id, bill_number: billData.bill_number, title: billData.title,
-        description: billData.description, status: String(billData.status),
-        state_link: billData.state_link, change_hash: billData.change_hash,
-        original_text: originalText, summary_simple: summaries.simple,
-        summary_medium: summaries.medium, summary_complex: summaries.complex,
-        embedding: embedding,
+        id: billData.bill_id,
+        bill_number: billData.bill_number,
+        title: billData.title,
+        description: billData.description,
+        status: String(billData.status),
+        status_text: statusText,
+        status_date: statusDate,
+        state_link: billData.state_link,
+        change_hash: billData.change_hash,
+        original_text: originalText,
+        summary_simple: summaries.simple,
+        summary_medium: summaries.medium,
+        summary_complex: summaries.complex,
+        progress,
+        calendar,
+        history,
+        embedding,
     };
 
     const { error: upsertError } = await supabaseAdmin.from("bills").upsert(billToUpsert, { onConflict: "id" });

@@ -1,12 +1,14 @@
 // mobile-app/app/legislator/[id].tsx
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView, Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { Card, Text, Button, ActivityIndicator, Divider } from "react-native-paper";
 import { supabase } from "../../src/lib/supabase";
+import { extractBillStatusDetails } from "../../src/lib/billStatus";
 import EmptyState from "../../src/components/EmptyState";
+import { IconSymbol } from "../../components/ui/IconSymbol";
 
 type VoteRow = {
   id?: string | number;
@@ -15,6 +17,11 @@ type VoteRow = {
   bill_number?: string | null;
   bill_title?: string | null;
   bill_slug?: string | null;
+  bill_status?: string | null;
+  bill_status_text?: string | null;
+  bill_status_date?: string | null;
+  bill_progress?: any;
+  bill_calendar?: any;
   option?: string | null; // yes/no/abstain/absent
   result?: string | null; // passed/failed
   yes_count?: number | null;
@@ -96,6 +103,14 @@ export default function LegislatorScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"supabase" | "fallback">("supabase");
+
+  const handleGoBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.push("/(tabs)/advocacy");
+    }
+  }, [router]);
 
   const fallbackProfile = useMemo<Legislator | null>(() => {
     if (!payloadParam) return null;
@@ -211,7 +226,9 @@ export default function LegislatorScreen() {
                 if (billIds.length) {
                   const { data: billData, error: billsError } = await supabase
                     .from("bills")
-                    .select("id,bill_number,title,slug")
+                    .select(
+                      "id,bill_number,title,slug,status,status_text,status_date,calendar,progress",
+                    )
                     .in("id", billIds);
                   if (!billsError && billData) {
                     const billsMap = new Map<
@@ -228,6 +245,15 @@ export default function LegislatorScreen() {
                         bill_number: vote.bill_number ?? bill?.bill_number ?? null,
                         bill_title: vote.bill_title ?? bill?.title ?? null,
                         bill_slug: vote.bill_slug ?? bill?.slug ?? null,
+                        bill_status: (vote as any).bill_status ?? (bill as any)?.status ?? null,
+                        bill_status_text:
+                          (vote as any).bill_status_text ?? (bill as any)?.status_text ?? null,
+                        bill_status_date:
+                          (vote as any).bill_status_date ?? (bill as any)?.status_date ?? null,
+                        bill_progress:
+                          (vote as any).bill_progress ?? (bill as any)?.progress ?? null,
+                        bill_calendar:
+                          (vote as any).bill_calendar ?? (bill as any)?.calendar ?? null,
                       };
                     });
                   }
@@ -295,6 +321,15 @@ export default function LegislatorScreen() {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
+        <Button
+          onPress={handleGoBack}
+          icon={() => <IconSymbol name="chevron.left" size={22} />}
+          accessibilityRole="button"
+          mode="text"
+          style={{ alignSelf: "flex-start", marginBottom: 16 }}
+        >
+          {t("common.back", "Back")}
+        </Button>
         <ActivityIndicator />
       </View>
     );
@@ -304,6 +339,15 @@ export default function LegislatorScreen() {
     return (
       <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
         <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
+        <Button
+          onPress={handleGoBack}
+          icon={() => <IconSymbol name="chevron.left" size={22} />}
+          accessibilityRole="button"
+          mode="text"
+          style={{ alignSelf: "flex-start", marginBottom: 16, marginLeft: 16 }}
+        >
+          {t("common.back", "Back")}
+        </Button>
         <EmptyState
           icon="person.crop.circle.badge.exclamationmark"
           title={t("legislator.votingRecord", "Voting Record")}
@@ -319,6 +363,15 @@ export default function LegislatorScreen() {
         options={{ title: leg?.name || t("legislator.votingRecord", "Voting Record") }}
       />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <Button
+          onPress={handleGoBack}
+          icon={() => <IconSymbol name="chevron.left" size={24} />}
+          accessibilityRole="button"
+          mode="text"
+          style={{ alignSelf: "flex-start", marginBottom: 16 }}
+        >
+          {t("common.back", "Back")}
+        </Button>
         <Text variant="titleLarge" style={{ marginBottom: 12 }}>
           {header || t("legislator.votingRecord", "Voting Record")}
         </Text>
@@ -391,47 +444,89 @@ export default function LegislatorScreen() {
             )}
           />
         ) : (
-          votes.map((v) => (
-            <Card key={String(v.id)} style={{ marginBottom: 12 }} mode="outlined">
-              <Card.Title
-                title={`${v.bill_number ?? v.bill_slug ?? v.bill_id ?? "—"}`}
-                subtitle={v.bill_title ?? ""}
-              />
-              <Card.Content>
-                <Text>
-                  {t("legislator.vote", "Vote: {{option}}", { option: formatOption(v.option) })}
-                </Text>
-                <Text>
-                  {t("legislator.result", "Result: {{result}}", { result: formatResult(v.result) })}
-                </Text>
-                {v.motion && (
-                  <Text style={{ marginTop: 4, opacity: 0.8 }}>
-                    {t("legislator.motion", "Motion: {{motion}}", { motion: v.motion })}
+          votes.map((v) => {
+            const statusDetails = extractBillStatusDetails({
+              status: v.bill_status ?? null,
+              status_text: v.bill_status_text ?? null,
+              status_date: v.bill_status_date ?? null,
+              calendar: v.bill_calendar ?? null,
+            });
+            const statusDateDisplay = statusDetails.statusDate
+              ? (() => {
+                  const parsed = new Date(statusDetails.statusDate as string);
+                  return Number.isNaN(parsed.getTime()) ? null : parsed.toLocaleDateString();
+                })()
+              : null;
+            const nextEventDescriptor = statusDetails.nextEvent
+              ? [
+                  statusDetails.nextEvent.description,
+                  statusDetails.nextEvent.chamber,
+                  statusDetails.nextEvent.location,
+                ]
+                  .filter(Boolean)
+                  .join(" • ")
+              : null;
+
+            return (
+              <Card key={String(v.id)} style={{ marginBottom: 12 }} mode="outlined">
+                <Card.Title
+                  title={`${v.bill_number ?? v.bill_slug ?? v.bill_id ?? "—"}`}
+                  subtitle={v.bill_title ?? ""}
+                />
+                <Card.Content>
+                  <Text>
+                    {t("legislator.vote", "Vote: {{option}}", { option: formatOption(v.option) })}
                   </Text>
-                )}
-                <Divider style={{ marginVertical: 8 }} />
-                <Text>{`Yes: ${v.yes_count ?? 0} • No: ${v.no_count ?? 0} • Other: ${v.other_count ?? 0}`}</Text>
-                {v.date && (
-                  <Text style={{ opacity: 0.6, marginTop: 6 }}>
-                    {new Date(v.date).toLocaleString()}
+                  <Text>
+                    {t("legislator.result", "Result: {{result}}", {
+                      result: formatResult(v.result),
+                    })}
                   </Text>
-                )}
-              </Card.Content>
-              <Card.Actions>
-                <Button
-                  mode="text"
-                  disabled={!v.bill_id}
-                  onPress={() => {
-                    if (v.bill_id) {
-                      router.push({ pathname: "/bill/[id]", params: { id: String(v.bill_id) } });
-                    }
-                  }}
-                >
-                  {t("legislator.openBill", "Open bill")}
-                </Button>
-              </Card.Actions>
-            </Card>
-          ))
+                  {v.motion && (
+                    <Text style={{ marginTop: 4, opacity: 0.8 }}>
+                      {t("legislator.motion", "Motion: {{motion}}", { motion: v.motion })}
+                    </Text>
+                  )}
+                  {statusDetails.statusLabel && (
+                    <Text style={{ marginTop: 4, opacity: 0.8 }}>
+                      {t("bill.currentStatus", "Current status: {{status}}", {
+                        status: statusDetails.statusLabel,
+                      })}
+                      {statusDateDisplay ? ` • ${statusDateDisplay}` : ""}
+                    </Text>
+                  )}
+                  {statusDetails.nextEvent && nextEventDescriptor && (
+                    <Text style={{ marginTop: 4, opacity: 0.75 }}>
+                      {t("bill.nextEventLine", "Next event: {{desc}} on {{date}}", {
+                        desc: nextEventDescriptor,
+                        date: statusDetails.nextEvent.displayDate,
+                      })}
+                    </Text>
+                  )}
+                  <Divider style={{ marginVertical: 8 }} />
+                  <Text>{`Yes: ${v.yes_count ?? 0} • No: ${v.no_count ?? 0} • Other: ${v.other_count ?? 0}`}</Text>
+                  {v.date && (
+                    <Text style={{ opacity: 0.6, marginTop: 6 }}>
+                      {new Date(v.date).toLocaleString()}
+                    </Text>
+                  )}
+                </Card.Content>
+                <Card.Actions>
+                  <Button
+                    mode="text"
+                    disabled={!v.bill_id}
+                    onPress={() => {
+                      if (v.bill_id) {
+                        router.push({ pathname: "/bill/[id]", params: { id: String(v.bill_id) } });
+                      }
+                    }}
+                  >
+                    {t("legislator.openBill", "Open bill")}
+                  </Button>
+                </Card.Actions>
+              </Card>
+            );
+          })
         )}
       </ScrollView>
     </View>

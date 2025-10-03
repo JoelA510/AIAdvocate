@@ -88,6 +88,34 @@ serve(async (req) => {
         continue;
       }
 
+      const billDetailsResponse = await fetch(
+        `https://api.legiscan.com/?key=${LEGISCAN_API_KEY}&op=getBill&id=${bill.id}`,
+      );
+      if (billDetailsResponse.ok) {
+        const billDetailsJson = await billDetailsResponse.json();
+        const billInfo = billDetailsJson?.bill;
+        if (billDetailsJson.status !== "ERROR" && billInfo) {
+          const { error: billUpdateError } = await supabaseAdmin
+            .from("bills")
+            .update({
+              title: billInfo.title ?? null,
+              description: billInfo.description ?? null,
+              status: billInfo.status ? String(billInfo.status) : null,
+              status_text: billInfo.status_text ?? null,
+              status_date: billInfo.status_date ?? null,
+              state_link: billInfo.state_link ?? null,
+              change_hash: billInfo.change_hash ?? null,
+              progress: Array.isArray(billInfo.progress) ? billInfo.progress : [],
+              calendar: Array.isArray(billInfo.calendar) ? billInfo.calendar : [],
+              history: Array.isArray(billInfo.history) ? billInfo.history : [],
+            })
+            .eq("id", billInfo.bill_id ?? bill.id);
+          if (billUpdateError) {
+            console.error(`Failed updating bill ${bill.id} metadata:`, billUpdateError);
+          }
+        }
+      }
+
       const votes = Array.isArray(votesData.votes) ? votesData.votes : [];
 
       if (!votes.length) {
