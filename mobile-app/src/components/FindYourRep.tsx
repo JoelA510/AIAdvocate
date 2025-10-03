@@ -30,6 +30,7 @@ type Person = {
   } | null;
   party?: string | null;
   offices?: { email?: string | null }[] | null;
+  openstates_url?: string | null;
 };
 
 type PersonWithMatch = Person & {
@@ -164,7 +165,8 @@ export default function FindYourRep({ bill }: { bill?: any }) {
         <ActivityIndicator />
       ) : (
         results.map((p, idx) => {
-          const email = p?.email || p?.offices?.find((o) => !!o?.email)?.email || null;
+          const rawEmail = p?.email || p?.offices?.find((o) => !!o?.email)?.email || null;
+          const email = rawEmail && rawEmail.includes("@") ? rawEmail : null;
           const chamberKey = p?.current_role?.org_classification === "upper" ? "upper" : "lower";
           const chamber = t(
             `chamber.${chamberKey}`,
@@ -172,6 +174,17 @@ export default function FindYourRep({ bill }: { bill?: any }) {
           );
           const district = p?.current_role?.district;
           const hasMatch = !!p.supabaseId;
+          const fallbackPayload = JSON.stringify({
+            openStatesId: typeof p.id === "string" ? p.id : null,
+            name: p.name ?? null,
+            party: p.party ?? null,
+            chamber: p.current_role?.org_classification ?? null,
+            title: p.current_role?.title ?? null,
+            district: p.current_role?.district ?? null,
+            email,
+            openstatesUrl: p.openstates_url ?? null,
+            contactUrl: !email && rawEmail ? rawEmail : null,
+          });
           return (
             <Card key={p.id ?? `${nameOf(p)}-${idx}`} style={{ marginBottom: 12 }} mode="outlined">
               <Card.Title
@@ -202,13 +215,15 @@ export default function FindYourRep({ bill }: { bill?: any }) {
                 )}
                 <Button
                   mode="text"
-                  disabled={!hasMatch}
+                  disabled={!hasMatch && !p.id}
                   onPress={() => {
-                    if (hasMatch) {
-                      router.push({
-                        pathname: "/legislator/[id]",
-                        params: { id: String(p.supabaseId) },
-                      });
+                    const params = hasMatch
+                      ? { id: String(p.supabaseId), payload: fallbackPayload }
+                      : typeof p.id === "string" || typeof p.id === "number"
+                        ? { id: "lookup", payload: fallbackPayload }
+                        : null;
+                    if (params) {
+                      router.push({ pathname: "/legislator/[id]", params });
                     }
                   }}
                 >

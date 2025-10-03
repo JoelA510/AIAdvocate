@@ -1,7 +1,7 @@
 // mobile-app/app/legislator/[id].tsx
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import { View, StyleSheet, ScrollView } from "react-native";
+import { View, StyleSheet, ScrollView, Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { Card, Text, Button, ActivityIndicator, Divider } from "react-native-paper";
@@ -30,6 +30,23 @@ type Legislator = {
   party?: string | null;
   district?: string | number | null;
   chamber?: string | null;
+  title?: string | null;
+  email?: string | null;
+  openStatesId?: string | null;
+  openstatesUrl?: string | null;
+  contactUrl?: string | null;
+};
+
+type LegislatorPayload = {
+  openStatesId?: string | number | null;
+  name?: string | null;
+  party?: string | null;
+  district?: string | number | null;
+  chamber?: string | null;
+  title?: string | null;
+  email?: string | null;
+  openstatesUrl?: string | null;
+  contactUrl?: string | null;
 };
 
 const OPTION_LABELS: Record<string, string> = {
@@ -67,7 +84,9 @@ const formatResult = (input?: string | null) => {
 };
 
 export default function LegislatorScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id?: string | string[]; payload?: string | string[] }>();
+  const idParam = Array.isArray(params.id) ? params.id[0] : params.id;
+  const payloadParam = Array.isArray(params.payload) ? params.payload[0] : params.payload;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
@@ -76,98 +95,201 @@ export default function LegislatorScreen() {
   const [votes, setVotes] = useState<VoteRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<"supabase" | "fallback">("supabase");
+
+  const fallbackProfile = useMemo<Legislator | null>(() => {
+    if (!payloadParam) return null;
+    try {
+      const parsed = JSON.parse(payloadParam) as LegislatorPayload;
+      const openStatesId =
+        typeof parsed.openStatesId === "string"
+          ? parsed.openStatesId
+          : typeof parsed.openStatesId === "number"
+            ? String(parsed.openStatesId)
+            : null;
+
+      return {
+        id: openStatesId ?? "lookup",
+        name: parsed.name ?? undefined,
+        party: parsed.party ?? null,
+        district: parsed.district ?? null,
+        chamber: parsed.chamber ?? null,
+        title: parsed.title ?? null,
+        email: parsed.email ?? null,
+        openStatesId,
+        openstatesUrl: parsed.openstatesUrl ?? null,
+        contactUrl: parsed.contactUrl ?? null,
+      };
+    } catch (err) {
+      console.warn("Failed to parse legislator payload", err);
+      return null;
+    }
+  }, [payloadParam]);
 
   useEffect(() => {
     let isMounted = true;
+
     const load = async () => {
       setLoading(true);
-      setError(null);
+
+      let nextLeg: Legislator | null = null;
+      let nextVotes: VoteRow[] = [];
+      let nextError: string | null = null;
+      let nextSource: "supabase" | "fallback" = "supabase";
+
       try {
-        if (!id) {
-          throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
-        }
+        const idValue = idParam ?? "";
 
-        const numericId = Number(id);
-        if (Number.isNaN(numericId)) {
-          throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
-        }
+        if (!idValue) {
+          if (fallbackProfile) {
+            nextLeg = fallbackProfile;
+            nextSource = "fallback";
+          } else {
+            throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
+          }
+        } else if (idValue === "lookup") {
+          if (fallbackProfile) {
+            nextLeg = fallbackProfile;
+            nextSource = "fallback";
+          } else {
+            throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
+          }
+        } else {
+          const numericId = Number(idValue);
 
-        const { data: legislatorData, error: legislatorError } = await supabase
-          .from("legislators")
-          .select("id,name,party,district,chamber")
-          .eq("id", numericId)
-          .maybeSingle();
-        if (legislatorError) throw legislatorError;
-        if (!legislatorData) {
-          throw new Error(t("legislator.missing", "We do not have that legislator on file yet."));
-        }
-        if (isMounted) setLeg(legislatorData as Legislator);
+          if (Number.isNaN(numericId)) {
+            if (fallbackProfile) {
+              nextLeg = fallbackProfile;
+              nextSource = "fallback";
+            } else {
+              throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
+            }
+          } else {
+            const { data: legislatorData, error: legislatorError } = await supabase
+              .from("legislators")
+              .select("id,name,party,district,chamber,email")
+              .eq("id", numericId)
+              .maybeSingle();
+            if (legislatorError) throw legislatorError;
 
-        const { data: rawVotes, error: votesError } = await supabase
-          .from("votes")
-          .select("id,vote_id,bill_id,option,result,yes_count,no_count,other_count,date,motion")
-          .eq("legislator_id", numericId)
-          .order("date", { ascending: false })
-          .limit(100);
-        if (votesError) throw votesError;
+            if (legislatorData) {
+              nextLeg = {
+                ...(legislatorData as Legislator),
+                email: (legislatorData as any).email ?? fallbackProfile?.email ?? null,
+                title: fallbackProfile?.title ?? null,
+                openStatesId: fallbackProfile?.openStatesId ?? null,
+                openstatesUrl: fallbackProfile?.openstatesUrl ?? null,
+                contactUrl: fallbackProfile?.contactUrl ?? null,
+              };
+              nextSource = "supabase";
+            } else if (fallbackProfile) {
+              nextLeg = fallbackProfile;
+              nextSource = "fallback";
+            } else {
+              throw new Error(
+                t("legislator.missing", "We do not have that legislator on file yet."),
+              );
+            }
 
-        let rows: VoteRow[] = (rawVotes as VoteRow[]) ?? [];
+            if (nextSource === "supabase") {
+              const { data: rawVotes, error: votesError } = await supabase
+                .from("votes")
+                .select(
+                  "id,vote_id,bill_id,option,result,yes_count,no_count,other_count,date,motion",
+                )
+                .eq("legislator_id", numericId)
+                .order("date", { ascending: false })
+                .limit(100);
+              if (votesError) throw votesError;
 
-        if (rows.length) {
-          const billIds = Array.from(
-            new Set(rows.map((r) => r.bill_id).filter(Boolean)),
-          ) as number[];
-          if (billIds.length) {
-            const { data: billData, error: billsError } = await supabase
-              .from("bills")
-              .select("id,bill_number,title,slug")
-              .in("id", billIds);
-            if (!billsError && billData) {
-              const billsMap = new Map<
-                number,
-                { bill_number?: string; title?: string; slug?: string }
-              >();
-              billData.forEach((bill: any) => {
-                billsMap.set(Number(bill.id), bill);
-              });
-              rows = rows.map((vote) => {
-                const bill = vote.bill_id ? billsMap.get(Number(vote.bill_id)) : null;
-                return {
-                  ...vote,
-                  bill_number: vote.bill_number ?? bill?.bill_number ?? null,
-                  bill_title: vote.bill_title ?? bill?.title ?? null,
-                  bill_slug: vote.bill_slug ?? bill?.slug ?? null,
-                };
-              });
+              let rows: VoteRow[] = (rawVotes as VoteRow[]) ?? [];
+
+              if (rows.length) {
+                const billIds = Array.from(
+                  new Set(rows.map((r) => r.bill_id).filter(Boolean)),
+                ) as number[];
+                if (billIds.length) {
+                  const { data: billData, error: billsError } = await supabase
+                    .from("bills")
+                    .select("id,bill_number,title,slug")
+                    .in("id", billIds);
+                  if (!billsError && billData) {
+                    const billsMap = new Map<
+                      number,
+                      { bill_number?: string; title?: string; slug?: string }
+                    >();
+                    billData.forEach((bill: any) => {
+                      billsMap.set(Number(bill.id), bill);
+                    });
+                    rows = rows.map((vote) => {
+                      const bill = vote.bill_id ? billsMap.get(Number(vote.bill_id)) : null;
+                      return {
+                        ...vote,
+                        bill_number: vote.bill_number ?? bill?.bill_number ?? null,
+                        bill_title: vote.bill_title ?? bill?.title ?? null,
+                        bill_slug: vote.bill_slug ?? bill?.slug ?? null,
+                      };
+                    });
+                  }
+                }
+              }
+
+              nextVotes = rows;
             }
           }
         }
-
-        if (isMounted) setVotes(rows);
       } catch (err: any) {
-        if (isMounted) {
-          setVotes([]);
-          setLeg(null);
-          setError(err?.message ?? t("legislator.loadError", "Unable to load that legislator."));
+        if (fallbackProfile && !nextLeg) {
+          nextLeg = fallbackProfile;
+          nextSource = "fallback";
+        }
+        if (!fallbackProfile || !nextLeg) {
+          nextError = err?.message ?? t("legislator.loadError", "Unable to load that legislator.");
         }
       } finally {
-        if (isMounted) setLoading(false);
+        if (isMounted) {
+          setLeg(nextLeg);
+          setVotes(nextVotes);
+          setSource(nextSource);
+          setError(nextError);
+          setLoading(false);
+        }
       }
     };
+
     load();
     return () => {
       isMounted = false;
     };
-  }, [id, t]);
+  }, [idParam, fallbackProfile, t]);
+
+  const friendlyChamber = useMemo(() => {
+    if (!leg?.chamber) return null;
+    const normalized = String(leg.chamber).toLowerCase();
+    if (normalized.includes("upper") || normalized.includes("senate")) {
+      return t("chamber.upper", "Senate");
+    }
+    if (
+      normalized.includes("lower") ||
+      normalized.includes("house") ||
+      normalized.includes("assembly")
+    ) {
+      return t("chamber.lower", "Assembly");
+    }
+    return leg.chamber;
+  }, [leg?.chamber, t]);
 
   const header = useMemo(() => {
-    const parts = [];
+    const parts: string[] = [];
     if (leg?.name) parts.push(leg.name);
     if (leg?.party) parts.push(leg.party);
+    if (leg?.title) parts.push(leg.title);
+    if (friendlyChamber) parts.push(friendlyChamber);
     if (leg?.district) parts.push(`${t("legislator.district", "District")} ${leg.district}`);
-    if (leg?.chamber) parts.push(leg.chamber);
     return parts.join(" • ");
-  }, [leg, t]);
+  }, [leg, friendlyChamber, t]);
+
+  const contactEmail = leg?.email && leg.email.includes("@") ? leg.email : null;
 
   if (loading) {
     return (
@@ -200,6 +322,64 @@ export default function LegislatorScreen() {
         <Text variant="titleLarge" style={{ marginBottom: 12 }}>
           {header || t("legislator.votingRecord", "Voting Record")}
         </Text>
+
+        {source === "fallback" && (
+          <Text style={{ marginBottom: 16, opacity: 0.75 }}>
+            {t(
+              "legislator.fallbackNotice",
+              "We are showing OpenStates data while we build a local record.",
+            )}
+          </Text>
+        )}
+
+        {(contactEmail || leg?.openstatesUrl) && (
+          <Card style={{ marginBottom: 16 }} mode="outlined">
+            <Card.Content>
+              {contactEmail && (
+                <Text style={{ marginBottom: 8 }}>
+                  {t("legislator.contactEmail", "Email: {{email}}", { email: contactEmail })}
+                </Text>
+              )}
+              {leg?.openstatesUrl && (
+                <Text style={{ opacity: 0.75 }}>
+                  {t("legislator.openStatesData", "Source: OpenStates.org")}
+                </Text>
+              )}
+            </Card.Content>
+            <Card.Actions>
+              {contactEmail && (
+                <Button
+                  icon="email-outline"
+                  onPress={() => Linking.openURL(`mailto:${contactEmail}`)}
+                >
+                  {t("common.email", "Email")}
+                </Button>
+              )}
+              {leg?.contactUrl && (
+                <Button
+                  icon="link-variant"
+                  onPress={() => {
+                    const url = leg?.contactUrl;
+                    if (url) Linking.openURL(url);
+                  }}
+                >
+                  {t("legislator.contactForm", "Contact form")}
+                </Button>
+              )}
+              {leg?.openstatesUrl && (
+                <Button
+                  icon="open-in-new"
+                  onPress={() => {
+                    const url = leg?.openstatesUrl;
+                    if (url) Linking.openURL(url);
+                  }}
+                >
+                  {t("legislator.openStatesProfile", "View on OpenStates")}
+                </Button>
+              )}
+            </Card.Actions>
+          </Card>
+        )}
 
         {!votes.length ? (
           <EmptyState

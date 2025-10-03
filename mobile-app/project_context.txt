@@ -7,12 +7,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { useTheme, Card, Text, Button, ActivityIndicator, Divider } from "react-native-paper";
+import { Card, Text, Button, ActivityIndicator, Divider } from "react-native-paper";
 import { supabase } from "../../src/lib/supabase";
 import EmptyState from "../../src/components/EmptyState";
 
 type VoteRow = {
   id?: string | number;
+  vote_id?: number | null;
   bill_id?: number;
   bill_number?: string | null;
   bill_title?: string | null;
@@ -23,6 +24,7 @@ type VoteRow = {
   no_count?: number | null;
   other_count?: number | null;
   date?: string | null;
+  motion?: string | null;
 };
 
 type Legislator = {
@@ -30,115 +32,127 @@ type Legislator = {
   name?: string;
   party?: string | null;
   district?: string | number | null;
+  chamber?: string | null;
+};
+
+const OPTION_LABELS: Record<string, string> = {
+  yea: "Yes",
+  yay: "Yes",
+  yea2: "Yes",
+  yea3: "Yes",
+  nay: "No",
+  nay2: "No",
+  nay3: "No",
+  aye: "Yes",
+  aye2: "Yes",
+  aye3: "Yes",
+  y: "Yes",
+  n: "No",
+  abstain: "Abstain",
+  present: "Present",
+  excused: "Excused",
+  absent: "Absent",
+  nv: "Present",
+  not_voting: "Not voting",
+};
+
+const formatOption = (input?: string | null) => {
+  if (!input) return "—";
+  const key = input.toLowerCase().replace(/\s+/g, "");
+  return OPTION_LABELS[key] ?? input;
+};
+
+const formatResult = (input?: string | null) => {
+  if (!input) return "—";
+  const trimmed = input.trim();
+  if (!trimmed) return "—";
+  return trimmed.replace(/_/g, " ");
 };
 
 export default function LegislatorScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const theme = useTheme();
   const { t } = useTranslation();
 
   const [leg, setLeg] = useState<Legislator | null>(null);
   const [votes, setVotes] = useState<VoteRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     const load = async () => {
       setLoading(true);
+      setError(null);
       try {
-        // Try a straightforward legislator lookup
-        const L = await supabase.from("legislators").select("*").eq("id", id).maybeSingle();
-        if (!L.error && L.data) setLeg(L.data as any);
-
-        // Try a few possible vote table shapes
-        let rows: VoteRow[] = [];
-
-        // A) votes table with joins flattened by a view
-        const A = await supabase
-          .from("votes_view")
-          .select("*")
-          .eq("legislator_id", id)
-          .order("date", { ascending: false })
-          .limit(100);
-        if (!A.error && A.data?.length) rows = A.data as any[];
-
-        // B) votes table + bills join manually
-        if (!rows.length) {
-          const V = await supabase
-            .from("votes")
-            .select("id,bill_id,option,result,yes_count,no_count,other_count,date")
-            .eq("legislator_id", id)
-            .order("date", { ascending: false })
-            .limit(100);
-          if (!V.error && V.data?.length) {
-            const ids = (V.data as any[]).map((r) => r.bill_id).filter(Boolean);
-            let billsMap = new Map<string, any>();
-            if (ids.length) {
-              const B = await supabase.from("bills").select("id,bill_number,title,slug").in("id", ids);
-              if (!B.error && B.data) {
-                billsMap = new Map(B.data.map((b: any) => [String(b.id), b]));
-              }
-            }
-            rows = (V.data as any[]).map((r) => {
-              const b = billsMap.get(String(r.bill_id));
-              return {
-                id: r.id,
-                bill_id: r.bill_id,
-                bill_number: b?.bill_number,
-                bill_title: b?.title,
-                bill_slug: b?.slug,
-                option: r.option,
-                result: r.result,
-                yes_count: r.yes_count,
-                no_count: r.no_count,
-                other_count: r.other_count,
-                date: r.date,
-              } as VoteRow;
-            });
-          }
+        if (!id) {
+          throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
         }
 
-        // C) roll_calls by legislator_id (another common shape)
-        if (!rows.length) {
-          const R = await supabase
-            .from("roll_calls")
-            .select("id,bill_id,option,result,yes_count,no_count,other_count,date,legislator_id")
-            .eq("legislator_id", id)
-            .order("date", { ascending: false })
-            .limit(100);
-          if (!R.error && R.data?.length) {
-            const ids = (R.data as any[]).map((r) => r.bill_id).filter(Boolean);
-            let billsMap = new Map<string, any>();
-            if (ids.length) {
-              const B = await supabase.from("bills").select("id,bill_number,title,slug").in("id", ids);
-              if (!B.error && B.data) {
-                billsMap = new Map(B.data.map((b: any) => [String(b.id), b]));
-              }
+        const numericId = Number(id);
+        if (Number.isNaN(numericId)) {
+          throw new Error(t("legislator.invalidId", "Missing legislator identifier."));
+        }
+
+        const { data: legislatorData, error: legislatorError } = await supabase
+          .from("legislators")
+          .select("id,name,party,district,chamber")
+          .eq("id", numericId)
+          .maybeSingle();
+        if (legislatorError) throw legislatorError;
+        if (!legislatorData) {
+          throw new Error(t("legislator.missing", "We do not have that legislator on file yet."));
+        }
+        if (isMounted) setLeg(legislatorData as Legislator);
+
+        const { data: rawVotes, error: votesError } = await supabase
+          .from("votes")
+          .select("id,vote_id,bill_id,option,result,yes_count,no_count,other_count,date,motion")
+          .eq("legislator_id", numericId)
+          .order("date", { ascending: false })
+          .limit(100);
+        if (votesError) throw votesError;
+
+        let rows: VoteRow[] = (rawVotes as VoteRow[]) ?? [];
+
+        if (rows.length) {
+          const billIds = Array.from(
+            new Set(rows.map((r) => r.bill_id).filter(Boolean)),
+          ) as number[];
+          if (billIds.length) {
+            const { data: billData, error: billsError } = await supabase
+              .from("bills")
+              .select("id,bill_number,title,slug")
+              .in("id", billIds);
+            if (!billsError && billData) {
+              const billsMap = new Map<
+                number,
+                { bill_number?: string; title?: string; slug?: string }
+              >();
+              billData.forEach((bill: any) => {
+                billsMap.set(Number(bill.id), bill);
+              });
+              rows = rows.map((vote) => {
+                const bill = vote.bill_id ? billsMap.get(Number(vote.bill_id)) : null;
+                return {
+                  ...vote,
+                  bill_number: vote.bill_number ?? bill?.bill_number ?? null,
+                  bill_title: vote.bill_title ?? bill?.title ?? null,
+                  bill_slug: vote.bill_slug ?? bill?.slug ?? null,
+                };
+              });
             }
-            rows = (R.data as any[]).map((r) => {
-              const b = billsMap.get(String(r.bill_id));
-              return {
-                id: r.id,
-                bill_id: r.bill_id,
-                bill_number: b?.bill_number,
-                bill_title: b?.title,
-                bill_slug: b?.slug,
-                option: r.option,
-                result: r.result,
-                yes_count: r.yes_count,
-                no_count: r.no_count,
-                other_count: r.other_count,
-                date: r.date,
-              } as VoteRow;
-            });
           }
         }
 
         if (isMounted) setVotes(rows);
-      } catch {
-        if (isMounted) setVotes([]);
+      } catch (err: any) {
+        if (isMounted) {
+          setVotes([]);
+          setLeg(null);
+          setError(err?.message ?? t("legislator.loadError", "Unable to load that legislator."));
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -147,27 +161,44 @@ export default function LegislatorScreen() {
     return () => {
       isMounted = false;
     };
-  }, [id]);
+  }, [id, t]);
 
   const header = useMemo(() => {
     const parts = [];
     if (leg?.name) parts.push(leg.name);
     if (leg?.party) parts.push(leg.party);
     if (leg?.district) parts.push(`${t("legislator.district", "District")} ${leg.district}`);
+    if (leg?.chamber) parts.push(leg.chamber);
     return parts.join(" • ");
   }, [leg, t]);
 
   if (loading) {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
+        <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
         <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+        <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
+        <EmptyState
+          icon="person.crop.circle.badge.exclamationmark"
+          title={t("legislator.votingRecord", "Voting Record")}
+          message={error}
+        />
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
-      <Stack.Screen options={{ title: leg?.name || t("legislator.votingRecord", "Voting Record") }} />
+      <Stack.Screen
+        options={{ title: leg?.name || t("legislator.votingRecord", "Voting Record") }}
+      />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Text variant="titleLarge" style={{ marginBottom: 12 }}>
           {header || t("legislator.votingRecord", "Voting Record")}
@@ -177,7 +208,10 @@ export default function LegislatorScreen() {
           <EmptyState
             icon="person.crop.circle.badge.questionmark"
             title={t("legislator.votingRecord", "Voting Record")}
-            message={t("relatedBills.error", "Could not load related bills.")}
+            message={t(
+              "legislator.noVotes",
+              "We have not recorded any votes for this legislator yet.",
+            )}
           />
         ) : (
           votes.map((v) => (
@@ -188,16 +222,35 @@ export default function LegislatorScreen() {
               />
               <Card.Content>
                 <Text>
-                  {t("legislator.vote", "Vote: {{option}}", { option: String(v.option ?? "—") })}
+                  {t("legislator.vote", "Vote: {{option}}", { option: formatOption(v.option) })}
                 </Text>
-                <Text>{`${t("legislator.votingRecord", "Voting Record")}: ${String(v.result ?? "—")}`}</Text>
+                <Text>
+                  {t("legislator.result", "Result: {{result}}", { result: formatResult(v.result) })}
+                </Text>
+                {v.motion && (
+                  <Text style={{ marginTop: 4, opacity: 0.8 }}>
+                    {t("legislator.motion", "Motion: {{motion}}", { motion: v.motion })}
+                  </Text>
+                )}
                 <Divider style={{ marginVertical: 8 }} />
                 <Text>{`Yes: ${v.yes_count ?? 0} • No: ${v.no_count ?? 0} • Other: ${v.other_count ?? 0}`}</Text>
-                {v.date && <Text style={{ opacity: 0.6, marginTop: 6 }}>{new Date(v.date).toLocaleString()}</Text>}
+                {v.date && (
+                  <Text style={{ opacity: 0.6, marginTop: 6 }}>
+                    {new Date(v.date).toLocaleString()}
+                  </Text>
+                )}
               </Card.Content>
               <Card.Actions>
-                <Button mode="text" onPress={() => router.push(`/bill/${v.bill_id}`)}>
-                  {t("tabs.bills", "Bills")}
+                <Button
+                  mode="text"
+                  disabled={!v.bill_id}
+                  onPress={() => {
+                    if (v.bill_id) {
+                      router.push({ pathname: "/bill/[id]", params: { id: String(v.bill_id) } });
+                    }
+                  }}
+                >
+                  {t("legislator.openBill", "Open bill")}
                 </Button>
               </Card.Actions>
             </Card>
@@ -215,7 +268,6 @@ const styles = StyleSheet.create({
 ---
 File: app/(tabs)/_layout.tsx
 ---
-// mobile-app/app/(tabs)/_layout.tsx
 import React from "react";
 import { Text, Platform, Image } from "react-native";
 import { Tabs } from "expo-router";
@@ -224,10 +276,9 @@ import { useTheme } from "react-native-paper";
 import HeaderBanner from "../../components/ui/HeaderBanner";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-// LNF tab icon: mobile-app/assets/images/LNFmini.png
 const lnfIcon = require("../../assets/images/LNFmini.png");
 
-export default function TabsLayout() {
+function TabsLayout() {
   const { t } = useTranslation();
   const theme = useTheme();
 
@@ -241,7 +292,6 @@ export default function TabsLayout() {
 
   return (
     <>
-      {/* Force the banner to show on all tabs, including the index/Bills tab */}
       <HeaderBanner forceShow />
       <Tabs
         initialRouteName="highlighted"
@@ -282,7 +332,6 @@ export default function TabsLayout() {
           name="lnf"
           options={{
             tabBarLabel: labelEl(t("tabs.lnf", { defaultValue: "LNF" })),
-            // Use image + tintColor so it behaves like other icons
             tabBarIcon: ({ color, size }) => (
               <Image source={lnfIcon} style={{ width: size, height: size, tintColor: color }} resizeMode="contain" />
             ),
@@ -295,23 +344,17 @@ export default function TabsLayout() {
             tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name="bullhorn" color={color} size={size} />,
           }}
         />
-
-        {/* Explicitly register the Language route and hide it from the tab bar */}
-        <Tabs.Screen
-          name="language"
-          options={{
-            tabBarButton: () => null, // hide from UI (do not combine with href: null)
-          }}
-        />
       </Tabs>
     </>
   );
 }
+TabsLayout.displayName = "TabsLayout";
+
+export default TabsLayout;
 
 ---
 File: app/(tabs)/saved.tsx
 ---
-// mobile-app/app/(tabs)/saved.tsx
 import React, { useCallback, useMemo, useState } from "react";
 import { StyleSheet, FlatList, View, RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -319,35 +362,27 @@ import { useFocusEffect, Stack } from "expo-router";
 import { useTranslation } from "react-i18next";
 
 import { ThemedView } from "../../components/ThemedView";
-import BillComponent, { Bill } from "../../src/components/Bill";
+import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
-
-type SavedRow = {
-  created_at: string;
-  bill?: Bill | null;
-  bill_id?: string | number | null;
-  bill_slug?: string | null;
-  bill_number?: string | null;
-};
 
 export default function SavedBillsScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
 
-  const [bills, setBills] = useState<Bill[]>([]);
+  const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const userId = session?.user?.id;
 
   const fetchBillsByIds = async (ids: (string | number)[]) => {
-    if (!ids.length) return [] as Bill[];
+    if (!ids.length) return [] as any[];
     const { data, error } = await supabase.from("bills").select("*").in("id", ids);
     if (error) throw error;
-    return (data ?? []) as Bill[];
+    return data ?? [];
   };
 
   const load = useCallback(async () => {
@@ -358,80 +393,20 @@ export default function SavedBillsScreen() {
     }
     setLoading(true);
     try {
-      // A) Try FK join on saved_bills → bills
-      const tryJoin = await supabase
-        .from("saved_bills")
-        .select("created_at, bill:bills(*)")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(200);
-
-      if (!tryJoin.error && tryJoin.data?.length && tryJoin.data[0]?.bill) {
-        setBills(tryJoin.data.map((r: any) => r.bill).filter(Boolean));
-        setLoading(false);
-        return;
-      }
-
-      // B) saved_bills simple read
-      const trySaved = await supabase
-        .from("saved_bills")
-        .select("created_at,bill_id,bill_slug,bill_number")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(200);
-
-      if (!trySaved.error && trySaved.data?.length) {
-        const rows = (trySaved.data as SavedRow[]).filter(Boolean);
-        const ids = rows.map((r) => r.bill_id).filter(Boolean) as (string | number)[];
-        if (ids.length) {
-          const data = await fetchBillsByIds(ids);
-          // preserve order
-          const map = new Map(data.map((b) => [String((b as any).id), b]));
-          const ordered = ids.map((id) => map.get(String(id))).filter(Boolean) as Bill[];
-          setBills(ordered);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // C) bookmarks table (common pattern)
-      const tryBookmarks = await supabase
+      const { data: marks, error } = await supabase
         .from("bookmarks")
-        .select("created_at,bill_id")
+        .select("bill_id, created_at")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(200);
+        .order("created_at", { ascending: false });
+      if (error) throw error;
 
-      if (!tryBookmarks.error && tryBookmarks.data?.length) {
-        const ids = (tryBookmarks.data as any[]).map((r) => r.bill_id).filter(Boolean);
-        const data = await fetchBillsByIds(ids);
-        const map = new Map(data.map((b) => [String((b as any).id), b]));
-        const ordered = ids.map((id: any) => map.get(String(id))).filter(Boolean) as Bill[];
-        setBills(ordered);
-        setLoading(false);
-        return;
-      }
+      const ids = (marks ?? []).map((m) => m.bill_id);
+      const data = await fetchBillsByIds(ids);
 
-      // D) user_bookmarks (another common name)
-      const tryUserBookmarks = await supabase
-        .from("user_bookmarks")
-        .select("created_at,bill_id")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(200);
-
-      if (!tryUserBookmarks.error && tryUserBookmarks.data?.length) {
-        const ids = (tryUserBookmarks.data as any[]).map((r) => r.bill_id).filter(Boolean);
-        const data = await fetchBillsByIds(ids);
-        const map = new Map(data.map((b) => [String((b as any).id), b]));
-        const ordered = ids.map((id: any) => map.get(String(id))).filter(Boolean) as Bill[];
-        setBills(ordered);
-        setLoading(false);
-        return;
-      }
-
-      // If all attempts failed/empty:
-      setBills([]);
+      // preserve order by mapping back to ids
+      const map = new Map(data.map((b) => [String(b.id), b]));
+      const ordered = ids.map((id) => map.get(String(id))).filter(Boolean);
+      setBills(ordered as any[]);
     } catch {
       setBills([]);
     } finally {
@@ -439,17 +414,26 @@ export default function SavedBillsScreen() {
     }
   }, [userId]);
 
-  useFocusEffect(React.useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    React.useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   React.useEffect(() => {
     if (!userId) return;
+    // Realtime subscription (publication enabled in SQL)
     const ch = supabase
-      .channel(`saved_any_${userId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "saved_bills", filter: `user_id=eq.${userId}` }, () => load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "bookmarks", filter: `user_id=eq.${userId}` }, () => load())
-      .on("postgres_changes", { event: "*", schema: "public", table: "user_bookmarks", filter: `user_id=eq.${userId}` }, () => load())
+      .channel(`bookmarks_${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "bookmarks", filter: `user_id=eq.${userId}` },
+        () => load(),
+      )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, [userId, load]);
 
   const onRefresh = React.useCallback(async () => {
@@ -457,8 +441,6 @@ export default function SavedBillsScreen() {
     await load();
     setRefreshing(false);
   }, [load]);
-
-  const renderItem = ({ item }: { item: Bill }) => <BillComponent bill={item} />;
 
   const content = useMemo(() => {
     if (loading) {
@@ -484,8 +466,8 @@ export default function SavedBillsScreen() {
     return (
       <FlatList
         data={bills}
-        keyExtractor={(b) => String((b as any).id ?? Math.random())}
-        renderItem={renderItem}
+        keyExtractor={(b) => String((b as any).id)}
+        renderItem={({ item }) => <BillComponent bill={item} />}
         contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -495,7 +477,9 @@ export default function SavedBillsScreen() {
 
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
-      <Stack.Screen options={{ title: t("tabs.saved", { defaultValue: "Saved" }), headerShown: false }} />
+      <Stack.Screen
+        options={{ title: t("tabs.saved", { defaultValue: "Saved" }), headerShown: false }}
+      />
       <View style={styles.content}>{content}</View>
     </ThemedView>
   );
@@ -518,7 +502,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
-import { useTheme, Card, Button } from "react-native-paper";
+import { Card, Button } from "react-native-paper";
 
 const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
   "https://www.loveneverfailsus.com/") as string;
@@ -526,7 +510,6 @@ const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
 export default function LnfScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const theme = useTheme();
 
   return (
     <ThemedView style={styles.container}>
@@ -623,13 +606,24 @@ export default function AdvocacyScreen() {
       } catch {}
     };
     loadBills();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   return (
     <ThemedView style={{ flex: 1 }}>
-      <Stack.Screen options={{ title: t("tabs.advocacy", { defaultValue: "Advocacy" }), headerShown: false }} />
-      <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom, paddingHorizontal: 16 }}>
+      <Stack.Screen
+        options={{ title: t("tabs.advocacy", { defaultValue: "Advocacy" }), headerShown: false }}
+      />
+      <View
+        style={{
+          flex: 1,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+          paddingHorizontal: 16,
+        }}
+      >
         <ThemedText type="title" style={{ marginBottom: 12 }}>
           {t("advocacy.lookupTitle", { defaultValue: "Find Your Representatives" })}
         </ThemedText>
@@ -639,14 +633,21 @@ export default function AdvocacyScreen() {
             visible={menuVisible}
             onDismiss={() => setMenuVisible(false)}
             anchor={
-              <Button mode="outlined" onPress={() => setMenuVisible(true)} style={{ marginBottom: 12, alignSelf: "flex-start" }}>
+              <Button
+                mode="outlined"
+                onPress={() => setMenuVisible(true)}
+                style={{ marginBottom: 12, alignSelf: "flex-start" }}
+              >
                 {selectedBill
                   ? `${selectedBill.bill_number ?? selectedBill.slug ?? selectedBill.id}`
                   : t("advocacy.selectBill", { defaultValue: "Select Bill (optional)" })}
               </Button>
             }
           >
-            <Menu.Item title={t("advocacy.noneOption", { defaultValue: "None" })} onPress={() => setSelectedBill(null)} />
+            <Menu.Item
+              title={t("advocacy.noneOption", { defaultValue: "None" })}
+              onPress={() => setSelectedBill(null)}
+            />
             {bills.map((bill) => (
               <Menu.Item
                 key={String(bill.id)}
@@ -776,7 +777,6 @@ const styles = StyleSheet.create({
 ---
 File: app/(tabs)/index.tsx
 ---
-// mobile-app/app/(tabs)/index.tsx
 import { useState, useEffect, useMemo } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar } from "react-native-paper";
@@ -788,9 +788,6 @@ import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
 import { ThemedView } from "../../components/ThemedView";
 import { supabase } from "../../src/lib/supabase";
-
-// OPTIONAL: enable feed previews in Spanish by hydrating translations.
-// If you haven't added translation.ts yet, comment the next line + the useEffect that uses it.
 import { fetchTranslationsForBills } from "../../src/lib/translation";
 
 export default function BillsHomeScreen() {
@@ -801,56 +798,64 @@ export default function BillsHomeScreen() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const insets = useSafeAreaInsets();
 
-  // ----- Fetch bills (keeps your existing logic) -----
   useEffect(() => {
     const fetchBills = async () => {
       setLoading(true);
       try {
-        let query = supabase.from("bills").select("*").order("id", { ascending: false });
         const trimmed = searchQuery.trim();
         const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
+        let data: any[] = [];
 
-        if (trimmed) {
-          if (billNumberRegex.test(trimmed)) {
-            const processed = trimmed.replace(/\s/g, "");
-            query = query.ilike("bill_number", `%${processed}%`);
-          } else {
-            // full-text search on title + description
-            query = query.textSearch("title,description", trimmed, { type: "websearch" });
-          }
+        if (!trimmed) {
+          const { data: d, error: e } = await supabase
+            .from("bills")
+            .select("*")
+            .order("id", { ascending: false });
+          if (e) throw e;
+          data = d ?? [];
+        } else if (billNumberRegex.test(trimmed)) {
+          const processed = trimmed.replace(/\s/g, "");
+          const { data: d, error: e } = await supabase
+            .from("bills")
+            .select("*")
+            .ilike("bill_number", `%${processed}%`)
+            .order("id", { ascending: false });
+          if (e) throw e;
+          data = d ?? [];
+        } else {
+          const { data: d, error: e } = await supabase.rpc("search_bills", { p_query: trimmed });
+          if (e) throw e;
+          data = d ?? [];
         }
 
-        const { data, error } = await query;
-        if (error) throw error;
-        setBills(data || []);
+        setBills(data);
+        setError(null);
       } catch (err: any) {
         setError(err.message);
+        setBills([]);
       } finally {
         setLoading(false);
       }
     };
 
-    const searchTimeout = setTimeout(fetchBills, 300); // debounce
+    const searchTimeout = setTimeout(fetchBills, 300);
     return () => clearTimeout(searchTimeout);
   }, [searchQuery]);
 
-  // ----- OPTIONAL: hydrate previews with translations when language != en -----
-  const idsKey = useMemo(() => bills.map((b) => b.id).join(","), [bills]);
+  // Stable list of visible IDs; avoids listing `bills` as a dependency.
+  const ids = useMemo(() => bills.map((b) => b.id), [bills]);
+  const idsKey = useMemo(() => ids.join(","), [ids]);
+
   useEffect(() => {
     let alive = true;
     (async () => {
       if (i18n.language === "en") return;
-      if (!bills.length) return;
+      if (!ids.length) return;
 
       try {
-        const map = await fetchTranslationsForBills(
-          bills.map((b) => b.id),
-          i18n.language,
-        );
+        const map = await fetchTranslationsForBills(ids, i18n.language);
         if (!alive || !Object.keys(map).length) return;
 
-        // Merge Spanish fields into the items so <BillComponent /> will show them.
-        // (BillComponent already prefers *_es fields when language starts with 'es')
         setBills((prev) =>
           prev.map((b) => {
             const tr = map[b.id];
@@ -864,17 +869,16 @@ export default function BillsHomeScreen() {
               summary_complex_es: tr.summary_complex ?? (b as any).summary_complex_es,
               original_text_es: tr.original_text ?? (b as any).original_text_es,
             };
-          }),
+          })
         );
       } catch {
-        // non-fatal; feed still shows English if translation fetch fails
+        /* non-fatal */
       }
     })();
 
     return () => {
       alive = false;
     };
-    // Re-run when language switches or the visible set of bill IDs changes
   }, [i18n.language, idsKey]);
 
   const renderContent = () => {
@@ -896,7 +900,7 @@ export default function BillsHomeScreen() {
           title={t("error.title", "An Error Occurred")}
           message={t(
             "home.error",
-            `We couldn't fetch the bills. Please try again later. \n(${error})`,
+            `We couldn't fetch the bills. Please try again later. \n(${error})`
           )}
         />
       );
@@ -910,7 +914,7 @@ export default function BillsHomeScreen() {
             searchQuery
               ? t(
                   "home.emptyWithQuery",
-                  `We couldn't find any bills matching "${searchQuery}". Try another search.`,
+                  `We couldn't find any bills matching "${searchQuery}". Try another search.`
                 )
               : t("home.emptyNoQuery", "There are no bills to display at the moment.")
           }
@@ -929,10 +933,8 @@ export default function BillsHomeScreen() {
   };
 
   return (
-    // NOTE: Header banner already handles safe-area. Avoid double top padding.
     <ThemedView style={styles.container}>
       <View style={styles.header}>
-        {/* Removed large "Explore Bills" title */}
         <Searchbar
           placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
           onChangeText={setSearchQuery}
@@ -1022,7 +1024,6 @@ const styles = StyleSheet.create({
 ---
 File: app/bill/[id].tsx
 ---
-// mobile-app/app/bill/[id].tsx (hotfix: relative imports)
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState, useEffect } from "react";
 import {
@@ -1042,7 +1043,6 @@ import {
   Card,
   ActivityIndicator as PaperActivityIndicator,
 } from "react-native-paper";
-import * as Speech from "expo-speech";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import Toast from "react-native-toast-message";
@@ -1061,7 +1061,12 @@ import EmptyState from "../../src/components/EmptyState";
 
 type TranslatedContent = Pick<
   Bill,
-  "title" | "description" | "summary_simple" | "summary_medium" | "summary_complex"
+  | "title"
+  | "description"
+  | "summary_simple"
+  | "summary_medium"
+  | "summary_complex"
+  | "original_text"
 >;
 
 export default function BillDetailsScreen() {
@@ -1077,12 +1082,10 @@ export default function BillDetailsScreen() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeSummaryText, setActiveSummaryText] = useState("");
 
   useEffect(() => {
     let isMounted = true;
     const fetchBill = async () => {
-      Speech.stop();
       setLoading(true);
       try {
         const { data, error } = await supabase.from("bills").select("*").eq("id", id).single();
@@ -1090,7 +1093,7 @@ export default function BillDetailsScreen() {
         if (!isMounted) return;
         setBill(data as Bill);
         if (data && session?.user?.id) {
-          trackEvent("bill_view", session.user.id, { bill_id: data.id }).catch(() => {});
+          trackEvent("bill_view", session.user.id, { bill_id: (data as any).id }).catch(() => {});
         }
       } catch (err: any) {
         if (isMounted) setError(err.message);
@@ -1101,7 +1104,6 @@ export default function BillDetailsScreen() {
     fetchBill();
     return () => {
       isMounted = false;
-      Speech.stop();
     };
   }, [id, session]);
 
@@ -1114,10 +1116,9 @@ export default function BillDetailsScreen() {
     let isMounted = true;
     const fetchTranslation = async () => {
       setIsTranslating(true);
-      Speech.stop();
       try {
         const { data, error } = await supabase.functions.invoke("translate-bill", {
-          body: { bill_id: bill.id, language_code: i18n.language },
+          body: { bill_id: (bill as any).id, language_code: i18n.language },
         });
         if (error) throw error;
         if (isMounted) setTranslatedContent(data as any);
@@ -1128,7 +1129,9 @@ export default function BillDetailsScreen() {
       }
     };
     fetchTranslation();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [bill, i18n.language]);
 
   const handleShare = async () => {
@@ -1162,7 +1165,6 @@ export default function BillDetailsScreen() {
   };
 
   const handleGoBack = () => {
-    Speech.stop();
     router.back();
   };
 
@@ -1187,7 +1189,9 @@ export default function BillDetailsScreen() {
         </Button>
         <EmptyState
           icon="x.circle"
-          title={error ? t("error.title", "An Error Occurred") : t("bill.missing", "Bill Not Found")}
+          title={
+            error ? t("error.title", "An Error Occurred") : t("bill.missing", "Bill Not Found")
+          }
           message={
             error
               ? error
@@ -1198,16 +1202,15 @@ export default function BillDetailsScreen() {
     );
   }
 
-  const displayContent = (translatedContent || bill) as any;
+  const display = (translatedContent || bill) as any;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      <HeaderBanner />
+      <HeaderBanner forceShow />
       <ScrollView
         style={[styles.scrollView]}
         contentContainerStyle={{ paddingBottom: insets.bottom }}
         showsVerticalScrollIndicator={false}
-        onScrollBeginDrag={() => Speech.stop()}
       >
         <View style={styles.container}>
           <Button
@@ -1230,7 +1233,7 @@ export default function BillDetailsScreen() {
             </View>
           ) : (
             <Text variant="titleLarge" style={styles.subtitle}>
-              {displayContent.title}
+              {display.title}
             </Text>
           )}
 
@@ -1238,6 +1241,11 @@ export default function BillDetailsScreen() {
             <Button icon="share-variant" mode="text" onPress={handleShare}>
               {t("common.share", "Share")}
             </Button>
+            {bill.state_link ? (
+              <Button mode="text" onPress={() => Linking.openURL(bill.state_link!)}>
+                {t("bill.readMore", "Read on Legislature site")}
+              </Button>
+            ) : null}
           </View>
 
           {bill.panel_review && (
@@ -1246,10 +1254,10 @@ export default function BillDetailsScreen() {
               <Card.Content>
                 <Text variant="labelLarge" style={styles.reviewRecommendation}>
                   {t("bill.panel.recommendation", "Recommendation: {{r}}", {
-                    r: bill.panel_review.recommendation,
+                    r: (bill as any).panel_review?.recommendation,
                   })}
                 </Text>
-                <Text variant="bodyMedium">{bill.panel_review.comment}</Text>
+                <Text variant="bodyMedium">{(bill as any).panel_review?.comment}</Text>
               </Card.Content>
             </Card>
           )}
@@ -1257,9 +1265,9 @@ export default function BillDetailsScreen() {
           <Divider style={styles.divider} />
           <FindYourRep bill={bill} />
           <Divider style={styles.divider} />
-          <SummarySlider bill={{ ...bill, ...displayContent }} onSummaryChange={setActiveSummaryText} />
+          <SummarySlider bill={{ ...bill, ...display }} onSummaryChange={() => {}} />
           <Divider style={styles.divider} />
-          <RelatedBills billId={bill.id} />
+          <RelatedBills billId={(bill as any).id} />
         </View>
       </ScrollView>
     </View>
@@ -1278,12 +1286,13 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     marginBottom: 8,
     marginLeft: -8,
+    gap: 8,
   },
   divider: { marginVertical: 16 },
   reviewCard: { marginVertical: 8 },
   reviewRecommendation: { fontWeight: "bold", marginBottom: 8 },
   translatingContainer: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-  translatingText: { marginLeft: 12, fontSize: 18, fontStyle: "italic", color: "gray" }
+  translatingText: { marginLeft: 12, fontSize: 18, fontStyle: "italic", color: "gray" },
 });
 
 ---
@@ -1292,11 +1301,11 @@ File: app/index.tsx
 // mobile-app/app/index.tsx
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef } from "react";
-import { Animated, Image, StyleSheet, View, useWindowDimensions } from "react-native";
+import { Animated, Easing, StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const HEADER_HEIGHT = 50;          // Final height of the header banner
-const BRAND = "#078A97";           // Same brand color as your banner
+const HEADER_HEIGHT = 50; // Final height of the header banner
+const BRAND = "#078A97"; // Same brand color as your banner
 
 export default function SplashScreen() {
   const router = useRouter();
@@ -1310,23 +1319,41 @@ export default function SplashScreen() {
   }, [screenHeight, insets.top, insets.bottom]);
 
   const bannerPosition = useRef(new Animated.Value(initialPosition)).current;
+  const bannerOpacity = useRef(new Animated.Value(0)).current;
+  const bannerScale = useRef(new Animated.Value(1.05)).current;
   const hasNavigatedRef = useRef(false);
 
   useEffect(() => {
     // Re-center before animating if safe area / dimensions change
     bannerPosition.setValue(initialPosition);
+    bannerOpacity.setValue(0);
+    bannerScale.setValue(1.05);
 
-    Animated.timing(bannerPosition, {
-      toValue: insets.top,
-      duration: 1200,
-      useNativeDriver: true,
-    }).start(() => {
+    Animated.parallel([
+      Animated.timing(bannerPosition, {
+        toValue: insets.top,
+        duration: 1100,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(bannerOpacity, {
+        toValue: 1,
+        duration: 450,
+        useNativeDriver: true,
+      }),
+      Animated.timing(bannerScale, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
       if (!hasNavigatedRef.current) {
         hasNavigatedRef.current = true;
         router.replace("/(tabs)");
       }
     });
-  }, [bannerPosition, initialPosition, insets.top, router]);
+  }, [bannerPosition, bannerOpacity, bannerScale, initialPosition, insets.top, router]);
 
   return (
     <View style={[styles.container, { backgroundColor: BRAND }]}>
@@ -1336,14 +1363,15 @@ export default function SplashScreen() {
           top: 0,
           left: 0,
           right: 0,
-          transform: [{ translateY: bannerPosition }],
+          transform: [{ translateY: bannerPosition }, { scale: bannerScale }],
+          opacity: bannerOpacity,
+          alignItems: "center",
         }}
       >
-        <Image
-          // Keep your original splash asset; change to header-banner.png here if you prefer
+        <Animated.Image
           source={require("../assets/images/banner.png")}
-          style={styles.banner}           // no tint — preserves the asset’s native colors
           resizeMode="contain"
+          style={styles.banner}
         />
       </Animated.View>
     </View>
@@ -1351,8 +1379,10 @@ export default function SplashScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },            // backgroundColor set inline above
-  banner: { width: "100%", height: HEADER_HEIGHT },
+  container: {
+    flex: 1,
+  },
+  banner: { width: "72%", maxWidth: 420, height: HEADER_HEIGHT },
 });
 
 ---
@@ -1491,6 +1521,7 @@ export default function RootLayout() {
                 <Stack>
                   <Stack.Screen name="index" options={{ headerShown: false }} />
                   <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
+                  <Stack.Screen name="legislator/[id]" options={{ headerShown: false }} />
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 </Stack>
                 <Toast />
@@ -1556,14 +1587,58 @@ CREATE TABLE IF NOT EXISTS public.profiles (id UUID PRIMARY KEY REFERENCES auth.
 CREATE TABLE IF NOT EXISTS public.legislators (
   id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, name TEXT NOT NULL, party TEXT,
   district TEXT, is_lnf_ally BOOLEAN DEFAULT FALSE, created_at TIMESTAMPTZ DEFAULT NOW(),
-  chamber TEXT, photo_url TEXT, email TEXT
+  chamber TEXT, photo_url TEXT, email TEXT, lookup_key TEXT
 );
 CREATE TABLE IF NOT EXISTS public.votes (
   id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  vote_id BIGINT,
   bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
   legislator_id BIGINT NOT NULL REFERENCES public.legislators(id) ON DELETE CASCADE,
-  vote TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(bill_id, legislator_id)
+  option TEXT,
+  result TEXT,
+  yes_count INT,
+  no_count INT,
+  other_count INT,
+  date DATE,
+  motion TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(vote_id, legislator_id)
 );
+
+ALTER TABLE public.legislators ADD COLUMN IF NOT EXISTS lookup_key TEXT;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'votes' AND column_name = 'vote'
+  ) THEN
+    ALTER TABLE public.votes RENAME COLUMN vote TO option;
+  END IF;
+END $$;
+
+ALTER TABLE public.votes ADD COLUMN IF NOT EXISTS vote_id BIGINT;
+ALTER TABLE public.votes ADD COLUMN IF NOT EXISTS result TEXT;
+ALTER TABLE public.votes ADD COLUMN IF NOT EXISTS yes_count INT;
+ALTER TABLE public.votes ADD COLUMN IF NOT EXISTS no_count INT;
+ALTER TABLE public.votes ADD COLUMN IF NOT EXISTS other_count INT;
+ALTER TABLE public.votes ADD COLUMN IF NOT EXISTS date DATE;
+ALTER TABLE public.votes ADD COLUMN IF NOT EXISTS motion TEXT;
+
+ALTER TABLE public.votes DROP CONSTRAINT IF EXISTS votes_bill_id_legislator_id_key;
+ALTER TABLE public.votes ADD CONSTRAINT votes_vote_id_legislator_id_key UNIQUE (vote_id, legislator_id);
+
+UPDATE public.legislators
+SET lookup_key =
+  regexp_replace(lower(coalesce(name, '')), '[^a-z0-9]', '', 'g') || '::' ||
+  CASE
+    WHEN lower(coalesce(chamber, '')) IN ('upper', 'senate') THEN 'upper'
+    WHEN lower(coalesce(chamber, '')) IN ('lower', 'house', 'assembly') THEN 'lower'
+    ELSE regexp_replace(lower(coalesce(chamber, '')), '[^a-z0-9]', '', 'g')
+  END || '::' ||
+  regexp_replace(lower(coalesce(district, '')), '[^a-z0-9]', '', 'g')
+WHERE lookup_key IS NULL OR lookup_key = '';
 
 -- SECTION 3: USER INTERACTION TABLES
 CREATE TABLE IF NOT EXISTS public.reactions (
@@ -1610,6 +1685,9 @@ CREATE INDEX IF NOT EXISTS idx_bills_change_hash ON public.bills(change_hash);
 CREATE INDEX IF NOT EXISTS idx_bills_bill_number ON public.bills(bill_number);
 CREATE INDEX IF NOT EXISTS idx_bills_embed ON public.bills USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 CREATE INDEX IF NOT EXISTS idx_cron_job_errors_occurred_at ON public.cron_job_errors (occurred_at);
+CREATE INDEX IF NOT EXISTS idx_legislators_lookup_key ON public.legislators(lookup_key);
+CREATE INDEX IF NOT EXISTS idx_votes_legislator_date ON public.votes(legislator_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_votes_bill ON public.votes(bill_id);
 
 -- SECTION 7: DATABASE FUNCTIONS (RPCs) & TRIGGERS
 CREATE OR REPLACE FUNCTION public.handle_new_user() RETURNS TRIGGER AS $$ BEGIN INSERT INTO public.profiles (id) VALUES (new.id); RETURN new; END; $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -1650,6 +1728,7 @@ COMMENT ON TABLE public.subscriptions IS 'Tracks user subscriptions to bills for
 COMMENT ON TABLE public.events IS 'Stores anonymous analytics events for understanding app usage.';
 COMMENT ON FUNCTION public.get_related_bills(BIGINT) IS 'Returns top 5 semantically similar bills using vector embeddings.';
 COMMENT ON FUNCTION public.toggle_bookmark_and_subscription(BIGINT, UUID) IS 'Atomically handles bookmarking/unbookmarking and subscribing/unsubscribing.';
+
 ---
 File: ../supabase/.temp/cli-latest
 ---
@@ -2146,6 +2225,32 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
+    const normalize = (value?: string | number | null) => {
+      if (value === null || value === undefined) return "";
+      return String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+    };
+
+    const normalizeChamber = (value?: string | null) => {
+      const lowered = (value ?? "").toLowerCase();
+      if (!lowered) return "";
+      if (lowered.includes("upper") || lowered.includes("senate")) return "upper";
+      if (lowered.includes("lower") || lowered.includes("house") || lowered.includes("assembly")) {
+        return "lower";
+      }
+      return lowered.replace(/[^a-z0-9]/g, "");
+    };
+
+    const buildLookupKey = (name?: string, chamber?: string, district?: string | number) =>
+      `${normalize(name)}::${normalizeChamber(chamber)}::${normalize(district)}`;
+
+    const chunk = <T>(items: T[], size: number) => {
+      const batches: T[][] = [];
+      for (let i = 0; i < items.length; i += size) {
+        batches.push(items.slice(i, i + size));
+      }
+      return batches;
+    };
+
     // 1. Fetch all legislators from the LegiScan API for a specific state (e.g., CA)
     const legislatorsResponse = await fetch(`https://api.legiscan.com/?key=${LEGISCAN_API_KEY}&op=getLegislators&state=CA`);
     const legislatorsData = await legislatorsResponse.json();
@@ -2157,20 +2262,26 @@ serve(async (req) => {
     const legislators = legislatorsData.legislators;
 
     // 2. Upsert legislators into the database
-    const { data: savedLegislators, error: legislatorError } = await supabaseAdmin
-      .from("legislators")
-      .upsert(
-        legislators.map((legislator: any) => ({
-          id: legislator.people_id,
+    const formattedLegislators = legislators
+      .map((legislator: any) => {
+        const id = Number(legislator.people_id);
+        if (!id) return null;
+        return {
+          id,
           name: legislator.name,
           chamber: legislator.chamber,
           district: legislator.district,
           party: legislator.party,
           photo_url: legislator.photo_url,
           email: legislator.email,
-        })),
-        { onConflict: "id" }
-      );
+          lookup_key: buildLookupKey(legislator.name, legislator.chamber, legislator.district),
+        };
+      })
+      .filter(Boolean);
+
+    const { error: legislatorError } = await supabaseAdmin
+      .from("legislators")
+      .upsert(formattedLegislators, { onConflict: "id" });
 
     if (legislatorError) throw legislatorError;
 
@@ -2180,6 +2291,10 @@ serve(async (req) => {
 
     for (const bill of bills) {
       const votesResponse = await fetch(`https://api.legiscan.com/?key=${LEGISCAN_API_KEY}&op=getBillVotes&id=${bill.id}`);
+      if (!votesResponse.ok) {
+        console.error(`Could not fetch votes for bill ${bill.id}: ${votesResponse.status}`);
+        continue;
+      }
       const votesData = await votesResponse.json();
 
       if (votesData.status === "ERROR") {
@@ -2187,21 +2302,63 @@ serve(async (req) => {
         continue;
       }
 
-      const votes = votesData.votes;
+      const votes = Array.isArray(votesData.votes) ? votesData.votes : [];
 
-      // 4. Upsert votes into the database
-      const { error: voteError } = await supabaseAdmin
-        .from("votes")
-        .upsert(
-          votes.map((vote: any) => ({
+      if (!votes.length) {
+        await supabaseAdmin.from("votes").delete().eq("bill_id", bill.id);
+        continue;
+      }
+
+      const rollCallRows: any[] = [];
+
+      for (const vote of votes) {
+        const voteId = Number(vote.vote_id);
+        if (!voteId) continue;
+
+        const yes = Number(vote.yea ?? vote.yes ?? 0) || 0;
+        const no = Number(vote.nay ?? vote.no ?? 0) || 0;
+        const other =
+          Number(vote.nv ?? 0) +
+          Number(vote.absent ?? 0) +
+          Number(vote.excused ?? 0) +
+          Number(vote.present ?? 0);
+        const motion = vote.motion ?? vote.vote_name ?? null;
+        const result = vote.result ?? null;
+        const date = vote.date ?? vote.date_taken ?? null;
+        const rollCalls = Array.isArray(vote.roll_call) ? vote.roll_call : [];
+
+        for (const entry of rollCalls) {
+          const legislatorId = Number(entry.people_id);
+          if (!legislatorId) continue;
+          rollCallRows.push({
+            vote_id: voteId,
             bill_id: bill.id,
-            legislator_id: vote.people_id,
-            vote_option: vote.vote,
-          })),
-          { onConflict: "bill_id,legislator_id" }
-        );
+            legislator_id: legislatorId,
+            option: entry.vote ?? null,
+            result,
+            yes_count: yes,
+            no_count: no,
+            other_count: other,
+            date,
+            motion,
+          });
+        }
+      }
 
-      if (voteError) console.error(`Error saving votes for bill ${bill.id}:`, voteError);
+      const { error: deleteError } = await supabaseAdmin.from("votes").delete().eq("bill_id", bill.id);
+      if (deleteError) {
+        console.error(`Error clearing existing votes for bill ${bill.id}:`, deleteError);
+      }
+
+      for (const batch of chunk(rollCallRows, 500)) {
+        if (!batch.length) continue;
+        const { error: voteError } = await supabaseAdmin
+          .from("votes")
+          .upsert(batch, { onConflict: "vote_id,legislator_id" });
+        if (voteError) {
+          console.error(`Error saving votes for bill ${bill.id}:`, voteError);
+        }
+      }
     }
 
     return new Response(JSON.stringify({ message: "Sync complete" }), {
@@ -2214,6 +2371,7 @@ serve(async (req) => {
     });
   }
 });
+
 ---
 File: ../supabase/functions/send-push-notifications/deno.json
 ---
@@ -2410,6 +2568,166 @@ File: ../supabase/functions/translate-bill/deno.json
   }
 }
 ---
+File: ../supabase/functions/translate-bills/index.ts
+---
+// supabase/functions/translate-bills/index.ts
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { GoogleGenerativeAI } from "npm:@google/generative-ai";
+
+type TranslationRow = {
+  bill_id: number;
+  language_code: string;
+  title?: string | null;
+  description?: string | null;
+  summary_simple?: string | null;
+  summary_medium?: string | null;
+  summary_complex?: string | null;
+  original_text?: string | null;
+  created_at?: string;
+};
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  try {
+    const { bill_ids, language_code } = await req.json();
+    if (!Array.isArray(bill_ids) || !bill_ids.length) throw new Error("Missing or empty 'bill_ids'.");
+    if (!language_code) throw new Error("Missing 'language_code'.");
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    // Cache-first
+    const { data: cached, error: cacheErr } = await supabase
+      .from("bill_translations")
+      .select("*")
+      .eq("language_code", language_code)
+      .in("bill_id", bill_ids);
+    if (cacheErr) throw cacheErr;
+
+    const cachedMap = new Map<number, TranslationRow>();
+    (cached ?? []).forEach((r) => cachedMap.set(r.bill_id, r as TranslationRow));
+    const missingIds = bill_ids.filter((id: number) => !cachedMap.has(id));
+    if (!missingIds.length) {
+      return new Response(JSON.stringify(cached ?? []), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
+
+    // Fetch source rows to translate
+    const { data: sources, error: srcErr } = await supabase
+      .from("bills")
+      .select("id, title, description, summary_simple, summary_medium, summary_complex, original_text")
+      .in("id", missingIds);
+    if (srcErr) throw srcErr;
+    if (!sources?.length) {
+      return new Response(JSON.stringify(cached ?? []), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
+
+    // Translate in small batches
+    const apiKey = Deno.env.get("GEMINI_API_KEY");
+    if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash-latest",
+      generationConfig: { responseMimeType: "application/json" },
+    });
+
+    const created: TranslationRow[] = [];
+    const BATCH = 5;
+
+    for (let i = 0; i < sources.length; i += BATCH) {
+      const slice = sources.slice(i, i + BATCH);
+      const results = await Promise.allSettled(
+        slice.map(async (bill) => {
+          const prompt = `
+Translate the following legislative bill content to language "${language_code}".
+Return a JSON object with EXACT keys:
+"title", "description", "summary_simple", "summary_medium", "summary_complex", "original_text".
+
+Original (JSON):
+${JSON.stringify({
+  title: bill.title,
+  description: bill.description,
+  summary_simple: bill.summary_simple,
+  summary_medium: bill.summary_medium,
+  summary_complex: bill.summary_complex,
+  original_text: bill.original_text,
+})}
+          `.trim();
+
+          const res = await model.generateContent(prompt);
+          const obj = JSON.parse(res.response.text());
+
+          const row: TranslationRow = {
+            bill_id: bill.id,
+            language_code,
+            title: obj.title ?? null,
+            description: obj.description ?? null,
+            summary_simple: obj.summary_simple ?? null,
+            summary_medium: obj.summary_medium ?? null,
+            summary_complex: obj.summary_complex ?? null,
+            original_text: obj.original_text ?? null,
+          };
+          return row;
+        })
+      );
+
+      const toInsert: TranslationRow[] = [];
+      results.forEach((r, idx) => {
+        if (r.status === "fulfilled" && r.value) toInsert.push(r.value);
+        else console.error("translate-bills error for bill", slice[idx]?.id, r);
+      });
+
+      if (toInsert.length) {
+        const { data: upserted, error: upErr } = await supabase
+          .from("bill_translations")
+          .upsert(toInsert, { onConflict: "bill_id,language_code" })
+          .select("*");
+        if (upErr) console.error("Failed caching translations:", upErr);
+        (upserted ?? toInsert).forEach((row) => created.push(row as TranslationRow));
+      }
+    }
+
+    const all = [...(cached ?? []), ...created];
+    const filtered = all.filter((r) => bill_ids.includes(r.bill_id));
+    return new Response(JSON.stringify(filtered), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 200,
+    });
+  } catch (err: any) {
+    console.error("translate-bills failed:", err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500,
+    });
+  }
+});
+
+---
+File: ../supabase/functions/translate-bills/deno.js
+---
+{
+  "imports": {
+    "npm:@supabase/supabase-js@2": "npm:@supabase/supabase-js@2",
+    "npm:@google/generative-ai": "npm:@google/generative-ai",
+    "https://deno.land/std@0.177.0/http/server.ts": "https://deno.land/std@0.177.0/http/server.ts"
+  }
+}
+
+---
 File: ../supabase/config.toml
 ---
 # This is the main configuration file for your Supabase project.
@@ -2438,6 +2756,10 @@ import_map = "./functions/sync-legislators-and-votes/deno.json"
 [functions.translate-bill]
 verify_jwt = false
 import_map = "./functions/translate-bill/deno.json"
+
+[functions.translate-bills]
+verify_jwt = false
+import_map = "./functions/translate-bills/deno.json"
 ---
 File: ../supabase/env.example
 ---
@@ -2476,6 +2798,348 @@ INSERT INTO app_config (key, value) VALUES
   ('EXPO_PUBLIC_LOCATIONIQ_API_KEY', 'YOUR_LOCATIONIQ_API_KEY'),
   ('EXPO_PUBLIC_RECAPTCHA_SITE_KEY', 'YOUR_RECAPTCHA_SITE_KEY'),
   ('EXPO_PUBLIC_FIREBASE_WEB_CONFIG', 'YOUR_FIREBASE_WEB_CONFIG');
+
+---
+File: ../supabase/migrations/schema.sql
+---
+-- ================================================================
+-- AI ADVOCATE: V1.6.1 CONSOLIDATED SCHEMA & POLICIES (IDEMPOTENT)
+-- Vector search, ranked FTS, translations cache, RLS, realtime guard
+-- ================================================================
+
+-- ---------- EXTENSIONS ----------
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS http;
+CREATE EXTENSION IF NOT EXISTS supabase_vault;
+
+-- ---------- CORE TABLES ----------
+CREATE TABLE IF NOT EXISTS public.bills (
+  id BIGINT PRIMARY KEY,
+  bill_number TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT,
+  state_link TEXT,
+  summary_simple TEXT,
+  summary_medium TEXT,
+  summary_complex TEXT,
+  panel_review JSONB,
+  is_verified BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  change_hash TEXT,
+  is_curated BOOLEAN DEFAULT FALSE,
+  original_text TEXT,
+  embedding vector(1536) -- semantic search
+);
+
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS public.legislators (
+  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL,
+  party TEXT,
+  district TEXT,
+  chamber TEXT,
+  photo_url TEXT,
+  email TEXT,
+  is_lnf_ally BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.votes (
+  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
+  legislator_id BIGINT NOT NULL REFERENCES public.legislators(id) ON DELETE CASCADE,
+  vote TEXT NOT NULL, -- yes/no/abstain/absent
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (bill_id, legislator_id)
+);
+
+-- User interaction
+CREATE TABLE IF NOT EXISTS public.reactions (
+  bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  reaction_type TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (bill_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.bookmarks (
+  bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (bill_id, user_id)
+);
+
+-- Translations cache
+CREATE TABLE IF NOT EXISTS public.bill_translations (
+  bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
+  language_code TEXT NOT NULL, -- ISO 639-1 (e.g., 'es')
+  title TEXT,
+  description TEXT,
+  summary_simple TEXT,
+  summary_medium TEXT,
+  summary_complex TEXT,
+  original_text TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (bill_id, language_code)
+);
+
+-- Notifications & analytics
+CREATE TABLE IF NOT EXISTS public.user_push_tokens (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  expo_token TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.subscriptions (
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('saved', 'upvoted')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (user_id, bill_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.events (
+  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  ts TIMESTAMPTZ DEFAULT NOW(),
+  user_id UUID,
+  type TEXT NOT NULL,
+  bill_id BIGINT
+);
+
+-- Infra
+CREATE TABLE IF NOT EXISTS public.cron_job_errors (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  job_name TEXT NOT NULL,
+  error_message TEXT NOT NULL,
+  occurred_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- App config (public values read by clients)
+CREATE TABLE IF NOT EXISTS public.app_config (
+  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  key TEXT UNIQUE NOT NULL,
+  value TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ---------- INDEXES ----------
+CREATE INDEX IF NOT EXISTS idx_bills_change_hash ON public.bills(change_hash);
+CREATE INDEX IF NOT EXISTS idx_bills_bill_number ON public.bills(bill_number);
+CREATE INDEX IF NOT EXISTS idx_bills_embed ON public.bills
+  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_cron_job_errors_occurred_at ON public.cron_job_errors(occurred_at);
+
+-- ---------- FULL-TEXT SEARCH (ranked) ----------
+ALTER TABLE public.bills
+  ADD COLUMN IF NOT EXISTS search tsvector
+  GENERATED ALWAYS AS (
+    setweight(to_tsvector('english', coalesce(bill_number, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(summary_simple, '')), 'C') ||
+    setweight(to_tsvector('english', coalesce(summary_medium, '')), 'C') ||
+    setweight(to_tsvector('english', coalesce(summary_complex, '')), 'C') ||
+    setweight(to_tsvector('english', coalesce(original_text, '')), 'D')
+  ) STORED;
+
+CREATE INDEX IF NOT EXISTS bills_search_gin ON public.bills USING GIN (search);
+
+-- ---------- RLS ----------
+ALTER TABLE public.bills ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.legislators ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bill_translations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_push_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cron_job_errors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_config ENABLE ROW LEVEL SECURITY;
+
+-- Public readable tables
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bills' AND policyname='Public can view bills') THEN
+    CREATE POLICY "Public can view bills" ON public.bills FOR SELECT USING (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='legislators' AND policyname='Public can view legislators') THEN
+    CREATE POLICY "Public can view legislators" ON public.legislators FOR SELECT USING (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='votes' AND policyname='Public can view votes') THEN
+    CREATE POLICY "Public can view votes" ON public.votes FOR SELECT USING (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bill_translations' AND policyname='Public can view translations') THEN
+    CREATE POLICY "Public can view translations" ON public.bill_translations FOR SELECT USING (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='app_config' AND policyname='Allow authenticated users to read config') THEN
+    CREATE POLICY "Allow authenticated users to read config" ON public.app_config FOR SELECT TO authenticated USING (true);
+  END IF;
+END $$;
+
+-- User-owned tables (USING + WITH CHECK)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='reactions' AND policyname='Users can manage their own reactions') THEN
+    CREATE POLICY "Users can manage their own reactions" ON public.reactions
+      FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bookmarks' AND policyname='Users can manage their own bookmarks') THEN
+    CREATE POLICY "Users can manage their own bookmarks" ON public.bookmarks
+      FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='subscriptions' AND policyname='Users can manage their own subscriptions') THEN
+    CREATE POLICY "Users can manage their own subscriptions" ON public.subscriptions
+      FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- Service role write policies (WITH CHECK for RLS writes)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bill_translations' AND policyname='Service role can manage translations') THEN
+    DROP POLICY "Service role can manage translations" ON public.bill_translations;
+  END IF;
+  CREATE POLICY "Service role can manage translations" ON public.bill_translations
+    FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to insert events') THEN
+    CREATE POLICY "Allow service role to insert events" ON public.events
+      FOR INSERT WITH CHECK (auth.role() = 'service_role');
+  END IF;
+END $$;
+
+-- ---------- RPCs ----------
+-- Toggle Bookmark + Subscription
+CREATE OR REPLACE FUNCTION public.toggle_bookmark_and_subscription(p_bill_id BIGINT, p_user_id UUID)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE bookmark_exists BOOLEAN;
+BEGIN
+  SELECT EXISTS (SELECT 1 FROM public.bookmarks WHERE user_id = p_user_id AND bill_id = p_bill_id)
+  INTO bookmark_exists;
+
+  IF bookmark_exists THEN
+    DELETE FROM public.bookmarks WHERE user_id = p_user_id AND bill_id = p_bill_id;
+    DELETE FROM public.subscriptions WHERE user_id = p_user_id AND bill_id = p_bill_id;
+  ELSE
+    INSERT INTO public.bookmarks (user_id, bill_id) VALUES (p_user_id, p_bill_id);
+    INSERT INTO public.subscriptions (user_id, bill_id, type)
+      VALUES (p_user_id, p_bill_id, 'saved')
+      ON CONFLICT (user_id, bill_id) DO NOTHING;
+  END IF;
+END;
+$$;
+
+COMMENT ON FUNCTION public.toggle_bookmark_and_subscription(BIGINT, UUID)
+IS 'Atomically toggles a user bookmark and matching subscription.';
+
+-- Related bills via embeddings
+CREATE OR REPLACE FUNCTION public.get_related_bills(p_bill_id BIGINT)
+RETURNS TABLE (id BIGINT, bill_number TEXT, title TEXT, similarity FLOAT)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  WITH source_bill AS (SELECT embedding FROM public.bills WHERE bills.id = p_bill_id)
+  SELECT
+    b.id, b.bill_number, b.title,
+    (1 - (b.embedding <=> (SELECT embedding FROM source_bill)))::FLOAT AS similarity
+  FROM public.bills b, source_bill
+  WHERE b.id <> p_bill_id AND b.embedding IS NOT NULL
+  ORDER BY b.embedding <=> (SELECT embedding FROM source_bill)
+  LIMIT 5;
+END;
+$$;
+
+COMMENT ON FUNCTION public.get_related_bills(BIGINT)
+IS 'Returns top 5 semantically similar bills using vector embeddings.';
+
+-- Ranked full-text search over generated "search" column
+CREATE OR REPLACE FUNCTION public.search_bills(p_query TEXT)
+RETURNS TABLE (
+  id BIGINT,
+  bill_number TEXT,
+  title TEXT,
+  description TEXT,
+  status TEXT,
+  state_link TEXT,
+  summary_simple TEXT,
+  summary_medium TEXT,
+  summary_complex TEXT,
+  panel_review JSONB,
+  is_verified BOOLEAN,
+  created_at TIMESTAMPTZ,
+  change_hash TEXT,
+  is_curated BOOLEAN,
+  original_text TEXT,
+  embedding vector(1536),
+  rank DOUBLE PRECISION
+)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    b.*,
+    ts_rank_cd(b.search, websearch_to_tsquery('english', p_query)) AS rank
+  FROM public.bills b
+  WHERE b.search @@ websearch_to_tsquery('english', p_query)
+  ORDER BY rank DESC, created_at DESC;
+$$;
+
+COMMENT ON FUNCTION public.search_bills(TEXT)
+IS 'Ranked websearch over bills.search tsvector. Returns bills + rank.';
+
+-- Simple profile bootstrap on new auth user
+CREATE OR REPLACE FUNCTION public.handle_new_user() RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id) VALUES (NEW.id) ON CONFLICT DO NOTHING;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users
+FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- Cron helpers
+CREATE OR REPLACE FUNCTION public.cleanup_old_cron_job_errors() RETURNS VOID AS $$
+BEGIN
+  DELETE FROM public.cron_job_errors WHERE occurred_at < NOW() - INTERVAL '30 days';
+END; $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Optional weekly job
+SELECT cron.schedule('cleanup-cron-job-errors', '0 0 * * 0', 'SELECT public.cleanup_old_cron_job_errors()')
+ON CONFLICT DO NOTHING;
+
+-- ---------- REALTIME (guarded) ----------
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'bookmarks'
+  ) THEN
+    EXECUTE 'ALTER PUBLICATION supabase_realtime ADD TABLE public.bookmarks';
+  END IF;
+END $$;
+
+-- ---------- COMMENTS ----------
+COMMENT ON TABLE public.bills IS 'Core legislative bill info + AI-generated content + embedding + FTS vector.';
+COMMENT ON COLUMN public.bills.embedding IS 'Vector embeddings for semantic search.';
+COMMENT ON TABLE public.bill_translations IS 'Caches AI-generated translations per bill per language.';
+COMMENT ON TABLE public.user_push_tokens IS 'Expo push tokens per user.';
+COMMENT ON TABLE public.subscriptions IS 'Bill subscriptions (saved/upvoted) for notifications.';
+COMMENT ON TABLE public.events IS 'Anonymous analytics events.';
 
 ---
 File: package.json
@@ -2698,221 +3362,277 @@ File: tsconfig.json
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "types": ["expo-router"]
+    "types": ["expo-router"],
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "~/*": ["*"]
+    },
+    "resolveJsonModule": true
   },
-  "strict": true,
-  "baseUrl": ".",
-  "paths": {
-    "@/*": ["src/*"],
-    "~/*": ["*"]
-  },
-  "resolveJsonModule": true,
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts", "env.d.ts"]
 }
 
 ---
 File: ../README.md
 ---
-```markdown
 # AI Advocate
 
-AI Advocate is a privacy-first mobile application designed to Educate, Empower, and Employ. It makes complex legislative bills accessible and provides tools for users to engage directly with their representatives, with a special focus on survivors of domestic violence, human trafficking, and sexual assault.
+AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. The app translates complex legislation into accessible language, lets survivors and allies discover relevant bills, and provides one-tap tools to contact representatives with informed talking points.
 
-> **Project Status:** **V1 Complete & Stable.** The core feature set has been fully implemented. The application is production-ready and built on a robust, scalable, and efficient serverless architecture.
-
-## Core Features
-
--   ✅ **On-Demand Multilingual Support:** The app automatically detects the user's device language and provides on-demand, AI-powered translations for all bill content. An intelligent caching layer ensures translations are only generated once per language, minimizing API costs and providing instant delivery for subsequent requests.
-
--   ✅ **AI-Powered Bill Discovery:** A "Related Bills" feature uses AI-generated vector embeddings and semantic search (`pgvector`) to help users discover other legislation that is contextually similar to the bill they are currently viewing.
-
--   ✅ **Comprehensive Bill Feed:** The main "Bills" tab displays a complete, searchable list of all legislation relevant to the app's mission, with a dedicated "Highlighted" feed for curated content.
-
--   ✅ **Multi-Level AI Summaries:** Bills can be viewed in four formats (Simple, Medium, Complex, and Original Text) using a sleek summary slider, ensuring the content is accessible to all reading levels.
-
--   ✅ **Text-to-Speech Accessibility:** A "Speak" button provides an audio read-out of the currently selected bill summary, enhancing accessibility for all users.
-
--   ✅ **Full Advocacy Workflow:**
-    -   Find state legislators by address using a multi-stage API pipeline (LocationIQ & OpenStates).
-    -   View legislator contact details and generate pre-filled email templates for a selected bill.
-
--   ✅ **Push Notifications for Saved Bills:** Users can subscribe to updates on specific bills simply by bookmarking them. The foundation is in place to notify users of important status changes or upcoming votes.
-
--   ✅ **User Reactions & Bookmarks:** Users can express their sentiment on bills with upvote/downvote reactions and save bills to a private list for later reference.
-
--   ✅ **Secure & Private by Design:** All user actions are tied to a unique, anonymous identity created automatically on first launch, with no personal information ever required.
-
-## Technical Architecture
-
--   **Frontend:** React Native (Expo) with Expo Router for file-based navigation.
--   **UI Library:** React Native Paper for a modern, Material Design component system.
--   **Internationalization:** `i18next` with `expo-localization` for automatic language detection.
--   **Backend:** A fully serverless backend powered by Supabase:
-    -   **Database:** Supabase Postgres with the `pgvector` extension for semantic search.
-    -   **Authentication:** Supabase Auth for seamless anonymous user sessions.
-    -   **Serverless Functions:** Deno Edge Functions manage the entire data pipeline.
--   **AI:** Google's Gemini API:
-    -   `gemini-1.5-flash` for all summarization and on-demand translation tasks.
-    -   `embedding-001` for generating vector embeddings for bill discovery.
--   **Testing & CI:** Jest with React Testing Library for component testing, and GitHub Actions for continuous integration.
+> **Status:** V1 is feature-complete and production ready. The codebase is stable, the ingestion pipeline is automated, and the frontend is polished for iOS, Android, and web builds.
 
 ---
 
-## Key Architectural Decisions
+## What the Product Delivers
 
-*   **Efficient AI Pipeline:** The core data ingestion function (`sync-updated-bills`) has been highly optimized. It now uses a single API call to generate all three summary tiers and the vector embedding simultaneously, significantly reducing cost and processing time.
-
-*   **On-Demand Caching:** To provide multilingual support affordably and at scale, the system uses an on-demand caching strategy. The `translate-bill` function first checks the `bill_translations` table. If a translation exists, it's served instantly. If not, the function generates it via the Gemini API and immediately saves the result, ensuring any future request for that specific translation is a cache hit.
-
-*   **Atomic Transactions:** User actions that affect multiple database tables (e.g., bookmarking a bill and subscribing to its notifications) are handled by single, atomic RPC functions (`toggle_bookmark_and_subscription`) to ensure data consistency.
-
-*   **Client-Side Resilience:** All critical API calls from the mobile app are wrapped in a `safeFetch` utility that provides automatic retries with exponential backoff, making the app more resilient to transient network errors or API rate limiting.
+- **Legislation Explorer:** Search, filter, and browse a curated catalog of survivor-focused bills. Each bill has AI-generated summaries at multiple reading levels, the original text, and panel reviews authored by subject-matter experts.
+- **Accessibility First:** The client auto-detects language, provides on-demand translations via Gemini, and offers text-to-speech playback to remove reading barriers.
+- **Advocacy Workflow:** Users can find their representatives, review vote histories, and compose templated outreach emails tied to a specific bill.
+- **Personalized Experience:** Anonymous Supabase Auth sessions let people bookmark bills, react with sentiment, and subscribe to push notifications without sharing personal data.
+- **Intelligent Recommendations:** `pgvector` powered similarity search surfaces related legislation to keep users informed about adjacent policy changes.
 
 ---
 
-## Getting Started: A Guide for New Developers
+## System Architecture
 
-This guide will walk you through setting up the entire project, from the backend infrastructure to the local development environment.
-
-### Prerequisites
-
-Before you begin, ensure you have the following installed on your machine:
--   **Node.js (v20 LTS recommended):** It is highly recommended to manage Node versions with [NVM](https://github.com/nvm-sh/nvm).
--   **Yarn:** The project's required package manager. Install with `npm install -g yarn`.
--   **Supabase CLI:** Follow the [official installation guide](https://supabase.com/docs/guides/cli/getting-started).
--   **Git:** For version control.
-
-### Step 1: Clone the Repository
-
-Clone the project to your local machine:
-```bash
-git clone <your-repository-url>
-cd AIAdvocate
-```
-
-### Step 2: Set Up the Supabase Backend
-
-1.  **Log in to Supabase:**
-    ```bash
-    supabase login
-    ```
-2.  **Link the Project:** Link your local repository to your remote Supabase project. You will need your Project REF, which can be found in your Supabase project's URL (e.g., `https://supabase.com/dashboard/project/<project_ref>`).
-    ```bash
-    supabase link --project-ref <your-project_ref>
-    ```
-3.  **Push the Database Schema:** This command will execute the `schema.sql` file and create all necessary tables and functions in your remote database.
-    ```bash
-    supabase db push
-    ```
-
-### Step 3: Configure Environment Variables
-
-This project uses two separate `.env` files for security and clarity.
-
-1.  **Backend Secrets (`supabase/.env`):**
-    *   Navigate to the `supabase/` directory.
-    *   Create a copy of the example file: `cp .env.example .env`
-    *   Open the new `.env` file and fill in your secret keys for Supabase, LegiScan, and Gemini.
-
-2.  **Frontend Public Keys (`mobile-app/.env`):**
-    *   Navigate to the `mobile-app/` directory.
-    *   Create a `.env` file and add the following public keys:
-    ```
-    EXPO_PUBLIC_SUPABASE_URL=https://<your-project_ref>.supabase.co
-    EXPO_PUBLIC_SUPABASE_ANON_KEY=<your_supabase_anon_key>
-    EXPO_PUBLIC_OPENSTATES_API_KEY=<your_openstates_api_key>
-    EXPO_PUBLIC_LOCATIONIQ_API_KEY=<your_locationiq_api_key>
-    ```
-
-### Step 4: Install Frontend Dependencies
-
-1.  Navigate to the `mobile-app/` directory.
-2.  Install all required packages using Yarn:
-    ```bash
-    yarn install
-    ```
-3.  **Important:** If you encounter dependency errors after upgrading packages in the future, the canonical fix is:
-    ```bash
-    npx expo install --fix
-    ```
+| Layer | Technologies | Responsibilities |
+| --- | --- | --- |
+| Client | Expo Router, React Native Paper, React Query, i18next | Navigation, theming, data fetching, translations, accessibility, local caching |
+| API Gateway | Supabase REST over PostgREST | Auth, database access, RPC invocation |
+| Data & AI | PostgreSQL + `pgvector`, Supabase Edge Functions, Gemini APIs | Bill ingestion, summarization, translation, embedding search, vote syncing |
+| Notifications | Expo push service, Edge cron jobs | Bookmark alerts, future custom digests |
+| Telemetry | Supabase events table, custom analytics hooks | Anonymous event tracking and feature adoption insights |
 
 ---
 
-## Developer Workflows & Project Structure
+## Getting Started
 
-*   **Authentication Flow:** The app uses a fully autonomous `AuthProvider` that silently creates an anonymous user on first launch. The app's entry point (`app/index.tsx`) is a theme-aware, animated splash screen that provides a seamless visual transition into the main `(tabs)` layout.
-
-*   **Native vs. JavaScript Changes:** It is critical to understand the difference between a change that can be deployed instantly (JS-only) and a change that requires a new app store submission (native).
-    *   **A new build (`eas build`) is required if you:**
-        *   Add or update a package that has native code (e.g., `expo-clipboard`).
-        *   Change any configuration in `app.json` under the `android` or `ios` keys (e.g., `displayName`, `edgeToEdge`, `package`).
-        *   Change any native asset files, such as the app icon images.
-    *   **An OTA update (`eas update`) is sufficient if you:**
-        *   Only change your own JavaScript/TypeScript code in the `app/` or `src/` directories.
-
-*   **Native Project Regeneration:** If the native project files (`android` and `ios`) become out of sync with `app.json`, the definitive solution is to delete the problematic directory and regenerate it:
-    ```bash
-    # From the mobile-app directory
-    npx expo prebuild --platform android --clean
-    ```
-
-*   **Data Pipeline (Representatives):** The "Find Your Rep" feature uses a three-stage API pipeline:
-    1.  **Geocoding:** The user's address is sent to the **LocationIQ API** to get coordinates.
-    2.  **Search:** The coordinates are sent to the **OpenStates API's** `/people.geo` endpoint to get a list of basic legislator objects.
-    3.  **Enrichment:** The app then makes individual API calls for each state-level legislator to the `/people/{ocd-id}` endpoint to fetch their full, detailed profile, including contact information.
-
----
-
-## Deployment Guide
-
-#### Deploying the Native Mobile App (iOS & Android)
-
-The native app is built and updated using EAS (Expo Application Services).
-
-1.  **Initial Production Build:**
-    *   To create a new app binary (`.aab` or `.ipa`) for the app stores, run the following from the `mobile-app` directory:
-    ```bash
-    eas build --platform all --profile production
-    ```
-    *   This binary must be submitted to the Google Play Console and Apple App Store Connect.
-
-2.  **Over-the-Air (OTA) Updates:**
-    *   After a production build is live in the stores, you can push JavaScript-only changes directly to users with an OTA update.
-    ```bash
-    eas update --branch production --message "Your update message"
-    ```
-
-3.  **Development Build:**
-    *   If you add any new native dependencies, you must create and install a new development build on your test device:
-    ```bash
-    eas build --platform android --profile development
-    ```
-
-#### Deploying the Web App
-
-The web app is deployed as a static site.
-
-1.  **Build the Web App:**
-    *   From the `mobile-app` directory, run the export command:
-    ```bash
-    yarn expo export
-    ```
-    *   This will generate a `dist` folder containing the complete, standalone web application.
-
-2.  **Deploy the `dist` Folder:**
-    *   Deploy the contents of the `dist` folder to any static web hosting provider.
-    *   The recommended method is to use a service like **Netlify** or **Vercel**, which often feature a simple drag-and-drop interface for deployment.
+1. **Install prerequisites**
+   - Node.js 20 (prefer NVM), Yarn, Supabase CLI, Git.
+2. **Clone and bootstrap**
+   ```bash
+   git clone <repo>
+   cd AIAdvocate
+   cd mobile-app
+   yarn install
+   ```
+3. **Configure environments**
+   - Copy `supabase/env.example` → `supabase/.env` and insert Supabase, LegiScan, Gemini secrets.
+   - Create `mobile-app/.env` with the public Supabase URL/key plus OpenStates and LocationIQ keys.
+4. **Run locally**
+   ```bash
+   cd mobile-app
+   yarn expo start
+   ```
+5. **Sync data (first run)**
+   ```bash
+   cd ../supabase
+   supabase start       # launches local stack
+   supabase db push     # applies schema and policies
+   supabase functions serve sync-legislators-and-votes
+   ```
 
 ---
 
-## V1 Complete: The Road Ahead
+## Developer Workflow Notes
 
-The application is now in a stable, feature-complete state. Future development can focus on iterative improvements, maintenance, and the implementation of new, high-value features. The foundation has been laid for:
+- **Expo Router & Navigation:** Most screens live under `mobile-app/app/`. File system routing means renaming files will change URLs automatically.
+- **Authentication:** Anonymous sessions are provisioned on app launch inside `src/providers/AuthProvider.tsx` and persisted through Supabase’s client SDK.
+- **Data Fetching:** `safeFetch` wraps critical network requests with configurable retry/backoff/timeout handling. React Query manages client caching for bill lists, translations, and related entities.
+- **Translations:** `src/lib/translation.ts` orchestrates Gemini calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`.
+- **Splash Animation:** `app/index.tsx` animates the mission banner from center-to-header, fading and scaling it while the initial tab bundle loads.
+- **Translations:** `src/lib/translation.ts` orchestrates Gemini calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`, and cached records are fetched before any new translation work is triggered.
+- **Advocacy Flow:** `FindYourRep` performs a LocationIQ → OpenStates pipeline, reconciles the results with the Supabase `legislators` table, and routes to Legislator detail screens.
+- **CI Expectations:** Type-check with `yarn tsc --noEmit`, run unit tests with `yarn test`, and lint via `yarn lint` before opening pull requests.
 
--   `[ ]` **Expanded Test Coverage:** Write comprehensive unit and integration tests for all major components and user flows.
--   `[ ]` **Notification Dispatch:** Build the final Edge Function to read from the `subscriptions` table and dispatch push notifications via Expo's push API.
--   `[ ]` **Private Encrypted Notes:** Implement the ability for users to add private, client-side encrypted notes to their saved bills using the `encryption.ts` utility.
--   `[ ]` **Expanded Analytics:** Integrate additional `trackEvent` calls to gather anonymous data on feature usage, such as shares, saves, and advocacy actions.
--   `[ ]` **Additional Languages:** Add new `[lang].json` files and potentially fine-tune AI prompts to support a wider range of languages.
-```markdown
 ---
+
+## Data & AI Pipelines
+
+1. **Bill ingestion** (`supabase/functions/bulk-import-dataset` & `sync-updated-bills`)
+   - Pulls the active CA LegiScan dataset, filters by survivor-focused keywords, upserts metadata, and triggers summarization + embedding jobs.
+2. **Summaries & Translations** (`supabase/functions/ingest-and-summarize`, `translate-bill`, `translate-bills`)
+   - Request batched Gemini responses, store multilingual tiers, and warm vector embeddings for semantic search.
+3. **Legislator & Vote Sync** (`supabase/functions/sync-legislators-and-votes`)
+   - Imports CA legislators, derives lookup keys, flattens LegiScan roll calls into per-legislator vote rows, and keeps Supabase in sync.
+4. **Notifications** (`supabase/functions/send-push-notifications`)
+   - Placeholder job for reading the subscriptions table and dispatching Expo push messages.
+5. **Verification & Security** (`supabase/functions/verify-app-check`)
+   - Validates Firebase App Check tokens for requests originating from trusted mobile clients.
+
+---
+
+## Deployment Overview
+
+- **Mobile Builds:** Use `eas build --platform all --profile production` for app-store binaries, and `eas update` for JavaScript-only OTA updates.
+- **Web Export:** `yarn expo export` writes a static bundle under `dist/` suitable for Netlify, Vercel, or any static host.
+- **Supabase Migrations:** Apply schema changes with `supabase db push`. Redeploy modified Edge Functions via `supabase functions deploy <name>`.
+
+---
+
+## Repository Map
+
+### Root
+- `.gitignore` – excludes node modules, build artifacts, secrets, and local tooling.
+- `.idea/` – JetBrains project metadata (modules, workspace state).
+- `.venv/` – Python virtual environment scaffold for ingestion helper scripts.
+- `.vscode/settings.json` – workspace defaults for editors (TypeScript SDK path, formatting prefs).
+- `dist/` – latest static web export (`assetmap.json`, `metadata.json`, `debug.html`, plus hashed runtime assets under `dist/assets/`).
+- `mobile-app/` – Expo React Native application (see below).
+- `process_backlog.py` – utility for reprocessing historical LegiScan records.
+- `process_full_backlog.py` – full dataset ingestion harness with resume logic.
+- `README.md` – you are here.
+- `supabase/` – infrastructure as code, SQL migrations, and edge functions.
+
+### `mobile-app/` root
+- `.env`, `.env.production` – sample environment overrides for Expo.
+- `.eslintrc.js`, `.prettierrc`, `.prettierignore` – linting and formatting guides.
+- `.gitignore` – ignores build output (Android/iOS native folders, dist assets, etc.).
+- `app.json` – Expo project manifest (name, icons, plugins, native config).
+- `app.json.bak.*` – timestamped backups of the Expo manifest.
+- `babel.config.js` – module resolver configuration, React Native presets.
+- `create_context.sh` – helper for generating AI context bundles.
+- `eas.json` – Expo Application Services profiles for build & update commands.
+- `env.d.ts`, `expo-env.d.ts` – TypeScript declarations for Expo environment variables.
+- `GoogleService-Info.plist`, `google-services.json` – Firebase configuration for iOS & Android.
+- `GoogleService-Info.plist.bak.*`, `google-services.jsonbak.*` – backups of the Firebase configs captured before edits.
+- `i18next-scanner.config.js` – extraction rules for translation keys.
+- `jest.config.js` – Jest test runner configuration.
+- `metro.config.js` – Metro bundler overrides (SVG/assets, alias resolution).
+- `package.json`, `yarn.lock`, `package-lock.json` – dependency manifests.
+- `project_context.txt` – AI assistant prompt context file describing the project.
+- `store.config.json` – configuration scaffold for Expo Updates.
+- `tsconfig.json` – TypeScript compiler options for the Expo project.
+
+#### `mobile-app/app/`
+- `_layout.tsx` – root navigation stack, registers stack routes, sets up providers.
+- `index.tsx` – animated splash screen and initial tab navigator handoff.
+- `+not-found.tsx` – fallback screen when an unknown route is visited.
+- `bill/[id].tsx` – bill detail page with summary slider, translation controls, and advocacy panel.
+- `legislator/[id].tsx` – legislator voting record view populated from Supabase roll-call data.
+- `(tabs)/_layout.tsx` – bottom tab navigator configuration (highlighted, saved, bills, LNF, advocacy, language).
+- `(tabs)/index.tsx` – main bills feed with filters, search, and infinite scroll.
+- `(tabs)/highlighted.tsx` – curated survivor-first bill list.
+- `(tabs)/saved.tsx` – bookmarks screen with sentiment reactions.
+- `(tabs)/advocacy.tsx` – advocacy hub housing the Find Your Rep workflow.
+- `(tabs)/lnf.tsx` – Love Never Fails content hub (brand storytelling, support resources).
+- `(tabs)/language.tsx` – hidden route for managing language selection and persistence.
+
+#### `mobile-app/components/`
+- `HapticTab.tsx` – tab bar button wrapper adding haptic feedback.
+- `ThemedText.tsx` – typography component synced with light/dark themes.
+- `ThemedView.tsx` – view wrapper exposing themed background colors.
+- `ui/HeaderBanner.tsx` – top-of-screen mission banner & CTA.
+- `ui/IconSymbol.tsx` / `.ios.tsx` – platform-aware icon abstraction bridging SF Symbols and Material icons.
+- `ui/LanguageMenuButton.tsx` – language switcher trigger embedded in toolbars.
+- `ui/LnfIcon.tsx` – renders the Love Never Fails icon asset for branding consistency.
+- `ui/TabBarBackground.tsx` / `.ios.tsx` – gradient and blur styling for the bottom tab bar.
+
+#### `mobile-app/hooks/`
+- `useColorScheme.ts`, `.web.ts` – hooks for tracking system theme and syncing the Paper MD3 palette.
+
+#### `mobile-app/assets/`
+- `fonts/SpaceMono-Regular.ttf` – app font bundled with Expo.
+- `images/adaptive-icon.png` – adaptive icon background for Android.
+- `images/banner.png` – mission banner artwork used in `HeaderBanner`.
+- `images/favicon.png` – web favicon.
+- `images/header-banner.png` – hero art shown at the top of the app.
+- `images/icon.png` – legacy icon still referenced in some manifests.
+- `images/icon-foreground.png` – foreground layer for adaptive icon.
+- `images/LNFmini.png` – Love Never Fails tab icon.
+- `images/splash-icon.png` – splash screen logo for Expo launch screen.
+
+#### `mobile-app/src/components/`
+- `Bill.tsx` – bill list tile with bookmarking, reactions, and summary preview.
+- `BillSkeleton.tsx` – shimmer placeholder for loading states.
+- `EmailTemplate.tsx` – renders advocacy email body and subject when composing outreach.
+- `EmptyState.tsx` – reusable empty/error placeholder component.
+- `ExpandableCard.tsx` – collapsible card used for FAQs and contextual info.
+- `FindYourRep.tsx` – address search UI, Supabase reconciliation, and legislator routing.
+- `LanguageSwitcher.tsx` – dropdown for runtime language selection.
+- `RelatedBills.tsx` – displays AI-ranked related bills with navigation shortcuts.
+- `SummarySlider.tsx` – segmented control for toggling summary difficulty levels.
+
+#### `mobile-app/src/lib/`
+- `analytics.ts` – wrappers for logging track events into Supabase.
+- `config.ts` – runtime environment loader with validation and memoization.
+- `find-your-representative.ts` – shared logic for LocationIQ + OpenStates pipeline.
+- `i18n.ts` – i18next initialization + language detector wiring.
+- `legislatorLookup.ts` – deterministic key generator for matching OpenStates results to Supabase records.
+- `push.ts` – Expo push token registration helper.
+- `safeFetch.ts` – fetch wrapper with configurable retries, exponential backoff, and optional per-attempt timeouts.
+- `supabase.ts` / `supabase.native.ts` – Supabase clients optimized for web vs native storage layers.
+- `translation.ts` – high-level helpers for invoking translation edge functions, reusing `bill_translations` cache before queueing new work so pre-generated content loads instantly.
+
+#### `mobile-app/src/providers/`
+- `AuthProvider.tsx` – anonymous session bootstrap and context surface.
+- `ConfigProvider.tsx` – runtime config hydration and global error fallback.
+- `LanguageProvider.tsx` – current language context, persistence, and update callbacks.
+
+#### `mobile-app/src/locales/`
+- `en.json`, `es.json` – translation dictionaries for English and Spanish.
+
+#### `mobile-app/src/encryption.ts`
+- AES wrapper and helper for future client-side encrypted notes.
+
+### `supabase/`
+- `.env` – Supabase CLI credentials (excluded from version control but noted here for completeness).
+- `config.sql` – low-level Supabase configuration (RLS policies, background jobs).
+- `config.toml` – Supabase CLI project metadata.
+- `env.example` – template for Supabase service role and third-party API keys.
+- `schema.sql` – canonical Postgres schema, tables, indexes, triggers, and data migrations (including legislator lookup keys and roll-call vote columns).
+
+#### `supabase/functions/_shared/`
+- `cors.ts` – reusable CORS headers for HTTP responses.
+- `mock-data.ts` – stub payloads for local testing without live API calls.
+
+#### `supabase/functions/bulk-import-dataset/`
+- `index.ts` – downloads LegiScan datasets, filters survivor-relevant bills, and seeds Supabase.
+- `deno.json` – Deno module resolution and permissions for the function.
+
+#### `supabase/functions/ingest-and-summarize/`
+- `index.ts` – orchestrates Gemini summarization, translation tier caching, and embedding creation.
+- `deno.json`, `.npmrc` – Deno configuration and npm registry access for Gemini.
+
+#### `supabase/functions/send-push-notifications/`
+- `index.ts` – planned job for dispatching Expo push notices to subscribers.
+- `deno.json` – runtime configuration.
+
+#### `supabase/functions/sync-legislators-and-votes/`
+- `index.ts` – imports legislators, builds lookup keys, fetches roll-call votes, and upserts normalized rows.
+- `deno.json` – Deno settings.
+
+#### `supabase/functions/sync-updated-bills/`
+- `index.ts` – scheduled worker that refreshes bill metadata, triggers AI summarization, and recomputes embeddings.
+- `deno.json` – Deno settings.
+
+#### `supabase/functions/translate-bill/`
+- `index.ts` – on-demand translation of a single bill for a target language.
+- `deno.json` – Deno settings.
+
+#### `supabase/functions/translate-bills/`
+- `index.ts` – batch translation pipeline for multiple bills.
+- `deno.js` – compatibility shim for deployment tooling.
+
+#### `supabase/functions/verify-app-check/`
+- `index.ts` – validates Firebase App Check tokens before allowing protected actions.
+- `deno.json` – Deno settings.
+
+---
+
+## Roadmap Ideas
+
+- [ ] Expand automated test coverage (unit, integration, and edge-function suites).
+- [ ] Finish notification dispatcher for bookmark alerts and action reminders.
+- [ ] Build encrypted survivor notes using `encryption.ts` and Supabase row-level encryption.
+- [ ] Add more translation packs (`src/locales/<lang>.json`) and tune Gemini prompts for region-specific nuance.
+- [ ] Harden analytics by piping critical actions through `analytics.ts` and Supabase events tables.
+
+---
+
+## Support & Contact
+
+Have questions or want to collaborate? Reach out via the Love Never Fails engineering team or open an issue in this repository. Contributions focused on accessibility, survivor safety, or policy reach are especially welcome.
+
