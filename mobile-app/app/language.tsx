@@ -1,12 +1,12 @@
-// mobile-app/app/(tabs)/language.tsx
+// mobile-app/app/language.tsx
 import React from "react";
 import { StyleSheet, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Chip, Divider } from "react-native-paper";
 import { Stack } from "expo-router";
-import i18n from "../../src/lib/i18n";
-import { ThemedView } from "../../components/ThemedView";
-import { ThemedText } from "../../components/ThemedText";
+import i18n from "../src/lib/i18n";
+import { ThemedView } from "../components/ThemedView";
+import { ThemedText } from "../components/ThemedText";
 
 const LABELS: Record<string, string> = {
   en: "English",

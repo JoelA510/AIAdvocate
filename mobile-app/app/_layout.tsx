@@ -5,7 +5,7 @@
 
 import "react-native-reanimated";
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Image } from "react-native";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
@@ -25,6 +25,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const queryClient = new QueryClient();
 
 const BRAND = "#078A97" as const;
+const BANNER = require("../assets/images/header-banner.png");
 
 // Prevent splash auto-hide until assets/config load.
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -45,12 +46,23 @@ export default function RootLayout() {
     }
   }, []);
 
-  // Hide splash when fonts and config are ready.
   useEffect(() => {
-    if (fontsLoaded || fontError || configError) {
+    if (fontsLoaded || fontError) {
       SplashScreen.hideAsync().catch(() => {});
     }
-  }, [fontsLoaded, fontError, configError]);
+  }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
+    if (!fontsLoaded && !fontError) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
+    if (configError) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [configError]);
 
   // If config failed, show a minimal error screen.
   if (configError) {
@@ -66,7 +78,20 @@ export default function RootLayout() {
     );
   }
 
-  if (!fontsLoaded && !fontError) return null;
+  if (!fontsLoaded && !fontError) {
+    const fallbackColor = colorScheme === "dark" ? "#0b0b0b" : "#ffffff";
+    return (
+      <View style={[styles.fallbackContainer, { backgroundColor: fallbackColor }]}>
+        <Image
+          source={BANNER}
+          resizeMode="contain"
+          style={styles.fallbackLogo}
+          accessibilityRole="image"
+          accessibilityLabel="AI Advocate"
+        />
+      </View>
+    );
+  }
   if (fontError) console.error("Font loading error:", fontError);
 
   // Theme overrides for MD3.
@@ -101,6 +126,7 @@ export default function RootLayout() {
                   <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
                   <Stack.Screen name="legislator/[id]" options={{ headerShown: false }} />
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="language" options={{ headerShown: false }} />
                 </Stack>
                 <Toast />
               </AuthProvider>
@@ -134,5 +160,15 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 12,
     color: "#666",
+  },
+  fallbackContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fallbackLogo: {
+    width: "70%",
+    maxWidth: 360,
+    aspectRatio: 3,
   },
 });
