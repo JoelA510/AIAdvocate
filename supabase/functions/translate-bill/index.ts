@@ -2,7 +2,6 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { GoogleGenerativeAI } from "npm:@google/generative-ai";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,15 +50,9 @@ serve(async (req) => {
 
     if (billError) throw billError;
 
-    // --- 3. Generate the translation with Gemini ---
-    const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!geminiApiKey) throw new Error("GEMINI_API_KEY is not set.");
-    
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash-latest",
-      generationConfig: { responseMimeType: "application/json" },
-    });
+    // --- 3. Generate the translation with OpenAI ChatGPT ---
+    const openAiKey = Deno.env.get("OpenAI_GPT_Key");
+    if (!openAiKey) throw new Error("OpenAI_GPT_Key is not set.");
 
     const prompt = `
       Translate the following legislative bill content into the language with ISO 639-1 code "${language_code}".
@@ -70,9 +63,38 @@ serve(async (req) => {
       ---
       ${JSON.stringify(originalBill)}
     `;
-    
-    const result = await model.generateContent(prompt);
-    const newTranslation = JSON.parse(result.response.text());
+
+    const chatResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: "You are a professional legislative translator who returns strictly valid JSON responses.",
+          },
+          { role: "user", content: prompt.trim() },
+        ],
+      }),
+    });
+
+    if (!chatResponse.ok) {
+      const errorDetails = await chatResponse.text();
+      throw new Error(`OpenAI chat completion failed (${chatResponse.status}): ${errorDetails}`);
+    }
+
+    const chatPayload = await chatResponse.json();
+    const rawContent = chatPayload?.choices?.[0]?.message?.content;
+    if (!rawContent) {
+      throw new Error("OpenAI chat completion returned no content.");
+    }
+
+    const newTranslation = JSON.parse(rawContent.trim());
 
     // --- 4. Cache the new translation in the database ---
     const translationToCache = { bill_id, language_code, ...newTranslation };

@@ -1,7 +1,7 @@
 # process_backlog.py (Legacy local summarizer)
 """
 Legacy helper that reprocesses bills by calling LegiScan directly and running
-the Gemini CLI locally. Prefer `process_full_backlog.py`, which delegates the
+summaries locally via the OpenAI Chat Completions API. Prefer `process_full_backlog.py`, which delegates the
 heavy lifting to the deployed Supabase Edge Function.  This script is left in
 place for situations where you explicitly need to run the summaries on your
 own machine.
@@ -10,7 +10,6 @@ own machine.
 import os
 import time
 import base64
-import subprocess
 from typing import Optional
 
 try:
@@ -37,8 +36,9 @@ print("--- Loading environment variables from project root .env file ---")
 LEGISCAN_API_KEY = os.getenv("LEGISCAN_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+OPENAI_API_KEY = os.getenv("OpenAI_GPT_Key")
 
-if not all([LEGISCAN_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY]):
+if not all([LEGISCAN_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENAI_API_KEY]):
     print("❌ FATAL ERROR: A required environment variable is missing from your root .env file.")
     exit()
 
@@ -46,34 +46,46 @@ print("✅ All necessary secrets loaded.")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 # --- Helper Functions ---
-def get_summary_with_gemini_cli(prompt: str, text: str) -> Optional[str]:
+def get_summary_with_openai(prompt: str, text: str) -> Optional[str]:
     """
-    Generates a summary by calling the 'gemini' command-line tool.
+    Generates a summary by calling the OpenAI Chat Completions API.
     """
     try:
         full_prompt = f"{prompt}\n\n---\n\n{text}"
-        
-        # **THE FIX:** The flag is '-p' (for --prompt), not '-t'.
-        command = ["gemini", "-p", full_prompt] 
-        
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=True,
-            encoding='utf-8'
+
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "temperature": 0.2,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a legislative analyst who writes thorough yet readable summaries.",
+                    },
+                    {"role": "user", "content": full_prompt},
+                ],
+            },
+            timeout=120,
         )
-        return result.stdout.strip()
-    except FileNotFoundError:
-        print("\n--- FATAL ERROR ---")
-        print("The 'gemini' command was not found.")
-        return None
-    except subprocess.CalledProcessError as e:
-        print(f"    - ⚠️ Gemini for CLI failed with exit code {e.returncode}")
-        print(f"    - Stderr: {e.stderr.strip()}")
-        return f"AI_SUMMARY_FAILED: Gemini CLI Error - {e.stderr.strip()}"
+        response.raise_for_status()
+        payload = response.json()
+        message = payload.get("choices", [{}])[0].get("message", {}).get("content")
+        if not message:
+            return "AI_SUMMARY_FAILED: OpenAI response missing content"
+        return message.strip()
+    except requests.HTTPError as exc:
+        print(f"    - ⚠️ OpenAI API returned an error: {exc.response.text if exc.response else exc}")
+        return "AI_SUMMARY_FAILED: OpenAI HTTP error"
+    except requests.RequestException as exc:
+        print(f"    - ⚠️ Network error calling OpenAI API: {exc}")
+        return "AI_SUMMARY_FAILED: OpenAI request error"
     except Exception as e:
-        print(f"    - ⚠️ An unexpected error occurred calling Gemini CLI: {e}")
+        print(f"    - ⚠️ An unexpected error occurred calling OpenAI: {e}")
         return f"AI_SUMMARY_FAILED: Unexpected script error"
 
 def get_bills_to_process():
@@ -87,7 +99,7 @@ def get_bills_to_process():
         return None
 
 # --- Main Script ---
-print("Starting local-first AI summary backlog processing (using Gemini for CLI)...")
+print("Starting local-first AI summary backlog processing (using OpenAI ChatGPT)...")
 
 bills_to_process = get_bills_to_process()
 
@@ -125,16 +137,16 @@ for i, bill_stub in enumerate(bills_to_process):
         text_res.raise_for_status()
         original_text = base64.b64decode(text_res.json()['text']['doc']).decode('utf-8', 'ignore')
 
-        # 2. Generate Summaries with Gemini for CLI
-        print("  - Generating summaries with Gemini for CLI (this will be slow)...")
+        # 2. Generate Summaries with OpenAI ChatGPT
+        print("  - Generating summaries with OpenAI ChatGPT (this will be slow)...")
         
-        summary_simple = get_summary_with_gemini_cli("Explain and summarize this legislative bill to a 12 year old. Be as verbose as needed not to miss a detail.", original_text)
+        summary_simple = get_summary_with_openai("Explain and summarize this legislative bill to a 12 year old. Be as verbose as needed not to miss a detail.", original_text)
         if summary_simple is None: break
-        
-        summary_medium = get_summary_with_gemini_cli("Explain and summarize this legislative bill to a 16 year old. Be as verbose as needed not to miss a detail.", original_text)
+
+        summary_medium = get_summary_with_openai("Explain and summarize this legislative bill to a 16 year old. Be as verbose as needed not to miss a detail.", original_text)
         if summary_medium is None: break
-        
-        summary_complex = get_summary_with_gemini_cli("Provide a detailed summary of this bill for a policy expert in plain language.", original_text)
+
+        summary_complex = get_summary_with_openai("Provide a detailed summary of this bill for a policy expert in plain language.", original_text)
         if summary_complex is None: break
 
         # 3. Save to Supabase

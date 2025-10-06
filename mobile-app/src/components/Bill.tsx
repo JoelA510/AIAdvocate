@@ -60,7 +60,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
   const theme = useTheme();
   const router = useRouter();
   const { session } = useAuth();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const userId = session?.user?.id;
 
   const [billDetails, setBillDetails] = useState({
@@ -174,7 +174,9 @@ export default function BillComponent({ bill }: { bill: Bill }) {
       if (typeof raw === "string") {
         try {
           const parsed = JSON.parse(raw);
-          return Array.isArray(parsed) ? (parsed as BillHistoryEntry[]) : ([] as BillHistoryEntry[]);
+          return Array.isArray(parsed)
+            ? (parsed as BillHistoryEntry[])
+            : ([] as BillHistoryEntry[]);
         } catch {
           return [] as BillHistoryEntry[];
         }
@@ -207,7 +209,9 @@ export default function BillComponent({ bill }: { bill: Bill }) {
       if (typeof raw === "string") {
         try {
           const parsed = JSON.parse(raw);
-          return Array.isArray(parsed) ? (parsed as BillProgressEntry[]) : ([] as BillProgressEntry[]);
+          return Array.isArray(parsed)
+            ? (parsed as BillProgressEntry[])
+            : ([] as BillProgressEntry[]);
         } catch {
           return [] as BillProgressEntry[];
         }
@@ -234,7 +238,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
         .filter(Boolean);
       const mentionsIntroduced = textBuckets.some((value) => value.includes("introduc"));
       const stepRaw = entry.progress_step ?? entry.step;
-      const step = typeof stepRaw === "string" ? Number(stepRaw) : stepRaw ?? null;
+      const step = typeof stepRaw === "string" ? Number(stepRaw) : (stepRaw ?? null);
       return mentionsIntroduced || (typeof step === "number" && step <= 1);
     });
 
@@ -312,19 +316,38 @@ export default function BillComponent({ bill }: { bill: Bill }) {
           <View style={styles.metaContainer}>
             {historyInsights.proposedDate ? (
               <Text variant="bodySmall" style={styles.metaText}>
-                First proposed {historyInsights.proposedDate}
+                {t("bill.meta.firstProposed", {
+                  defaultValue: "First proposed {{date}}",
+                  date: historyInsights.proposedDate,
+                })}
               </Text>
             ) : null}
             {lastActionDescription ? (
               <Text variant="bodySmall" style={styles.metaText}>
-                Last action: {lastActionDescription}
-                {lastActionDate ? ` on ${lastActionDate}` : ""}
+                {t("bill.meta.lastAction", {
+                  defaultValue: "Last action: {{description}}{{dateSuffix}}",
+                  description: lastActionDescription,
+                  dateSuffix: lastActionDate
+                    ? t("bill.meta.lastActionDateSuffix", {
+                        defaultValue: " on {{date}}",
+                        date: lastActionDate,
+                      })
+                    : "",
+                })}
               </Text>
             ) : null}
             {statusText ? (
               <Text variant="bodySmall" style={styles.metaText}>
-                Status: {statusText}
-                {statusDateFormatted ? ` (${statusDateFormatted})` : ""}
+                {t("bill.meta.status", {
+                  defaultValue: "Status: {{status}}{{dateSuffix}}",
+                  status: statusText,
+                  dateSuffix: statusDateFormatted
+                    ? t("bill.meta.statusDateSuffix", {
+                        defaultValue: " ({{date}})",
+                        date: statusDateFormatted,
+                      })
+                    : "",
+                })}
               </Text>
             ) : null}
           </View>

@@ -90,10 +90,7 @@ export default function RootLayout() {
         <Image
           source={BANNER}
           resizeMode="contain"
-          style={[
-            styles.fallbackLogo,
-            { width: fallbackLogoWidth, height: fallbackLogoHeight },
-          ]}
+          style={[styles.fallbackLogo, { width: fallbackLogoWidth, height: fallbackLogoHeight }]}
           accessibilityRole="image"
           accessibilityLabel="AI Advocate"
         />

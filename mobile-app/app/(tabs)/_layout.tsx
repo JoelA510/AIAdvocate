@@ -8,12 +8,19 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 const lnfIcon = require("../../assets/images/LNFmini.png");
 
+type TabLabelProps = {
+  focused: boolean;
+  color: string;
+  position: "beside-icon" | "below-icon";
+  children: string;
+};
+
 const TabsLayout: React.FC = () => {
   const { t } = useTranslation();
   const theme = useTheme();
 
   const makeLabel = (label: string) => {
-    const TabLabel: React.FC<{ focused: boolean; color: string }> = ({ color }) => (
+    const TabLabel = ({ color }: TabLabelProps): React.ReactElement => (
       <Text
         style={{ color, fontSize: 12, fontWeight: "500", textTransform: "none" }}
         numberOfLines={1}

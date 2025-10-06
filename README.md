@@ -9,7 +9,7 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 ## What the Product Delivers
 
 - **Legislation Explorer:** Search, filter, and browse a curated catalog of survivor-focused bills. Each bill has AI-generated summaries at multiple reading levels, the original text, and panel reviews authored by subject-matter experts.
-- **Accessibility First:** The client auto-detects language, provides on-demand translations via Gemini, and offers text-to-speech playback to remove reading barriers.
+- **Accessibility First:** The client auto-detects language, provides on-demand translations via OpenAI ChatGPT, and offers text-to-speech playback to remove reading barriers.
 - **Advocacy Workflow:** Users can find their representatives, review vote histories, and compose templated outreach emails tied to a specific bill.
 - **Personalized Experience:** Anonymous Supabase Auth sessions let people bookmark bills, react with sentiment, and subscribe to push notifications without sharing personal data.
 - **Intelligent Recommendations:** `pgvector` powered similarity search surfaces related legislation to keep users informed about adjacent policy changes.
@@ -22,7 +22,7 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 | --- | --- | --- |
 | Client | Expo Router, React Native Paper, React Query, i18next | Navigation, theming, data fetching, translations, accessibility, local caching |
 | API Gateway | Supabase REST over PostgREST | Auth, database access, RPC invocation |
-| Data & AI | PostgreSQL + `pgvector`, Supabase Edge Functions, Gemini APIs | Bill ingestion, summarization, translation, embedding search, vote syncing |
+| Data & AI | PostgreSQL + `pgvector`, Supabase Edge Functions, OpenAI ChatGPT (gpt-4o-mini) | Bill ingestion, summarization, translation, embedding search, vote syncing |
 | Notifications | Expo push service, Edge cron jobs | Bookmark alerts, future custom digests |
 | Telemetry | Supabase events table, custom analytics hooks | Anonymous event tracking and feature adoption insights |
 
@@ -40,7 +40,7 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
    yarn install
    ```
 3. **Configure environments**
-   - Copy `supabase/env.example` → `supabase/.env` and insert Supabase, LegiScan, Gemini secrets.
+   - Copy `supabase/env.example` → `supabase/.env` and insert Supabase, LegiScan, and OpenAI secrets.
    - Create `mobile-app/.env` with the public Supabase URL/key plus OpenStates and LocationIQ keys.
 4. **Run locally**
    ```bash
@@ -62,9 +62,9 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 - **Expo Router & Navigation:** Most screens live under `mobile-app/app/`. File system routing means renaming files will change URLs automatically.
 - **Authentication:** Anonymous sessions are provisioned on app launch inside `src/providers/AuthProvider.tsx` and persisted through Supabase’s client SDK.
 - **Data Fetching:** `safeFetch` wraps critical network requests with configurable retry/backoff/timeout handling. React Query manages client caching for bill lists, translations, and related entities.
-- **Translations:** `src/lib/translation.ts` orchestrates Gemini calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`.
+- **Translations:** `src/lib/translation.ts` orchestrates OpenAI ChatGPT calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`.
 - **Splash Animation:** `app/index.tsx` animates the mission banner from center-to-header, fading and scaling it while the initial tab bundle loads.
-- **Translations:** `src/lib/translation.ts` orchestrates Gemini calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`, and cached records are fetched before any new translation work is triggered.
+- **Translations:** `src/lib/translation.ts` orchestrates OpenAI ChatGPT calls via Supabase edge functions (`translate-bill` and `translate-bills`). Results are cached in `bill_translations`, and cached records are fetched before any new translation work is triggered.
 - **Advocacy Flow:** `FindYourRep` performs a LocationIQ → OpenStates pipeline, reconciles the results with the Supabase `legislators` table, and routes to Legislator detail screens.
 - **CI Expectations:** Type-check with `yarn tsc --noEmit`, run unit tests with `yarn test`, and lint via `yarn lint` before opening pull requests.
 
@@ -75,7 +75,7 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 1. **Bill ingestion** (`supabase/functions/bulk-import-dataset` & `sync-updated-bills`)
    - Pulls the active CA LegiScan dataset, filters by survivor-focused keywords, upserts metadata, and triggers summarization + embedding jobs.
 2. **Summaries & Translations** (`supabase/functions/ingest-and-summarize`, `translate-bill`, `translate-bills`)
-   - Request batched Gemini responses, store multilingual tiers, and warm vector embeddings for semantic search.
+   - Request batched OpenAI ChatGPT responses, store multilingual tiers, and warm vector embeddings for semantic search.
 3. **Legislator & Vote Sync** (`supabase/functions/sync-legislators-and-votes`)
    - Imports CA legislators, derives lookup keys, flattens LegiScan roll calls into per-legislator vote rows, and keeps Supabase in sync.
 4. **Notifications** (`supabase/functions/send-push-notifications`)
@@ -244,8 +244,8 @@ files automatically:
 - `deno.json` – Deno module resolution and permissions for the function.
 
 #### `supabase/functions/ingest-and-summarize/`
-- `index.ts` – orchestrates Gemini summarization, translation tier caching, and embedding creation.
-- `deno.json`, `.npmrc` – Deno configuration and npm registry access for Gemini.
+- `index.ts` – orchestrates OpenAI summarization, translation tier caching, and embedding creation.
+- `deno.json`, `.npmrc` – Deno configuration and npm registry access for OpenAI tooling.
 
 #### `supabase/functions/send-push-notifications/`
 - `index.ts` – planned job for dispatching Expo push notices to subscribers.
@@ -278,7 +278,7 @@ files automatically:
 - [ ] Expand automated test coverage (unit, integration, and edge-function suites).
 - [ ] Finish notification dispatcher for bookmark alerts and action reminders.
 - [ ] Build encrypted survivor notes using `encryption.ts` and Supabase row-level encryption.
-- [ ] Add more translation packs (`src/locales/<lang>.json`) and tune Gemini prompts for region-specific nuance.
+- [ ] Add more translation packs (`src/locales/<lang>.json`) and tune ChatGPT prompts for region-specific nuance.
 - [ ] Harden analytics by piping critical actions through `analytics.ts` and Supabase events tables.
 
 ---

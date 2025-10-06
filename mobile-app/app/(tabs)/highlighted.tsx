@@ -39,7 +39,10 @@ export default function HighlightedScreen() {
     const fetchBills = async () => {
       setLoading(true);
       try {
-        const openFilter = [...OPEN_STATUS_CODES.map((code) => `status.eq.${code}`), "status.is.null"].join(",");
+        const openFilter = [
+          ...OPEN_STATUS_CODES.map((code) => `status.eq.${code}`),
+          "status.is.null",
+        ].join(",");
 
         let query = supabase
           .from("bills")

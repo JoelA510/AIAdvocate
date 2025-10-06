@@ -1,7 +1,7 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "types": ["expo-router"],
+    "types": ["expo-router", "jest"],
     "strict": true,
     "baseUrl": ".",
     "paths": {

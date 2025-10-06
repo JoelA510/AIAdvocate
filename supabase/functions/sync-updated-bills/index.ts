@@ -3,7 +3,6 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { GoogleGenerativeAI } from "npm:@google/generative-ai";
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
 // --- Configuration ---
@@ -42,19 +41,12 @@ serve(async (req) => {
   try {
     // --- API and Client Initialization ---
     const legiscanApiKey = Deno.env.get("LEGISCAN_API_KEY");
-    const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!legiscanApiKey || !geminiApiKey) {
-      throw new Error("API keys (LEGISCAN_API_KEY, GEMINI_API_KEY) are not set.");
+    const openAiKey = Deno.env.get("OpenAI_GPT_Key");
+    if (!legiscanApiKey || !openAiKey) {
+      throw new Error("API keys (LEGISCAN_API_KEY, OpenAI_GPT_Key) are not set.");
     }
 
     const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    
-    const generativeModel = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash-latest",
-      generationConfig: { responseMimeType: "application/json" },
-    });
-    const embeddingModel = genAI.getGenerativeModel({ model: "embedding-001" });
 
     // --- Find a Bill to Process ---
     const { data: billToProcess, error: findBillError } = await supabaseAdmin
@@ -112,8 +104,37 @@ serve(async (req) => {
       ---
       ${originalText}
     `;
-    const summaryResult = await generativeModel.generateContent(summaryPrompt);
-    const summaries = JSON.parse(summaryResult.response.text());
+    const summaryResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: "You analyze legislative text and return strictly valid JSON with tiered summaries.",
+          },
+          { role: "user", content: summaryPrompt.trim() },
+        ],
+      }),
+    });
+
+    if (!summaryResponse.ok) {
+      const errorDetails = await summaryResponse.text();
+      throw new Error(`OpenAI chat completion failed (${summaryResponse.status}): ${errorDetails}`);
+    }
+
+    const summaryPayload = await summaryResponse.json();
+    const summaryContent = summaryPayload?.choices?.[0]?.message?.content;
+    if (!summaryContent) {
+      throw new Error("OpenAI chat completion returned no summary content.");
+    }
+
+    const summaries = JSON.parse(summaryContent.trim());
 
     // --- Step 2: Generate Vector Embedding ---
     console.log(`- Generating vector embedding for ${billData.bill_number}...`);
@@ -123,8 +144,28 @@ serve(async (req) => {
         `Expert Summary: ${summaries.complex}`
     ].join("\n\n");
 
-    const embeddingResult = await embeddingModel.embedContent(textForEmbedding);
-    const embedding = embeddingResult.embedding.values;
+    const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAiKey}`,
+      },
+      body: JSON.stringify({
+        model: "text-embedding-3-small",
+        input: textForEmbedding,
+      }),
+    });
+
+    if (!embeddingResponse.ok) {
+      const embeddingError = await embeddingResponse.text();
+      throw new Error(`OpenAI embedding request failed (${embeddingResponse.status}): ${embeddingError}`);
+    }
+
+    const embeddingPayload = await embeddingResponse.json();
+    const embedding = embeddingPayload?.data?.[0]?.embedding;
+    if (!embedding) {
+      throw new Error("OpenAI embedding response was missing embedding data.");
+    }
 
     // --- Step 3: Update Database with Summaries, Text, and Embedding ---
     const statusText = billData.status_text ?? null;
