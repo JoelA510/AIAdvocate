@@ -1,13 +1,14 @@
 // mobile-app/src/components/Bill.tsx (modified)
 
 import { useRouter } from "expo-router";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Card, IconButton, Text, useTheme, Button } from "react-native-paper";
 import Toast from "react-native-toast-message";
 import { useTranslation } from "react-i18next";
 
 import { supabase } from "@/lib/supabase";
+import { extractBillStatusDetails } from "@/lib/billStatus";
 import { useAuth } from "@/providers/AuthProvider";
 
 export interface Bill {
@@ -38,6 +39,22 @@ export interface Bill {
   created_at: string;
   panel_review: any;
 }
+
+type BillHistoryEntry = {
+  date?: string | null;
+  action?: string | null;
+  description?: string | null;
+};
+
+type BillProgressEntry = {
+  date?: string | null;
+  progress_step?: number | string | null;
+  step?: number | string | null;
+  status?: string | null;
+  text?: string | null;
+  event?: string | null;
+  progress_event?: string | null;
+};
 
 export default function BillComponent({ bill }: { bill: Bill }) {
   const theme = useTheme();
@@ -134,12 +151,138 @@ export default function BillComponent({ bill }: { bill: Bill }) {
     router.push(`/bill/${bill.id}`);
   };
 
+  const formatToMMDDYYYY = (value?: string | null): string | null => {
+    if (!value) return null;
+    const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      const [, year, month, day] = isoMatch;
+      return `${month}/${day}/${year}`;
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const year = String(date.getFullYear());
+    return `${month}/${day}/${year}`;
+  };
+
+  // Derive timeline info from the bill's history for surface-level context.
+  const historyInsights = useMemo(() => {
+    const normalizeHistory = (raw: any): BillHistoryEntry[] => {
+      if (!raw) return [] as BillHistoryEntry[];
+      if (Array.isArray(raw)) return raw as BillHistoryEntry[];
+      if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as BillHistoryEntry[]) : ([] as BillHistoryEntry[]);
+        } catch {
+          return [] as BillHistoryEntry[];
+        }
+      }
+      return [] as BillHistoryEntry[];
+    };
+
+    const entries: BillHistoryEntry[] = normalizeHistory(bill.history).map(
+      (entry: BillHistoryEntry) => {
+        if (entry && typeof entry === "object") {
+          const safeEntry = entry as Record<string, unknown>;
+          const actionDate =
+            (safeEntry.date as string | undefined) ??
+            (safeEntry.action_date as string | undefined) ??
+            (safeEntry.event_date as string | undefined) ??
+            null;
+          return {
+            date: actionDate,
+            action: (safeEntry.action as string | undefined) ?? null,
+            description: (safeEntry.description as string | undefined) ?? null,
+          } as BillHistoryEntry;
+        }
+        return { date: null, action: null, description: null };
+      },
+    );
+
+    const normalizeProgress = (raw: any): BillProgressEntry[] => {
+      if (!raw) return [] as BillProgressEntry[];
+      if (Array.isArray(raw)) return raw as BillProgressEntry[];
+      if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as BillProgressEntry[]) : ([] as BillProgressEntry[]);
+        } catch {
+          return [] as BillProgressEntry[];
+        }
+      }
+      return [] as BillProgressEntry[];
+    };
+
+    const parseMs = (value?: string | null) => {
+      if (!value) return null;
+      const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) {
+        const [, year, month, day] = match;
+        const date = new Date(Number(year), Number(month) - 1, Number(day));
+        return Number.isNaN(date.getTime()) ? null : date.getTime();
+      }
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date.getTime();
+    };
+
+    const progressEntries = normalizeProgress(bill.progress);
+    const introducedFromProgress = progressEntries.find((entry) => {
+      const textBuckets = [entry.status, entry.text, entry.event, entry.progress_event]
+        .map((value) => (typeof value === "string" ? value.toLowerCase() : ""))
+        .filter(Boolean);
+      const mentionsIntroduced = textBuckets.some((value) => value.includes("introduc"));
+      const stepRaw = entry.progress_step ?? entry.step;
+      const step = typeof stepRaw === "string" ? Number(stepRaw) : stepRaw ?? null;
+      return mentionsIntroduced || (typeof step === "number" && step <= 1);
+    });
+
+    const introducedDateRaw = introducedFromProgress?.date ?? null;
+
+    let earliestMs: number | null = null;
+    let earliestDate: string | null = null;
+    let latestMs: number | null = null;
+    let latestDateRaw: string | null = null;
+    let latestDescription: string | null = null;
+
+    entries.forEach((entry: BillHistoryEntry) => {
+      const ms = parseMs(entry.date ?? null);
+      if (ms === null) return;
+      if (earliestMs === null || ms < earliestMs) {
+        earliestMs = ms;
+        earliestDate = entry.date ?? null;
+      }
+      if (latestMs === null || ms > latestMs) {
+        latestMs = ms;
+        latestDateRaw = entry.date ?? null;
+        latestDescription = entry.action ?? entry.description ?? null;
+      }
+    });
+
+    const proposedDate = formatToMMDDYYYY(
+      introducedDateRaw ?? earliestDate ?? bill.status_date ?? bill.created_at ?? null,
+    );
+    const latestDate = latestDateRaw ? formatToMMDDYYYY(latestDateRaw) : null;
+
+    return { proposedDate, latestDate, latestDescription };
+  }, [bill.history, bill.progress, bill.status_date, bill.created_at]);
+
   // Choose summary based on current language.  If we're viewing the app in
   // Spanish and a Spanish summary is available, use it; otherwise fall back
   // to the English simple summary.  We only show a short preview on the card.
   const lang = i18n?.language ?? "en";
   const summary =
     lang.startsWith("es") && bill.summary_simple_es ? bill.summary_simple_es : bill.summary_simple;
+
+  const statusDetails = useMemo(() => extractBillStatusDetails(bill), [bill]);
+  const statusText = statusDetails.statusLabel ?? null;
+  const statusDateFormatted = formatToMMDDYYYY(statusDetails.statusDate);
+
+  const lastActionDescription = historyInsights.latestDescription ?? statusText ?? null;
+  const lastActionDate = historyInsights.latestDescription
+    ? historyInsights.latestDate
+    : statusDateFormatted;
 
   return (
     <Card style={styles.card}>
@@ -166,6 +309,25 @@ export default function BillComponent({ bill }: { bill: Bill }) {
               {summary}
             </Text>
           )}
+          <View style={styles.metaContainer}>
+            {historyInsights.proposedDate ? (
+              <Text variant="bodySmall" style={styles.metaText}>
+                First proposed {historyInsights.proposedDate}
+              </Text>
+            ) : null}
+            {lastActionDescription ? (
+              <Text variant="bodySmall" style={styles.metaText}>
+                Last action: {lastActionDescription}
+                {lastActionDate ? ` on ${lastActionDate}` : ""}
+              </Text>
+            ) : null}
+            {statusText ? (
+              <Text variant="bodySmall" style={styles.metaText}>
+                Status: {statusText}
+                {statusDateFormatted ? ` (${statusDateFormatted})` : ""}
+              </Text>
+            ) : null}
+          </View>
         </Card.Content>
       </Pressable>
       <Card.Actions style={styles.actions}>
@@ -203,6 +365,8 @@ const styles = StyleSheet.create({
   billNumber: { fontWeight: "bold" },
   title: { marginBottom: 8 },
   summary: { color: "#555" },
+  metaContainer: { marginTop: 8, gap: 4 },
+  metaText: { color: "#555" },
   actions: { paddingHorizontal: 8, paddingBottom: 8 },
   reactionContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
 });

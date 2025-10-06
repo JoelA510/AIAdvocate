@@ -11,6 +11,23 @@ import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
 import { supabase } from "../../src/lib/supabase";
 
+const OPEN_STATUS_CODES = ["1", "2", "3"];
+
+const sortBills = (items: any[] | null | undefined) => {
+  const toTime = (value: any) => {
+    if (!value) return 0;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  };
+
+  return [...(items ?? [])].sort((a, b) => {
+    const bTime = toTime(b?.status_date ?? b?.created_at);
+    const aTime = toTime(a?.status_date ?? a?.created_at);
+    if (bTime !== aTime) return bTime - aTime;
+    return (b?.id ?? 0) - (a?.id ?? 0);
+  });
+};
+
 export default function HighlightedScreen() {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,15 +39,18 @@ export default function HighlightedScreen() {
     const fetchBills = async () => {
       setLoading(true);
       try {
+        const openFilter = [...OPEN_STATUS_CODES.map((code) => `status.eq.${code}`), "status.is.null"].join(",");
+
         let query = supabase
           .from("bills")
           .select("*")
-          .eq("is_curated", true)
-          .order("id", { ascending: false });
+          .or(openFilter)
+          .order("status_date", { ascending: false })
+          .order("created_at", { ascending: false });
 
         const { data, error } = await query;
         if (error) throw error;
-        setBills(data || []);
+        setBills(sortBills(data));
       } catch (err: any) {
         setError(err.message);
       } finally {

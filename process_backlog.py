@@ -1,11 +1,34 @@
-# process_backlog.py (Definitive Final Version)
+# process_backlog.py (Legacy local summarizer)
+"""
+Legacy helper that reprocesses bills by calling LegiScan directly and running
+the Gemini CLI locally. Prefer `process_full_backlog.py`, which delegates the
+heavy lifting to the deployed Supabase Edge Function.  This script is left in
+place for situations where you explicitly need to run the summaries on your
+own machine.
+"""
+
 import os
-import requests
 import time
 import base64
 import subprocess
-from dotenv import load_dotenv
-from supabase import create_client, Client
+from typing import Optional
+
+try:
+    import requests
+except ImportError as exc:  # pragma: no cover
+    raise SystemExit(
+        "The `requests` package is required. Install dependencies with "
+        "`python -m pip install requests python-dotenv supabase`."
+    ) from exc
+
+try:
+    from dotenv import load_dotenv
+    from supabase import create_client, Client
+except ImportError as exc:  # pragma: no cover
+    raise SystemExit(
+        "Missing ingestion dependencies. Run "
+        "`python -m pip install requests python-dotenv supabase`."
+    ) from exc
 
 # --- Step 1: Load Environment Variables ---
 load_dotenv() 
@@ -23,7 +46,7 @@ print("✅ All necessary secrets loaded.")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 # --- Helper Functions ---
-def get_summary_with_gemini_cli(prompt, text):
+def get_summary_with_gemini_cli(prompt: str, text: str) -> Optional[str]:
     """
     Generates a summary by calling the 'gemini' command-line tool.
     """

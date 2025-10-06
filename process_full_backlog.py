@@ -5,10 +5,17 @@ import os
 import requests
 import time
 import json
+from pathlib import Path
 from dotenv import load_dotenv
 
 # --- Step 1: Load Environment Variables ---
 print("--- Loading environment variables ---")
+
+ROOT_DIR = Path(__file__).resolve().parent
+
+# Load .env files in priority order: repo root, supabase/.env, then cwd fallback.
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / "supabase" / ".env")
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")

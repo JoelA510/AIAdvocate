@@ -11,6 +11,25 @@ import { ThemedView } from "../../components/ThemedView";
 import { supabase } from "../../src/lib/supabase";
 import { fetchTranslationsForBills } from "../../src/lib/translation";
 
+const sortBills = (items: any[] | null | undefined) => {
+  const toTime = (value: any) => {
+    if (!value) return 0;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  };
+
+  return [...(items ?? [])].sort((a, b) => {
+    const curatedDiff = Number(Boolean(b?.is_curated)) - Number(Boolean(a?.is_curated));
+    if (curatedDiff !== 0) return curatedDiff;
+
+    const bTime = toTime(b?.status_date ?? b?.created_at);
+    const aTime = toTime(a?.status_date ?? a?.created_at);
+    if (bTime !== aTime) return bTime - aTime;
+
+    return (b?.id ?? 0) - (a?.id ?? 0);
+  });
+};
+
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
   const [bills, setBills] = useState<any[]>([]);
@@ -31,6 +50,8 @@ export default function BillsHomeScreen() {
           const { data: d, error: e } = await supabase
             .from("bills")
             .select("*")
+            .order("is_curated", { ascending: false })
+            .order("status_date", { ascending: false })
             .order("id", { ascending: false });
           if (e) throw e;
           data = d ?? [];
@@ -40,6 +61,8 @@ export default function BillsHomeScreen() {
             .from("bills")
             .select("*")
             .ilike("bill_number", `%${processed}%`)
+            .order("is_curated", { ascending: false })
+            .order("status_date", { ascending: false })
             .order("id", { ascending: false });
           if (e) throw e;
           data = d ?? [];
@@ -49,7 +72,7 @@ export default function BillsHomeScreen() {
           data = d ?? [];
         }
 
-        setBills(data);
+        setBills(sortBills(data));
         setError(null);
       } catch (err: any) {
         setError(err.message);

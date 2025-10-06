@@ -104,8 +104,38 @@ AI Advocate is a privacy-first advocacy companion built with Expo and Supabase. 
 - `mobile-app/` – Expo React Native application (see below).
 - `process_backlog.py` – utility for reprocessing historical LegiScan records.
 - `process_full_backlog.py` – full dataset ingestion harness with resume logic.
+- `scripts/sync_legislators.sh` – one-touch helper that loads `.env` files and calls the
+  Supabase `sync-legislators-and-votes` edge function.
 - `README.md` – you are here.
 - `supabase/` – infrastructure as code, SQL migrations, and edge functions.
+
+### Python maintenance scripts
+
+The helper scripts in the repository root rely on a small Python toolchain. Install
+dependencies once with:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Using a virtual environment is recommended:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+Run `deactivate` when you are finished. This keeps the local machine in sync with
+the versions expected by `process_full_backlog.py` (preferred) and the legacy
+`process_backlog.py` fallback.
+
+To refresh legislator vote data, run the helper script which sources your `.env`
+files automatically:
+
+```bash
+./scripts/sync_legislators.sh
+```
 
 ### `mobile-app/` root
 - `.env`, `.env.production` – sample environment overrides for Expo.

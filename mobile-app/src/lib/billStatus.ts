@@ -88,16 +88,18 @@ export const extractBillStatusDetails = (bill?: BillLike | null): BillStatusDeta
   let nextEvent: BillStatusDetails["nextEvent"] = null;
   if (upcoming) {
     const { event, date } = upcoming;
-    nextEvent = {
-      description:
-        event.description ?? event.desc ?? event.event ?? event.type ?? "Scheduled action",
-      chamber: event.chamber ?? null,
-      location: event.location ?? null,
-      displayDate: date.toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }),
-    };
+    if (date) {
+      nextEvent = {
+        description:
+          event.description ?? event.desc ?? event.event ?? event.type ?? "Scheduled action",
+        chamber: event.chamber ?? null,
+        location: event.location ?? null,
+        displayDate: date.toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }),
+      };
+    }
   }
 
   return { statusLabel, statusDate, nextEvent };
