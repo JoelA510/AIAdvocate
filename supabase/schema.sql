@@ -192,11 +192,27 @@ ALTER TABLE public.events ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Allo
 ALTER TABLE public.cron_job_errors ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Admins can view errors" ON public.cron_job_errors; CREATE POLICY "Admins can view errors" ON public.cron_job_errors FOR SELECT USING (auth.role() = 'service_role');
 
 -- SECTION 9: CRON JOBS
-SELECT cron.unschedule('daily-bill-sync');
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'daily-bill-sync') THEN
+    PERFORM cron.unschedule('daily-bill-sync');
+  END IF;
+END;
+$$;
+
 SELECT cron.schedule('daily-bill-sync', '0 10 * * *', 'SELECT public.invoke_full_legislative_refresh()')
-ON CONFLICT DO NOTHING;
+WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'daily-bill-sync');
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-cron-job-errors') THEN
+    PERFORM cron.unschedule('cleanup-cron-job-errors');
+  END IF;
+END;
+$$;
+
 SELECT cron.schedule('cleanup-cron-job-errors', '0 0 * * 0', 'SELECT public.cleanup_old_cron_job_errors()')
-ON CONFLICT DO NOTHING;
+WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-cron-job-errors');
 
 -- SECTION 10: COMMENTS
 COMMENT ON TABLE public.bills IS 'Stores core legislative bill information and AI-generated content.';

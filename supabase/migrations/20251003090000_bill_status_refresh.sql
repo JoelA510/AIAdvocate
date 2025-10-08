@@ -44,14 +44,24 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DO $$
 BEGIN
-  PERFORM cron.unschedule('daily-bill-sync');
-EXCEPTION
-  WHEN OTHERS THEN
-    NULL;
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'daily-bill-sync') THEN
+    PERFORM cron.unschedule('daily-bill-sync');
+  END IF;
 END;
 $$;
 
-SELECT cron.schedule('daily-bill-sync', '0 10 * * *', 'SELECT public.invoke_full_legislative_refresh()');
+SELECT cron.schedule('daily-bill-sync', '0 10 * * *', 'SELECT public.invoke_full_legislative_refresh()')
+WHERE NOT EXISTS (
+  SELECT 1 FROM cron.job WHERE jobname = 'daily-bill-sync'
+);
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-cron-job-errors') THEN
+    PERFORM cron.unschedule('cleanup-cron-job-errors');
+  END IF;
+END;
+$$;
 
 SELECT cron.schedule('cleanup-cron-job-errors', '0 0 * * 0', 'SELECT public.cleanup_old_cron_job_errors()')
 WHERE NOT EXISTS (

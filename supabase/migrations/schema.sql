@@ -353,11 +353,27 @@ BEGIN
   DELETE FROM public.cron_job_errors WHERE occurred_at < NOW() - INTERVAL '30 days';
 END; $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Optional weekly job
-SELECT cron.unschedule('daily-bill-sync');
-SELECT cron.schedule('daily-bill-sync', '0 10 * * *', 'SELECT public.invoke_full_legislative_refresh()');
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'daily-bill-sync') THEN
+    PERFORM cron.unschedule('daily-bill-sync');
+  END IF;
+END;
+$$;
+
+SELECT cron.schedule('daily-bill-sync', '0 10 * * *', 'SELECT public.invoke_full_legislative_refresh()')
+WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'daily-bill-sync');
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-cron-job-errors') THEN
+    PERFORM cron.unschedule('cleanup-cron-job-errors');
+  END IF;
+END;
+$$;
+
 SELECT cron.schedule('cleanup-cron-job-errors', '0 0 * * 0', 'SELECT public.cleanup_old_cron_job_errors()')
-ON CONFLICT DO NOTHING;
+WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-cron-job-errors');
 
 -- ---------- REALTIME (guarded) ----------
 DO $$
