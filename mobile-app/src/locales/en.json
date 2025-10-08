@@ -4,6 +4,12 @@
     "missing": "Bill Not Found",
     "missingMsg": "The bill with ID #{{id}} could not be found.",
     "panel": { "recommendation": "Recommendation: {{r}}", "title": "Survivor Panel Review" },
+    "meta": {
+      "firstProposed": "First proposed {{date}}",
+      "lastAction": "Last action: {{date}}",
+      "status": "Status: {{status}}{{dateSuffix}}",
+      "statusDateSuffix": " ({{date}})"
+    },
     "shareMessage": "Check out this bill: {{num}} - {{title}}.",
     "translating": "Translating…"
   },

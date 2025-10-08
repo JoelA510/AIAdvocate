@@ -246,9 +246,8 @@ export default function BillComponent({ bill }: { bill: Bill }) {
 
     let earliestMs: number | null = null;
     let earliestDate: string | null = null;
-    let latestMs: number | null = null;
-    let latestDateRaw: string | null = null;
-    let latestDescription: string | null = null;
+    let latestHistoryMs: number | null = null;
+    let latestHistoryDateRaw: string | null = null;
 
     entries.forEach((entry: BillHistoryEntry) => {
       const ms = parseMs(entry.date ?? null);
@@ -257,19 +256,44 @@ export default function BillComponent({ bill }: { bill: Bill }) {
         earliestMs = ms;
         earliestDate = entry.date ?? null;
       }
-      if (latestMs === null || ms > latestMs) {
-        latestMs = ms;
-        latestDateRaw = entry.date ?? null;
-        latestDescription = entry.action ?? entry.description ?? null;
+      if (latestHistoryMs === null || ms > latestHistoryMs) {
+        latestHistoryMs = ms;
+        latestHistoryDateRaw = entry.date ?? null;
       }
     });
+
+    let latestProgressMs: number | null = null;
+    let latestProgressDateRaw: string | null = null;
+    progressEntries.forEach((entry: BillProgressEntry) => {
+      const ms = parseMs(entry.date ?? null);
+      if (ms === null) return;
+      if (latestProgressMs === null || ms > latestProgressMs) {
+        latestProgressMs = ms;
+        latestProgressDateRaw = entry.date ?? null;
+      }
+    });
+
+    const statusMs = parseMs(bill.status_date ?? null);
+    let latestDateRaw: string | null = latestHistoryDateRaw;
+    let latestMs: number | null = latestHistoryMs;
+
+    const considerCandidate = (candidateMs: number | null, candidateRaw: string | null) => {
+      if (candidateMs === null || candidateRaw === null) return;
+      if (latestMs === null || candidateMs > latestMs) {
+        latestMs = candidateMs;
+        latestDateRaw = candidateRaw;
+      }
+    };
+
+    considerCandidate(latestProgressMs, latestProgressDateRaw);
+    considerCandidate(statusMs, bill.status_date ?? null);
 
     const proposedDate = formatToMMDDYYYY(
       introducedDateRaw ?? earliestDate ?? bill.status_date ?? bill.created_at ?? null,
     );
     const latestDate = latestDateRaw ? formatToMMDDYYYY(latestDateRaw) : null;
 
-    return { proposedDate, latestDate, latestDescription };
+    return { proposedDate, latestDate };
   }, [bill.history, bill.progress, bill.status_date, bill.created_at]);
 
   // Choose summary based on current language.  If we're viewing the app in
@@ -283,10 +307,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
   const statusText = statusDetails.statusLabel ?? null;
   const statusDateFormatted = formatToMMDDYYYY(statusDetails.statusDate);
 
-  const lastActionDescription = historyInsights.latestDescription ?? statusText ?? null;
-  const lastActionDate = historyInsights.latestDescription
-    ? historyInsights.latestDate
-    : statusDateFormatted;
+  const lastActionDate = historyInsights.latestDate ?? statusDateFormatted ?? null;
 
   return (
     <Card style={styles.card}>
@@ -322,17 +343,11 @@ export default function BillComponent({ bill }: { bill: Bill }) {
                 })}
               </Text>
             ) : null}
-            {lastActionDescription ? (
+            {lastActionDate ? (
               <Text variant="bodySmall" style={styles.metaText}>
                 {t("bill.meta.lastAction", {
-                  defaultValue: "Last action: {{description}}{{dateSuffix}}",
-                  description: lastActionDescription,
-                  dateSuffix: lastActionDate
-                    ? t("bill.meta.lastActionDateSuffix", {
-                        defaultValue: " on {{date}}",
-                        date: lastActionDate,
-                      })
-                    : "",
+                  defaultValue: "Last action: {{date}}",
+                  date: lastActionDate,
                 })}
               </Text>
             ) : null}

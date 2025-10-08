@@ -7,6 +7,12 @@
       "recommendation": "Recomendación: {{r}}",
       "title": "Revisión del panel de sobrevivientes"
     },
+    "meta": {
+      "firstProposed": "Presentado por primera vez {{date}}",
+      "lastAction": "Última acción: {{date}}",
+      "status": "Estado: {{status}}{{dateSuffix}}",
+      "statusDateSuffix": " ({{date}})"
+    },
     "shareMessage": "Mira este proyecto de ley: {{num}} - {{title}}.",
     "translating": "Traduciendo…"
   },
