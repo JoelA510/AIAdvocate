@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
-import { Searchbar } from "react-native-paper";
+import { Searchbar, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 
@@ -37,6 +37,7 @@ export default function BillsHomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
 
   useEffect(() => {
     const fetchBills = async () => {
@@ -177,23 +178,52 @@ export default function BillsHomeScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <View style={styles.header}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.colors.surfaceContainerHigh,
+            borderColor: theme.colors.outlineVariant,
+            shadowColor: theme.colors.shadow,
+          },
+        ]}
+      >
         <Searchbar
           placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
           onChangeText={setSearchQuery}
           value={searchQuery}
-          style={styles.searchbar}
+          style={[
+            styles.searchbar,
+            {
+              backgroundColor: theme.colors.surfaceContainerLowest,
+              borderColor: theme.colors.outlineVariant,
+            },
+          ]}
+          inputStyle={{ fontSize: 16 }}
+          iconColor={theme.colors.primary}
+          placeholderTextColor={theme.colors.onSurfaceVariant}
         />
       </View>
-      <View style={styles.content}>{renderContent()}</View>
+      <View style={[styles.content, { paddingBottom: insets.bottom + 12 }]}>{renderContent()}</View>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
-  searchbar: {},
-  content: { flex: 1, paddingHorizontal: 16 },
+  header: {
+    marginHorizontal: 16,
+    padding: 14,
+    borderRadius: 24,
+    borderWidth: 1,
+    gap: 8,
+    elevation: 1,
+  },
+  searchbar: {
+    borderRadius: 22,
+    borderWidth: 1,
+    elevation: 0,
+  },
+  content: { flex: 1, paddingHorizontal: 16, paddingTop: 4 },
 });

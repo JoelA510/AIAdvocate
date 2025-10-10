@@ -31,8 +31,8 @@ export default function HeaderBanner({ forceShow }: Props) {
         {
           paddingTop: insets.top,
           height: collapsed ? insets.top : insets.top + HEADER_HEIGHT,
-          backgroundColor: theme.colors.surface,
-          borderBottomColor: theme.colors.outlineVariant ?? "#e5e5e5",
+          backgroundColor: theme.colors.surfaceContainerHigh,
+          borderBottomColor: theme.colors.outlineVariant,
         },
       ]}
     >
@@ -53,8 +53,9 @@ export default function HeaderBanner({ forceShow }: Props) {
         <View style={styles.right}>
           <TouchableOpacity
             onPress={onToggleLang}
-            style={styles.langButton}
+            style={[styles.langButton, { backgroundColor: theme.colors.primary }]}
             accessibilityRole="button"
+            activeOpacity={0.85}
           >
             <Text style={{ color: theme.colors.onPrimary, fontWeight: "600" }}>
               {i18n.language === "es" ? "ES" : "EN"}
@@ -71,6 +72,7 @@ const styles = StyleSheet.create({
     width: "100%",
     borderBottomWidth: StyleSheet.hairlineWidth,
     justifyContent: "flex-end",
+    paddingHorizontal: 16,
   },
   banner: {
     width: "100%",
@@ -86,10 +88,9 @@ const styles = StyleSheet.create({
   },
   langButton: {
     minWidth: 44,
-    height: 32,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    backgroundColor: "#078A97",
+    height: 34,
+    borderRadius: 18,
+    paddingHorizontal: 14,
     alignItems: "center",
     justifyContent: "center",
   },

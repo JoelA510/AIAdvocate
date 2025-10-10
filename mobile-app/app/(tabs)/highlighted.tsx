@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
+import { useTheme } from "react-native-paper";
+
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
@@ -34,6 +36,7 @@ export default function HighlightedScreen() {
   const [error, setError] = useState<string | null>(null);
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
 
   useEffect(() => {
     const fetchBills = async () => {
@@ -104,11 +107,19 @@ export default function HighlightedScreen() {
   };
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.colors.surfaceContainerHigh,
+            borderColor: theme.colors.outlineVariant,
+          },
+        ]}
+      >
         <ThemedText type="title">{t("tabs.highlighted.title", "Highlighted Bills")}</ThemedText>
       </View>
-      <View style={styles.content}>{renderContent()}</View>
+      <View style={[styles.content, { paddingBottom: insets.bottom + 12 }]}>{renderContent()}</View>
     </ThemedView>
   );
 }
@@ -118,12 +129,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
+    marginHorizontal: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderRadius: 24,
+    borderWidth: 1,
+    elevation: 1,
   },
   content: {
     flex: 1,
     paddingHorizontal: 16,
+    paddingTop: 12,
   },
 });

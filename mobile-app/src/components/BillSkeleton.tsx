@@ -1,6 +1,6 @@
 import React from "react";
 import { StyleSheet, View } from "react-native";
-import { useTheme } from "react-native-paper"; // Import useTheme
+import { useTheme } from "react-native-paper";
 
 import { ThemedView } from "../../components/ThemedView";
 
@@ -13,7 +13,15 @@ export default function BillSkeleton() {
   return (
     // ThemedView will now handle its own background automatically.
     // The border color is also updated to use the theme.
-    <ThemedView style={[styles.billContainer, { borderColor: theme.colors.outline }]}>
+    <ThemedView
+      style={[
+        styles.billContainer,
+        {
+          backgroundColor: theme.colors.surfaceContainerLowest,
+          borderColor: theme.colors.outlineVariant,
+        },
+      ]}
+    >
       <View
         style={[
           styles.placeholder,
@@ -44,10 +52,11 @@ export default function BillSkeleton() {
 
 const styles = StyleSheet.create({
   billContainer: {
-    marginBottom: 16,
-    padding: 16,
+    marginBottom: 18,
+    padding: 20,
     borderWidth: 1,
-    borderRadius: 12, // Increased border radius to match Paper's Card
+    borderRadius: 24,
+    gap: 12,
   },
   placeholder: {
     height: 20,

@@ -11,7 +11,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { Provider as PaperProvider, MD3LightTheme, MD3DarkTheme } from "react-native-paper";
+import { Provider as PaperProvider } from "react-native-paper";
 import Toast from "react-native-toast-message";
 import { useFonts } from "expo-font";
 import i18next from "i18next";
@@ -22,9 +22,11 @@ import { AuthProvider } from "../src/providers/AuthProvider";
 import { initConfig } from "../src/lib/config";
 import { LanguageProvider } from "../src/providers/LanguageProvider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { LightTheme, DarkTheme } from "../constants/paper-theme";
 const queryClient = new QueryClient();
 
-const BRAND = "#078A97" as const;
+const paletteFor = (scheme: "light" | "dark") =>
+  scheme === "dark" ? DarkTheme.colors : LightTheme.colors;
 const BANNER = require("../assets/images/header-banner.png");
 const LOGO_ASPECT_RATIO = 1500 / 257;
 
@@ -69,14 +71,19 @@ export default function RootLayout() {
     }
   }, [configError]);
 
+  const scheme = colorScheme === "dark" ? "dark" : "light";
+  const palette = paletteFor(scheme);
+
   // If config failed, show a minimal error screen.
   if (configError) {
     const t = (k: string, d: string) => i18next.t(k, d);
     return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorTitle}>{t("config.errorTitle", "Configuration Error")}</Text>
-        <Text style={styles.errorBody}>{configError}</Text>
-        <Text style={styles.errorHint}>
+      <View style={[styles.errorContainer, { backgroundColor: palette.background }]}>
+        <Text style={[styles.errorTitle, { color: palette.onBackground }]}>
+          {t("config.errorTitle", "Configuration Error")}
+        </Text>
+        <Text style={[styles.errorBody, { color: palette.onSurfaceVariant }]}>{configError}</Text>
+        <Text style={[styles.errorHint, { color: palette.onSurfaceVariant }]}>
           {t("config.errorHint", "Check your mobile-app/.env and restart the dev server.")}
         </Text>
       </View>
@@ -84,7 +91,7 @@ export default function RootLayout() {
   }
 
   if (!fontsLoaded && !fontError) {
-    const fallbackColor = colorScheme === "dark" ? "#0b0b0b" : "#ffffff";
+    const fallbackColor = palette.background;
     return (
       <View style={[styles.fallbackContainer, { backgroundColor: fallbackColor }]}>
         <Image
@@ -99,24 +106,7 @@ export default function RootLayout() {
   }
   if (fontError) console.error("Font loading error:", fontError);
 
-  // Theme overrides for MD3.
-  const Light = {
-    ...MD3LightTheme,
-    colors: {
-      ...MD3LightTheme.colors,
-      primary: BRAND,
-      surfaceTint: BRAND,
-    },
-  };
-  const Dark = {
-    ...MD3DarkTheme,
-    colors: {
-      ...MD3DarkTheme.colors,
-      primary: BRAND,
-      surfaceTint: BRAND,
-    },
-  };
-  const theme = colorScheme === "dark" ? Dark : Light;
+  const theme = scheme === "dark" ? DarkTheme : LightTheme;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -125,7 +115,10 @@ export default function RootLayout() {
           <QueryClientProvider client={queryClient}>
             <LanguageProvider>
               <AuthProvider>
-                <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+                <StatusBar
+                  style={scheme === "dark" ? "light" : "dark"}
+                  backgroundColor={palette.background}
+                />
                 <Stack>
                   <Stack.Screen name="index" options={{ headerShown: false }} />
                   <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
@@ -148,23 +141,20 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 24,
     paddingTop: 64,
-    backgroundColor: "#fff",
     justifyContent: "flex-start",
+    gap: 12,
   },
   errorTitle: {
     fontSize: 20,
     fontWeight: "700",
-    marginBottom: 12,
   },
   errorBody: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#333",
   },
   errorHint: {
-    marginTop: 16,
+    marginTop: 4,
     fontSize: 12,
-    color: "#666",
   },
   fallbackContainer: {
     flex: 1,
