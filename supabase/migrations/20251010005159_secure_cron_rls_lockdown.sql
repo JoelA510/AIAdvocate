@@ -1,5 +1,3 @@
-SET LOCAL ROLE supabase_admin;
-
 -- Ensure RLS is on (no-op if already enabled)
 ALTER TABLE cron.job ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cron.job_run_details ENABLE ROW LEVEL SECURITY;
@@ -41,4 +39,3 @@ REVOKE ALL ON ALL TABLES IN SCHEMA cron FROM anon, authenticated;
 REVOKE ALL ON SCHEMA cron FROM anon, authenticated;
 
 -- NOTE: service_role bypasses RLS and is unaffected. pg_cron internals continue to work.
-RESET ROLE;
