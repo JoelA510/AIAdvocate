@@ -1,1 +1,2 @@
-postgresql://postgres.klpwiiszmzzfvlbfsjrd:[YOUR-PASSWORD]@aws-0-us-west-1.pooler.supabase.com:6543/postgres
+# Placeholder pooled connection string. Do not commit real credentials.
+postgresql://postgres.klpwiiszmzzfvlbfsjrd:[REDACTED]@aws-0-us-west-1.pooler.supabase.com:6543/postgres
