@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS public.bookmarks (
   PRIMARY KEY (bill_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS public.app_admins (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
 -- Translations cache
 CREATE TABLE IF NOT EXISTS public.bill_translations (
   bill_id BIGINT NOT NULL REFERENCES public.bills(id) ON DELETE CASCADE,
@@ -87,6 +91,20 @@ CREATE TABLE IF NOT EXISTS public.bill_translations (
   original_text TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   PRIMARY KEY (bill_id, language_code)
+);
+
+CREATE TABLE IF NOT EXISTS public.location_lookup_cache (
+  lookup_key TEXT PRIMARY KEY,
+  raw_query TEXT NOT NULL,
+  query_type TEXT NOT NULL CHECK (query_type IN ('zip', 'city')),
+  lat DOUBLE PRECISION NOT NULL,
+  lon DOUBLE PRECISION NOT NULL,
+  representatives JSONB NOT NULL,
+  hit_count INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_hit_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '7 days')
 );
 
 -- Notifications & analytics
@@ -171,6 +189,7 @@ CREATE INDEX IF NOT EXISTS idx_bills_bill_number ON public.bills(bill_number);
 CREATE INDEX IF NOT EXISTS idx_bills_embed ON public.bills
   USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 CREATE INDEX IF NOT EXISTS idx_cron_job_errors_occurred_at ON public.cron_job_errors(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_location_lookup_cache_expires_at ON public.location_lookup_cache(expires_at);
 
 -- ---------- FULL-TEXT SEARCH (ranked) ----------
 ALTER TABLE public.bills
@@ -194,12 +213,17 @@ ALTER TABLE public.legislators ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_admins ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bill_translations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.location_lookup_cache ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_push_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cron_job_errors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.app_config ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.app_admins FROM anon;
+REVOKE ALL ON TABLE public.app_admins FROM authenticated;
 
 -- Public readable tables
 DO $$
@@ -220,10 +244,21 @@ BEGIN
     CREATE POLICY "Public can view translations" ON public.bill_translations FOR SELECT USING (true);
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='location_lookup_cache' AND policyname='Public can read location cache') THEN
+    CREATE POLICY "Public can read location cache" ON public.location_lookup_cache FOR SELECT USING (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='app_admins' AND policyname='Admins can read own record') THEN
+    CREATE POLICY "Admins can read own record" ON public.app_admins
+      FOR SELECT TO authenticated USING (auth.uid() = user_id);
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='app_config' AND policyname='Allow authenticated users to read config') THEN
     CREATE POLICY "Allow authenticated users to read config" ON public.app_config FOR SELECT TO authenticated USING (true);
   END IF;
 END $$;
+
+GRANT SELECT ON TABLE public.app_admins TO authenticated;
 
 -- User-owned tables (USING + WITH CHECK)
 DO $$
@@ -483,6 +518,11 @@ BEGIN
   DELETE FROM public.cron_job_errors WHERE occurred_at < NOW() - INTERVAL '30 days';
 END; $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.cleanup_expired_location_cache() RETURNS VOID AS $$
+BEGIN
+  DELETE FROM public.location_lookup_cache WHERE expires_at <= NOW();
+END; $$ LANGUAGE plpgsql SECURITY DEFINER;
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'daily-bill-sync') THEN
@@ -499,11 +539,17 @@ BEGIN
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-cron-job-errors') THEN
     PERFORM cron.unschedule('cleanup-cron-job-errors');
   END IF;
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-location-cache') THEN
+    PERFORM cron.unschedule('cleanup-location-cache');
+  END IF;
 END;
 $$;
 
 SELECT cron.schedule('cleanup-cron-job-errors', '0 0 * * 0', 'SELECT public.cleanup_old_cron_job_errors()')
 WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-cron-job-errors');
+
+SELECT cron.schedule('cleanup-location-cache', '0 3 * * *', 'SELECT public.cleanup_expired_location_cache()')
+WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'cleanup-location-cache');
 
 -- ---------- REALTIME (guarded) ----------
 DO $$
@@ -526,3 +572,7 @@ COMMENT ON TABLE public.bill_translations IS 'Caches AI-generated translations p
 COMMENT ON TABLE public.user_push_tokens IS 'Expo push tokens per user.';
 COMMENT ON TABLE public.subscriptions IS 'Bill subscriptions (saved/upvoted) for notifications.';
 COMMENT ON TABLE public.events IS 'Anonymous analytics events.';
+COMMENT ON TABLE public.app_admins IS 'Whitelist of application admins by user_id (auth.users).';
+COMMENT ON TABLE public.location_lookup_cache IS 'Caches non-specific location lookups (ZIP or city) to reduce external API usage.';
+COMMENT ON COLUMN public.location_lookup_cache.lookup_key IS 'Normalized cache key in the form "<type>:<value>" (type is zip or city).';
+COMMENT ON COLUMN public.location_lookup_cache.representatives IS 'Cached OpenStates representatives array for the location.';
