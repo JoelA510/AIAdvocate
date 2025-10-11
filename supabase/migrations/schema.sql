@@ -141,18 +141,30 @@ CREATE TABLE IF NOT EXISTS public.cron_job_errors (
 CREATE OR REPLACE FUNCTION public.invoke_edge_function(endpoint TEXT, job_name TEXT DEFAULT 'daily-bill-sync')
 RETURNS VOID AS $$
 DECLARE
-  status_code INT;
-  anon_key TEXT;
+  request_id BIGINT;
 BEGIN
-  anon_key := vault.get_secret('supabase_anon_key');
-  SELECT status INTO status_code
-  FROM net.http_post(
-    url := 'https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1/' || endpoint,
-    headers := '{"Content-Type": "application/json", "apikey": "' || anon_key || '"}'
-  );
-  IF status_code != 200 THEN
+  BEGIN
+    SELECT net.http_post(
+      url := 'https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1/' || endpoint,
+      headers := '{"Content-Type": "application/json"}'
+    )
+    INTO request_id;
+  EXCEPTION
+    WHEN OTHERS THEN
+      INSERT INTO public.cron_job_errors (job_name, error_message)
+      VALUES (
+        job_name,
+        'Invoke Error: Edge Function ' || endpoint || ' failed with ' || SQLERRM
+      );
+      RETURN;
+  END;
+
+  IF request_id IS NULL THEN
     INSERT INTO public.cron_job_errors (job_name, error_message)
-    VALUES (job_name, 'Invoke Error: Edge Function ' || endpoint || ' returned status ' || status_code);
+    VALUES (
+      job_name,
+      'Invoke Error: Edge Function ' || endpoint || ' returned null request id'
+    );
   END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
