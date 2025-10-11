@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
-import { Searchbar } from "react-native-paper";
+import { Searchbar, SegmentedButtons } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 
@@ -10,6 +10,16 @@ import EmptyState from "../../src/components/EmptyState";
 import { ThemedView } from "../../components/ThemedView";
 import { supabase } from "../../src/lib/supabase";
 import { fetchTranslationsForBills } from "../../src/lib/translation";
+
+const SESSION_FILTER_ENABLED = false; // Set to true once the 2027-2028 cycle should be exposed to users.
+const SESSION_ALL = "all";
+
+const extractSessionLabel = (stateLink: string | null | undefined): string | null => {
+  if (!stateLink) return null;
+  const match = stateLink.match(/bill_id=(\d{4})(\d{4})/);
+  if (!match) return null;
+  return `${match[1]}-${match[2]}`;
+};
 
 const buildOrIlikeFilter = (fields: string[], raw: string) => {
   const escaped = raw
@@ -64,6 +74,8 @@ export default function BillsHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
+  const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -122,7 +134,27 @@ export default function BillsHomeScreen() {
           }
         }
 
-        setBills(sortBills(data));
+        const sessionSet = new Set<string>();
+        (data ?? []).forEach((item) => {
+          const session = extractSessionLabel(item?.state_link);
+          if (session) sessionSet.add(session);
+        });
+        if (sessionSet.size) {
+          setAvailableSessions((prev) => {
+            const combined = new Set(prev);
+            sessionSet.forEach((session) => combined.add(session));
+            return Array.from(combined).sort((a, b) => b.localeCompare(a));
+          });
+        }
+
+        let filtered = data ?? [];
+        if (sessionFilter !== SESSION_ALL) {
+          filtered = filtered.filter(
+            (item) => extractSessionLabel(item?.state_link) === sessionFilter,
+          );
+        }
+
+        setBills(sortBills(filtered));
         setError(null);
       } catch (err: any) {
         setError(err.message);
@@ -134,11 +166,31 @@ export default function BillsHomeScreen() {
 
     const searchTimeout = setTimeout(fetchBills, 300);
     return () => clearTimeout(searchTimeout);
-  }, [searchQuery]);
+  }, [searchQuery, sessionFilter]);
 
   // Stable list of visible IDs; avoids listing `bills` as a dependency.
   const ids = useMemo(() => bills.map((b) => b.id), [bills]);
   const idsKey = useMemo(() => ids.join(","), [ids]);
+
+  useEffect(() => {
+    if (sessionFilter !== SESSION_ALL && !availableSessions.includes(sessionFilter)) {
+      setSessionFilter(SESSION_ALL);
+    }
+  }, [availableSessions, sessionFilter]);
+
+  const sessionOptions = useMemo(() => {
+    const unique = new Set<string>([SESSION_ALL, ...availableSessions]);
+    return Array.from(unique);
+  }, [availableSessions]);
+
+  const sessionButtons = useMemo(
+    () =>
+      sessionOptions.map((value) => ({
+        value,
+        label: value === SESSION_ALL ? t("sessions.all", "All") : value,
+      })),
+    [sessionOptions, t],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -235,6 +287,15 @@ export default function BillsHomeScreen() {
           value={searchQuery}
           style={styles.searchbar}
         />
+        {SESSION_FILTER_ENABLED && sessionButtons.length > 1 && (
+          <SegmentedButtons
+            value={sessionFilter}
+            onValueChange={setSessionFilter}
+            buttons={sessionButtons}
+            density="small"
+            style={styles.sessionButtons}
+          />
+        )}
       </View>
       <View style={styles.content}>{renderContent()}</View>
     </ThemedView>
@@ -245,5 +306,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
   searchbar: {},
+  sessionButtons: { marginTop: 8 },
   content: { flex: 1, paddingHorizontal: 16 },
 });
