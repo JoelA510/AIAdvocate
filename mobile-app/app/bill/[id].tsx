@@ -183,10 +183,22 @@ export default function BillDetailsScreen() {
       <HeaderBanner forceShow />
       <ScrollView
         style={[styles.scrollView]}
-        contentContainerStyle={{ paddingBottom: insets.bottom }}
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 32,
+          paddingHorizontal: 16,
+          paddingTop: 16,
+        }}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.container}>
+        <View
+          style={[
+            styles.container,
+            {
+              backgroundColor: theme.colors.surfaceContainerLowest,
+              borderColor: theme.colors.outlineVariant,
+            },
+          ]}
+        >
           <Button
             onPress={handleGoBack}
             icon={() => <IconSymbol name="chevron.left" size={24} />}
@@ -203,7 +215,9 @@ export default function BillDetailsScreen() {
           {isTranslating ? (
             <View style={styles.translatingContainer}>
               <PaperActivityIndicator size="small" />
-              <Text style={styles.translatingText}>{t("bill.translating", "Translating...")}</Text>
+              <Text style={[styles.translatingText, { color: theme.colors.onSurfaceVariant }]}>
+                {t("bill.translating", "Translating...")}
+              </Text>
             </View>
           ) : (
             <Text variant="titleLarge" style={styles.subtitle}>
@@ -223,7 +237,10 @@ export default function BillDetailsScreen() {
           </View>
 
           {bill.panel_review && (
-            <Card style={styles.reviewCard} mode="outlined">
+            <Card
+              style={[styles.reviewCard, { borderColor: theme.colors.outlineVariant }]}
+              mode="outlined"
+            >
               <Card.Title title={t("bill.panel.title", "Survivor Panel Review")} />
               <Card.Content>
                 <Text variant="labelLarge" style={styles.reviewRecommendation}>
@@ -251,7 +268,13 @@ export default function BillDetailsScreen() {
 const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   centeredContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 16 },
-  container: { flex: 1, padding: 16, paddingBottom: 40 },
+  container: {
+    flex: 1,
+    padding: 24,
+    borderRadius: 32,
+    borderWidth: 1,
+    gap: 16,
+  },
   title: { fontWeight: "bold" },
   subtitle: { marginBottom: 16 },
   actionsContainer: {
@@ -263,8 +286,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   divider: { marginVertical: 16 },
-  reviewCard: { marginVertical: 8 },
+  reviewCard: { marginVertical: 8, borderRadius: 24, borderWidth: 1 },
   reviewRecommendation: { fontWeight: "bold", marginBottom: 8 },
   translatingContainer: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-  translatingText: { marginLeft: 12, fontSize: 18, fontStyle: "italic", color: "gray" },
+  translatingText: { marginLeft: 12, fontSize: 18, fontStyle: "italic" },
 });

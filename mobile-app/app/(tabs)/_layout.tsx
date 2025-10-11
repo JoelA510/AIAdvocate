@@ -40,12 +40,27 @@ const TabsLayout: React.FC = () => {
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: theme.colors.primary,
-          tabBarInactiveTintColor: theme.colors.onSurfaceDisabled ?? "#888",
-          tabBarLabelStyle: { fontSize: 12, fontWeight: "500", textTransform: "none" },
+          tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
+          tabBarLabelStyle: { fontSize: 12, fontWeight: "600", textTransform: "none" },
           tabBarStyle: {
-            borderTopWidth: Platform.OS === "web" ? 0 : undefined,
-            backgroundColor: theme.colors.surface,
+            borderTopWidth: 0,
+            backgroundColor: theme.colors.surfaceContainerHigh,
+            marginHorizontal: 16,
+            marginBottom: Platform.OS === "ios" ? 20 : 14,
+            borderRadius: 24,
+            paddingHorizontal: 12,
+            height: 68,
+            paddingBottom: Platform.OS === "ios" ? 18 : 12,
+            paddingTop: 10,
+            elevation: 0,
+            shadowOpacity: 0,
           },
+          tabBarItemStyle: {
+            marginHorizontal: 6,
+            borderRadius: 18,
+          },
+          tabBarActiveBackgroundColor: theme.colors.surfaceContainerLowest,
+          tabBarInactiveBackgroundColor: "transparent",
           lazy: true,
         }}
       >

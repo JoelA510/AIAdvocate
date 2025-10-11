@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
-import { Card, Button } from "react-native-paper";
+import { Card, Button, useTheme } from "react-native-paper";
 
 const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
   "https://www.loveneverfailsus.com/") as string;
@@ -15,6 +15,7 @@ const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
 export default function LnfScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
 
   return (
     <ThemedView style={styles.container}>
@@ -32,7 +33,16 @@ export default function LnfScreen() {
         ]}
       >
         {Platform.OS === "web" ? (
-          <Card mode="elevated" style={styles.heroCard}>
+          <Card
+            mode="elevated"
+            style={[
+              styles.heroCard,
+              {
+                backgroundColor: theme.colors.surfaceContainerHigh,
+                borderColor: theme.colors.outlineVariant,
+              },
+            ]}
+          >
             <Pressable onPress={() => Linking.openURL(FEED_URL)} style={{ flex: 1 }}>
               <View style={styles.heroBody}>
                 <ThemedText type="title" style={{ marginBottom: 8 }}>
@@ -44,7 +54,11 @@ export default function LnfScreen() {
                       "This publisher blocks embedding for security. Click below to open the feed directly.",
                   })}
                 </ThemedText>
-                <Button mode="contained" onPress={() => Linking.openURL(FEED_URL)}>
+                <Button
+                  mode="contained"
+                  onPress={() => Linking.openURL(FEED_URL)}
+                  style={{ borderRadius: 18 }}
+                >
                   {t("lnf.open", { defaultValue: "Open Feed" })}
                 </Button>
               </View>
@@ -70,6 +84,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: Platform.OS === "web" ? 16 : 0,
   },
-  heroCard: { flex: 1, justifyContent: "center" },
+  heroCard: { flex: 1, justifyContent: "center", borderRadius: 28, borderWidth: 1 },
   heroBody: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 8 },
 });

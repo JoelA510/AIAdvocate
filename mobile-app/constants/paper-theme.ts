@@ -1,5 +1,7 @@
 import { MD3LightTheme, MD3DarkTheme, configureFonts } from "react-native-paper";
 
+import { BrandPalette, Colors } from "./Colors";
+
 // Map MD3 type tokens to your font family.
 // Make sure the font is loaded with the same key in app/_layout.tsx.
 const fontConfig = {
@@ -14,20 +16,108 @@ const fontConfig = {
   labelLarge: { fontFamily: "SpaceMono-Regular" },
 };
 
+const lightColors = {
+  ...MD3LightTheme.colors,
+  primary: BrandPalette.primary,
+  onPrimary: BrandPalette.onPrimary,
+  primaryContainer: BrandPalette.mist,
+  onPrimaryContainer: BrandPalette.onPrimaryMuted,
+  secondary: BrandPalette.primaryMuted,
+  onSecondary: BrandPalette.onPrimary,
+  secondaryContainer: "#C3E8EC",
+  onSecondaryContainer: BrandPalette.onPrimaryMuted,
+  tertiary: BrandPalette.sunrise,
+  onTertiary: BrandPalette.onSunrise,
+  tertiaryContainer: BrandPalette.sunriseSoft,
+  onTertiaryContainer: "#3B1C00",
+  background: Colors.light.background,
+  onBackground: Colors.light.text,
+  surface: Colors.light.surface,
+  surfaceBright: "#FFFFFF",
+  surfaceContainerHighest: "#E5F4F6",
+  surfaceContainerHigh: "#ECF7F8",
+  surfaceContainer: "#F3F9FA",
+  surfaceContainerLow: Colors.light.surface,
+  surfaceContainerLowest: "#FFFFFF",
+  surfaceDim: "#DDEFF1",
+  onSurface: Colors.light.text,
+  surfaceVariant: BrandPalette.mist,
+  onSurfaceVariant: BrandPalette.onSurfaceVariant,
+  outline: BrandPalette.outline,
+  outlineVariant: BrandPalette.outlineVariant,
+  inverseOnSurface: "#E0FAFC",
+  inverseSurface: "#0B2A2F",
+  inversePrimary: BrandPalette.skyHighlight,
+  shadow: "#000000",
+  scrim: "rgba(0,0,0,0.4)",
+  surfaceDisabled: "rgba(6, 37, 42, 0.12)",
+  onSurfaceDisabled: "rgba(6, 37, 42, 0.38)",
+  backdrop: "rgba(0, 28, 33, 0.4)",
+  elevation: {
+    level0: "transparent",
+    level1: "#F2FAFB",
+    level2: "#ECF7F8",
+    level3: "#E6F3F5",
+    level4: "#E2F2F4",
+    level5: "#DDF0F2",
+  },
+};
+
+const darkColors = {
+  ...MD3DarkTheme.colors,
+  primary: BrandPalette.skyHighlight,
+  onPrimary: "#00363B",
+  primaryContainer: BrandPalette.primaryMuted,
+  onPrimaryContainer: "#A7F2F6",
+  secondary: "#8CD0D6",
+  onSecondary: "#00363D",
+  secondaryContainer: "#004E55",
+  onSecondaryContainer: "#A8EBF1",
+  tertiary: BrandPalette.sunrise,
+  onTertiary: BrandPalette.onSunrise,
+  tertiaryContainer: "#623400",
+  onTertiaryContainer: "#FFDDA8",
+  background: Colors.dark.background,
+  onBackground: Colors.dark.text,
+  surface: Colors.dark.surface,
+  surfaceBright: "#083038",
+  surfaceContainerHighest: "#103F46",
+  surfaceContainerHigh: "#0C363D",
+  surfaceContainer: "#092E34",
+  surfaceContainerLow: Colors.dark.surface,
+  surfaceContainerLowest: "#00171D",
+  surfaceDim: "#041E23",
+  onSurface: Colors.dark.text,
+  surfaceVariant: "#2E4A4E",
+  onSurfaceVariant: "#AECFD2",
+  outline: "#6F9296",
+  outlineVariant: "#2E4A4E",
+  inverseOnSurface: Colors.light.text,
+  inverseSurface: Colors.light.surface,
+  inversePrimary: BrandPalette.primary,
+  shadow: "#000000",
+  scrim: "rgba(0,0,0,0.6)",
+  surfaceDisabled: "rgba(198, 232, 235, 0.12)",
+  onSurfaceDisabled: "rgba(198, 232, 235, 0.38)",
+  backdrop: "rgba(0, 14, 18, 0.6)",
+  elevation: {
+    level0: "transparent",
+    level1: "#052226",
+    level2: "#062B31",
+    level3: "#07313A",
+    level4: "#083540",
+    level5: "#093D49",
+  },
+};
+
 export const LightTheme = {
   ...MD3LightTheme,
   fonts: configureFonts({ config: fontConfig }),
-  colors: {
-    ...MD3LightTheme.colors,
-    primary: "#0a7ea4",
-  },
+  colors: lightColors,
 };
 
 export const DarkTheme = {
   ...MD3DarkTheme,
   fonts: configureFonts({ config: fontConfig }),
-  colors: {
-    ...MD3DarkTheme.colors,
-    primary: "#ffffff",
-  },
+  colors: darkColors,
 };
