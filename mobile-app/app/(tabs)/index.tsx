@@ -11,6 +11,18 @@ import { ThemedView } from "../../components/ThemedView";
 import { supabase } from "../../src/lib/supabase";
 import { fetchTranslationsForBills } from "../../src/lib/translation";
 
+const buildOrIlikeFilter = (fields: string[], raw: string) => {
+  const escaped = raw
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/,/g, "\\,")
+    .replace(/\)/g, "\\)")
+    .replace(/\(/g, "\\(");
+  const pattern = `%${escaped}%`;
+  return fields.map((field) => `${field}.ilike.${pattern}`).join(",");
+};
+
 const sortBills = (items: any[] | null | undefined) => {
   const toRank = (value: any) => {
     if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -91,12 +103,14 @@ export default function BillsHomeScreen() {
           } else if (
             e.code === "42883" ||
             /function public\.search_bills/i.test(e.message ?? "") ||
-            /schema cache/i.test(e.message ?? "")
+            /schema cache/i.test(e.message ?? "") ||
+            /column .*search/i.test(e.message ?? "")
           ) {
+            const orFilter = buildOrIlikeFilter(["bill_number", "title", "description"], trimmed);
             const { data: fallbackData, error: fallbackError } = await supabase
               .from("bills")
               .select("*")
-              .textSearch("search", trimmed, { type: "websearch", config: "english" })
+              .or(orFilter)
               .order("is_curated", { ascending: false })
               .order("status_date", { ascending: false })
               .order("created_at", { ascending: false })

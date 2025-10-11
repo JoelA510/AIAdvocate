@@ -36,6 +36,7 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Very short queries (e.g., "AB") are treated as bill number/title prefix searches.
   IF length(condensed) < 3 THEN
     RETURN QUERY
     SELECT
@@ -123,6 +124,7 @@ BEGIN
     END IF;
   END IF;
 
+  -- Fallback when tsquery is empty or yields no hits: do a broader ILIKE search.
   RETURN QUERY
   SELECT
     b.id,
@@ -161,7 +163,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.search_bills(TEXT)
-IS 'Ranked websearch over weighted bill fields with graceful fallback for short or sparse queries.';
+IS 'Ranked websearch over bills.search tsvector with graceful fallback for short or sparse queries.';
 
 GRANT EXECUTE ON FUNCTION public.search_bills(TEXT) TO anon, authenticated, service_role;
 
