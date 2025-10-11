@@ -36,7 +36,7 @@ const TabsLayout: React.FC = () => {
     <>
       <HeaderBanner forceShow />
       <Tabs
-        initialRouteName="highlighted"
+        initialRouteName="active"
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: theme.colors.primary,
@@ -50,9 +50,9 @@ const TabsLayout: React.FC = () => {
         }}
       >
         <Tabs.Screen
-          name="highlighted"
+          name="active"
           options={{
-            tabBarLabel: makeLabel(t("tabs.highlighted", { defaultValue: "Highlighted" })),
+            tabBarLabel: makeLabel(t("tabs.active.label", { defaultValue: "Active" })),
             tabBarIcon: ({ color, size }) => (
               <MaterialCommunityIcons name="star" color={color} size={size} />
             ),

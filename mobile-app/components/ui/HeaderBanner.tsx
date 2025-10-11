@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { StyleSheet, View, Image, TouchableOpacity } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter, type Href } from "expo-router";
 import { useTheme, Text } from "react-native-paper";
 import { useTranslation } from "react-i18next";
 
@@ -13,6 +13,7 @@ type Props = { forceShow?: boolean };
 export default function HeaderBanner({ forceShow }: Props) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
+  const router = useRouter();
   const theme = useTheme();
   const { i18n } = useTranslation();
 
@@ -38,14 +39,18 @@ export default function HeaderBanner({ forceShow }: Props) {
     >
       {/* Banner */}
       {!collapsed && (
-        <Image
-          source={BANNER}
-          resizeMode="contain"
-          style={[styles.banner, { tintColor: undefined }]} // keep original color
-          accessible
-          accessibilityRole="image"
-          accessibilityLabel="AI Advocate"
-        />
+        <TouchableOpacity
+          onPress={() => router.navigate("/(tabs)/index" as Href)}
+          style={styles.bannerTouchable}
+          accessibilityRole="button"
+          accessibilityLabel="AI Advocate home"
+        >
+          <Image
+            source={BANNER}
+            resizeMode="contain"
+            style={[styles.banner, { tintColor: undefined }]}
+          />
+        </TouchableOpacity>
       )}
 
       {/* Language toggle aligned with banner */}
@@ -75,6 +80,9 @@ const styles = StyleSheet.create({
   banner: {
     width: "100%",
     height: HEADER_HEIGHT,
+  },
+  bannerTouchable: {
+    width: "100%",
   },
   right: {
     position: "absolute",
