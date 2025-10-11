@@ -54,7 +54,16 @@ serve(async (req) => {
     const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const zip = await new JSZip().loadAsync(dataset.zip, { base64: true });
     
-    const billsToUpsert = [];
+    const billsToUpsert = [] as Array<{
+      id: number;
+      bill_number: string;
+      title: string;
+      description: string | null;
+      status: string | null;
+      state_link: string | null;
+      change_hash: string | null;
+      summary_simple: string | null;
+    }>;
     for (const file of Object.values(zip.files)) {
       if (file.name.includes('/bill/') && !file.dir) {
         try {
@@ -83,6 +92,39 @@ serve(async (req) => {
         headers: { "Content-Type": "application/json" }, status: 200,
       });
     }
+
+    const billIds = billsToUpsert.map((bill) => bill.id);
+    const { data: existingRows, error: existingError } = await supabaseAdmin
+      .from("bills")
+      .select("id, summary_simple")
+      .in("id", billIds);
+
+    if (existingError) {
+      throw existingError;
+    }
+
+    const existingSummaryMap = new Map<number, string>();
+    (existingRows ?? []).forEach((row) => {
+      if (row?.summary_simple) {
+        existingSummaryMap.set(row.id, row.summary_simple);
+      }
+    });
+
+    const preserveExistingSummary = (value: string | null | undefined) => {
+      if (!value) return false;
+      const normalized = value.trim();
+      if (!normalized) return false;
+      if (/^Placeholder for /i.test(normalized)) return false;
+      if (/^AI_SUMMARY_FAILED/i.test(normalized)) return false;
+      return true;
+    };
+
+    billsToUpsert.forEach((bill) => {
+      const existingSummary = existingSummaryMap.get(bill.id);
+      if (preserveExistingSummary(existingSummary)) {
+        bill.summary_simple = existingSummary ?? null;
+      }
+    });
 
     // --- STEP 4: Save to database ---
     console.log(`✅ Found ${billsToUpsert.length} relevant bills. Seeding database...`);
