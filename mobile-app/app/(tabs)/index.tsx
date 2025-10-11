@@ -12,6 +12,14 @@ import { supabase } from "../../src/lib/supabase";
 import { fetchTranslationsForBills } from "../../src/lib/translation";
 
 const sortBills = (items: any[] | null | undefined) => {
+  const toRank = (value: any) => {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
   const toTime = (value: any) => {
     if (!value) return 0;
     const date = new Date(value);
@@ -19,6 +27,14 @@ const sortBills = (items: any[] | null | undefined) => {
   };
 
   return [...(items ?? [])].sort((a, b) => {
+    const aRank = toRank(a?.rank);
+    const bRank = toRank(b?.rank);
+    if (aRank !== null || bRank !== null) {
+      const safeARank = aRank ?? Number.NEGATIVE_INFINITY;
+      const safeBRank = bRank ?? Number.NEGATIVE_INFINITY;
+      if (safeBRank !== safeARank) return safeBRank - safeARank;
+    }
+
     const curatedDiff = Number(Boolean(b?.is_curated)) - Number(Boolean(a?.is_curated));
     if (curatedDiff !== 0) return curatedDiff;
 
@@ -67,9 +83,29 @@ export default function BillsHomeScreen() {
           if (e) throw e;
           data = d ?? [];
         } else {
-          const { data: d, error: e } = await supabase.rpc("search_bills", { p_query: trimmed });
-          if (e) throw e;
-          data = d ?? [];
+          const { data: d, error: e } = await supabase.rpc("search_bills", {
+            p_query: trimmed,
+          });
+          if (!e) {
+            data = d ?? [];
+          } else if (
+            e.code === "42883" ||
+            /function public\.search_bills/i.test(e.message ?? "") ||
+            /schema cache/i.test(e.message ?? "")
+          ) {
+            const { data: fallbackData, error: fallbackError } = await supabase
+              .from("bills")
+              .select("*")
+              .textSearch("search", trimmed, { type: "websearch", config: "english" })
+              .order("is_curated", { ascending: false })
+              .order("status_date", { ascending: false })
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: false });
+            if (fallbackError) throw fallbackError;
+            data = fallbackData ?? [];
+          } else {
+            throw e;
+          }
         }
 
         setBills(sortBills(data));
