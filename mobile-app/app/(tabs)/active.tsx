@@ -1,4 +1,4 @@
-// mobile-app/app/(tabs)/highlighted.tsx
+// mobile-app/app/(tabs)/active.tsx
 
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
@@ -28,7 +28,7 @@ const sortBills = (items: any[] | null | undefined) => {
   });
 };
 
-export default function HighlightedScreen() {
+export default function ActiveScreen() {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,8 +87,11 @@ export default function HighlightedScreen() {
       return (
         <EmptyState
           icon="sparkles"
-          title="No Highlighted Bills"
-          message="There are no curated bills at the moment. Check back later!"
+          title={t("tabs.active.emptyTitle", "No Active Bills")}
+          message={t(
+            "tabs.active.emptyMessage",
+            "There are no active bills at the moment. Check back later!",
+          )}
         />
       );
     }
@@ -106,7 +109,7 @@ export default function HighlightedScreen() {
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <ThemedText type="title">{t("tabs.highlighted.title", "Highlighted Bills")}</ThemedText>
+        <ThemedText type="title">{t("tabs.active.title", "Active Bills")}</ThemedText>
       </View>
       <View style={styles.content}>{renderContent()}</View>
     </ThemedView>

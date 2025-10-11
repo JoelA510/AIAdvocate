@@ -108,12 +108,17 @@
   "tabs": {
     "advocacy": "Advocacy",
     "bills": "Bills",
-    "highlighted": "Highlighted",
+    "active": {
+      "label": "Active",
+      "title": "Active Bills",
+      "emptyTitle": "No Active Bills",
+      "emptyMessage": "There are no active bills at the moment. Check back later!"
+    },
     "lnf": "LNF",
     "saved": "Saved",
     "language": "Language",
     "explore": { "title": "Explore Bills" },
-    "highlightedSection": { "title": "Highlighted Bills" },
+    "activeSection": { "title": "Active Bills" },
     "savedSection": { "title": "Saved Bills" }
   },
   "home": {

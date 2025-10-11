@@ -111,12 +111,17 @@
   "tabs": {
     "advocacy": "Defensa",
     "bills": "Proyectos",
-    "highlighted": "Destacados",
+    "active": {
+      "label": "Activos",
+      "title": "Proyectos activos",
+      "emptyTitle": "No hay proyectos activos",
+      "emptyMessage": "No hay proyectos activos en este momento. Vuelve a intentarlo más tarde."
+    },
     "lnf": "LNF",
     "saved": "Guardados",
     "language": "Idioma",
     "explore": { "title": "Explorar proyectos" },
-    "highlightedSection": { "title": "Proyectos destacados" },
+    "activeSection": { "title": "Proyectos activos" },
     "savedSection": { "title": "Proyectos guardados" }
   },
   "home": {
