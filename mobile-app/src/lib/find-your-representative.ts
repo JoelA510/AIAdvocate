@@ -1,5 +1,6 @@
 // mobile-app/src/lib/find-your-representative.ts
 
+import { supabase } from "./supabase";
 import { getConfig } from "./config";
 import { safeFetch } from "./safeFetch";
 
@@ -10,12 +11,54 @@ type OpenStatesGeoResponse = {
   error?: { message?: string };
 };
 
+type FunctionResponse =
+  | {
+      results?: any[];
+      error?: string;
+    }
+  | any[];
+
 /**
- * Geocode the user's address (LocationIQ) and fetch nearby state legislators (OpenStates v3).
- * Returns an ARRAY of people, not { results }.
- * Throws with a helpful message on failure (caller should catch and display).
+ * Fetch nearby state legislators for a user-supplied address.
+ * Prefers the Supabase Edge function (which applies caching) and falls back to the
+ * client-side fetch pipeline if the function is unavailable.
  */
 export async function findYourRep(address: string): Promise<any[]> {
+  const trimmed = address.trim();
+  if (!trimmed) {
+    throw new Error("Please enter a location.");
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke<FunctionResponse>("find-your-rep", {
+      body: { query: trimmed },
+    });
+
+    if (error) {
+      throw new Error(error.message ?? "find-your-rep function returned an error.");
+    }
+
+    if (Array.isArray(data)) return data;
+
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+
+    if (Array.isArray(data?.results)) {
+      return data.results;
+    }
+
+    throw new Error("Unexpected response from find-your-rep function.");
+  } catch (fnError) {
+    console.warn(
+      "Supabase find-your-rep function unavailable. Falling back to direct lookup.",
+      fnError,
+    );
+    return fallbackLookup(trimmed);
+  }
+}
+
+async function fallbackLookup(query: string): Promise<any[]> {
   const { openstatesApiKey, locationIqApiKey } = getConfig();
 
   if (!openstatesApiKey || !locationIqApiKey) {
@@ -25,11 +68,10 @@ export async function findYourRep(address: string): Promise<any[]> {
     );
   }
 
-  // 1) Geocode with LocationIQ
   const geoRes = await safeFetch(
     `https://us1.locationiq.com/v1/search?key=${encodeURIComponent(
       locationIqApiKey,
-    )}&q=${encodeURIComponent(address)}&format=json&limit=1`,
+    )}&q=${encodeURIComponent(query)}&format=json&limit=1`,
     { retries: 2, retryDelayMs: 500 },
   );
 
@@ -37,9 +79,9 @@ export async function findYourRep(address: string): Promise<any[]> {
   if (!Array.isArray(matches) || matches.length === 0) {
     throw new Error("Address not found. Try a more specific address.");
   }
+
   const { lat, lon } = matches[0];
 
-  // 2) OpenStates people.geo — use header for API key (preferred)
   const peopleUrl = `https://v3.openstates.org/people.geo?lat=${encodeURIComponent(
     lat,
   )}&lng=${encodeURIComponent(lon)}`;
