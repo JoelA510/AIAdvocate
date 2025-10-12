@@ -58,6 +58,7 @@ type BillProgressEntry = {
 
 export default function BillComponent({ bill }: { bill: Bill }) {
   const theme = useTheme();
+  const colors = theme.colors as unknown as Record<string, string>;
   const router = useRouter();
   const { session } = useAuth();
   const { t, i18n } = useTranslation();
@@ -309,10 +310,32 @@ export default function BillComponent({ bill }: { bill: Bill }) {
 
   const lastActionDate = historyInsights.latestDate ?? statusDateFormatted ?? null;
 
+  const metaColor = theme.colors.onSurfaceVariant;
+  const summaryColor = theme.colors.onSurfaceVariant;
+  const reactionActiveColor = theme.colors.primary;
+  const surfaceContainerHigh = colors.surfaceContainerHigh ?? theme.colors.surface;
+  const surfaceContainerLowest = colors.surfaceContainerLowest ?? theme.colors.surface;
+  const outlineVariant = colors.outlineVariant ?? theme.colors.outline;
+  const shadowColor = colors.shadow ?? "#000";
+
   return (
-    <Card style={styles.card}>
-      <Pressable onPress={handlePress}>
-        <Card.Content>
+    <Card
+      mode="elevated"
+      style={[
+        styles.card,
+        {
+          backgroundColor: surfaceContainerLowest,
+          borderColor: outlineVariant,
+          shadowColor,
+        },
+      ]}
+    >
+      <Pressable
+        onPress={handlePress}
+        android_ripple={{ color: theme.colors.surfaceVariant }}
+        style={{ borderRadius: 24 }}
+      >
+        <Card.Content style={styles.content}>
           <View style={styles.header}>
             <Text variant="titleMedium" style={styles.billNumber}>
               {bill.bill_number}
@@ -320,6 +343,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
             <IconButton
               icon={billDetails.is_bookmarked ? "bookmark" : "bookmark-outline"}
               iconColor={theme.colors.primary}
+              containerColor={surfaceContainerHigh}
               size={24}
               onPress={handleBookmark}
               disabled={loading}
@@ -330,13 +354,17 @@ export default function BillComponent({ bill }: { bill: Bill }) {
             {bill.title}
           </Text>
           {summary && (
-            <Text variant="bodyMedium" numberOfLines={3} style={styles.summary}>
+            <Text
+              variant="bodyMedium"
+              numberOfLines={3}
+              style={[styles.summary, { color: summaryColor }]}
+            >
               {summary}
             </Text>
           )}
           <View style={styles.metaContainer}>
             {historyInsights.proposedDate ? (
-              <Text variant="bodySmall" style={styles.metaText}>
+              <Text variant="bodySmall" style={[styles.metaText, { color: metaColor }]}>
                 {t("bill.meta.firstProposed", {
                   defaultValue: "First proposed {{date}}",
                   date: historyInsights.proposedDate,
@@ -344,7 +372,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
               </Text>
             ) : null}
             {lastActionDate ? (
-              <Text variant="bodySmall" style={styles.metaText}>
+              <Text variant="bodySmall" style={[styles.metaText, { color: metaColor }]}>
                 {t("bill.meta.lastAction", {
                   defaultValue: "Last action: {{date}}",
                   date: lastActionDate,
@@ -352,7 +380,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
               </Text>
             ) : null}
             {statusText ? (
-              <Text variant="bodySmall" style={styles.metaText}>
+              <Text variant="bodySmall" style={[styles.metaText, { color: metaColor }]}>
                 {t("bill.meta.status", {
                   defaultValue: "Status: {{status}}{{dateSuffix}}",
                   status: statusText,
@@ -372,17 +400,35 @@ export default function BillComponent({ bill }: { bill: Bill }) {
         <View style={styles.reactionContainer}>
           <Button
             icon="thumb-up"
-            mode={billDetails.user_reaction === "upvote" ? "contained" : "text"}
+            mode={billDetails.user_reaction === "upvote" ? "contained" : "outlined"}
+            buttonColor={billDetails.user_reaction === "upvote" ? reactionActiveColor : undefined}
+            textColor={
+              billDetails.user_reaction === "upvote"
+                ? theme.colors.onPrimary
+                : theme.colors.onSurfaceVariant
+            }
             onPress={() => handleReaction("upvote")}
             disabled={loading}
+            style={styles.reactionButton}
+            compact
           >
             {billDetails.reaction_counts.upvote || 0}
           </Button>
           <Button
             icon="thumb-down"
-            mode={billDetails.user_reaction === "downvote" ? "contained" : "text"}
+            mode={billDetails.user_reaction === "downvote" ? "contained" : "outlined"}
+            buttonColor={
+              billDetails.user_reaction === "downvote" ? theme.colors.secondary : undefined
+            }
+            textColor={
+              billDetails.user_reaction === "downvote"
+                ? theme.colors.onSecondary
+                : theme.colors.onSurfaceVariant
+            }
             onPress={() => handleReaction("downvote")}
             disabled={loading}
+            style={styles.reactionButton}
+            compact
           >
             {billDetails.reaction_counts.downvote || 0}
           </Button>
@@ -393,18 +439,28 @@ export default function BillComponent({ bill }: { bill: Bill }) {
 }
 
 const styles = StyleSheet.create({
-  card: { marginBottom: 16 },
+  card: {
+    marginBottom: 18,
+    borderWidth: 1,
+    borderRadius: 24,
+  },
+  content: {
+    gap: 8,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
   },
-  billNumber: { fontWeight: "bold" },
-  title: { marginBottom: 8 },
-  summary: { color: "#555" },
-  metaContainer: { marginTop: 8, gap: 4 },
-  metaText: { color: "#555" },
-  actions: { paddingHorizontal: 8, paddingBottom: 8 },
-  reactionContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
+  billNumber: { fontWeight: "700" },
+  title: { marginBottom: 4 },
+  summary: { marginTop: 4 },
+  metaContainer: { marginTop: 12, gap: 4 },
+  metaText: {},
+  actions: { paddingHorizontal: 12, paddingBottom: 12 },
+  reactionContainer: { flexDirection: "row", alignItems: "center", gap: 10 },
+  reactionButton: {
+    borderRadius: 18,
+  },
 });

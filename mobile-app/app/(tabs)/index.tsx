@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
-import { Searchbar, SegmentedButtons } from "react-native-paper";
+import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 
@@ -77,6 +77,8 @@ export default function BillsHomeScreen() {
   const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
+  const colors = theme.colors as unknown as Record<string, string>;
 
   useEffect(() => {
     const fetchBills = async () => {
@@ -279,13 +281,31 @@ export default function BillsHomeScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <View style={styles.header}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
+            borderColor: colors.outlineVariant ?? theme.colors.outline,
+            shadowColor: colors.shadow ?? "#000",
+          },
+        ]}
+      >
         <Searchbar
           placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
           onChangeText={setSearchQuery}
           value={searchQuery}
-          style={styles.searchbar}
+          style={[
+            styles.searchbar,
+            {
+              backgroundColor: colors.surfaceContainerLowest ?? theme.colors.surface,
+              borderColor: colors.outlineVariant ?? theme.colors.outline,
+            },
+          ]}
+          inputStyle={{ fontSize: 16 }}
+          iconColor={theme.colors.primary}
+          placeholderTextColor={theme.colors.onSurfaceVariant}
         />
         {SESSION_FILTER_ENABLED && sessionButtons.length > 1 && (
           <SegmentedButtons
@@ -297,15 +317,26 @@ export default function BillsHomeScreen() {
           />
         )}
       </View>
-      <View style={styles.content}>{renderContent()}</View>
+      <View style={[styles.content, { paddingBottom: insets.bottom + 12 }]}>{renderContent()}</View>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
-  searchbar: {},
+  header: {
+    marginHorizontal: 16,
+    padding: 14,
+    borderRadius: 24,
+    borderWidth: 1,
+    gap: 8,
+    elevation: 1,
+  },
+  searchbar: {
+    borderRadius: 22,
+    borderWidth: 1,
+    elevation: 0,
+  },
   sessionButtons: { marginTop: 8 },
-  content: { flex: 1, paddingHorizontal: 16 },
+  content: { flex: 1, paddingHorizontal: 16, paddingTop: 4 },
 });

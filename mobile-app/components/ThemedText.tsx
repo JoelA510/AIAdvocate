@@ -8,14 +8,16 @@ export type ThemedTextProps = TextProps & {
 
 export function ThemedText({ style, type = "default", ...rest }: ThemedTextProps) {
   const theme = useTheme();
+  const bodyFont = theme.fonts.bodyMedium.fontFamily;
+  const titleFont = theme.fonts.titleLarge.fontFamily;
 
   return (
     <Text
       style={[
         // Use the theme's default text color for surfaces.
-        { color: theme.colors.onSurface },
+        { color: theme.colors.onSurface, fontFamily: bodyFont },
         type === "default" ? styles.default : undefined,
-        type === "title" ? styles.title : undefined,
+        type === "title" ? [styles.title, { fontFamily: titleFont }] : undefined,
         type === "defaultSemiBold" ? styles.defaultSemiBold : undefined,
         type === "subtitle" ? styles.subtitle : undefined,
         // Use the theme's primary color for links for consistency.
