@@ -223,7 +223,6 @@ export default function LegislatorScreen() {
                 t("legislator.missing", "We do not have that legislator on file yet."),
               );
             }
-            }
           }
         }
       } catch (err: any) {
