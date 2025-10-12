@@ -14,6 +14,7 @@ AI Advocate is Love Never Fails' mobile and web companion for survivors, allies,
 | **AI bilingual summaries** | Simple / Medium / Complex write-ups in English and Spanish on every bill card and detail page | `sync-updated-bills` edge function cleans LegiScan text, prompts OpenAI gpt-4o-mini for both languages in one call, stores results + embeddings, and upserts them atomically |
 | **Bookmarks & reactions** | “Saved” tab with sentiment buttons that stay in sync across devices | `bookmarks` and `reactions` tables with RPC helpers; client subscribes to realtime channels for instant UI updates |
 | **Advocacy hub** | “Find Your Representatives” workflow with optional bill context and ready-to-send email content | Edge function caches ZIP/city lookups in `location_lookup_cache`; OpenStates API is reconciled against the Supabase `legislators` table for app-specific metadata |
+| **Voting history & outreach** | Legislator vote timelines with filters plus copy-ready outreach template | `v_rep_vote_history` view + `votes-backfill`/`votes-daily` edge functions normalize OpenStates vote events into `vote_events`/`vote_records` for the UI |
 | **Love Never Fails home tab** | Embedded brand storytelling, giving/volunteer CTAs, and external site deep links | WebView on native, card-based CTA on web to respect CSP restrictions |
 | **Global theming & fonts** | Brand-consistent palette and typography (SF Pro on iOS, Roboto on Android, Helvetica on web) | Centralized MD3 Paper theme (`constants/paper-theme.ts`) driven by the Love Never Fails color palette; typography resolves per platform |
 | **Language & accessibility** | On-demand locale switching, text-to-speech prompts, and responsive layout | i18next + React Native Paper tokens; translations cached in `bill_translations`; TTS uses Expo Speech on supported platforms |
@@ -31,7 +32,8 @@ Supabase REST / RPC (PostgREST + Row Level Security)
     │
     ├─ Edge Functions (Deno):
     │     • bulk-import-dataset  • sync-updated-bills
-    │     • sync-legislators-and-votes • translate-bill(s)
+    │     • votes-backfill • votes-daily
+    │     • sync-legislators-and-votes (legacy) • translate-bill(s)
     │     • find-your-rep • invoke_full_legislative_refresh helpers
     │
     └─ PostgreSQL + Extensions:
@@ -55,8 +57,8 @@ Supabase REST / RPC (PostgREST + Row Level Security)
 3. **Translations on demand** (`translate-bill` / `translate-bills`)  
    *Edge functions expose RPCs the app calls when a new locale is requested; cached results come from `bill_translations` before hitting OpenAI again.*
 
-4. **Legislator & votes** (`sync-legislators-and-votes`)  
-   *Fetches the CA roster, generates stable lookup keys, pulls vote roll calls, and normalizes them into the `votes` table for detail screens.*
+4. **Legislator roster & vote history** (`votes-backfill`, `votes-daily`)  
+   *Backfills OpenStates vote events for every tracked bill, upserts normalized data into `legislators`, `vote_events`, and `vote_records`, and uses the `job_state` checkpoint table so the nightly incremental sync (02:15 America/Los_Angeles) resumes safely. The legacy `sync-legislators-and-votes` function remains for one-off LegiScan imports.* Deploy with `supabase functions deploy votes-backfill` / `votes-daily`, then schedule the cron job via `supabase functions schedule create votes-daily "15 2 * * *" --timezone "America/Los_Angeles"`.
 
 5. **Location caching** (`find-your-rep`)  
    *Accepts ZIP/city input, uses LocationIQ + OpenStates, upserts results into `location_lookup_cache`, and increments hit counts. Short queries return cached coordinates instantly.*
@@ -93,15 +95,17 @@ Supabase REST / RPC (PostgREST + Row Level Security)
 
 3. **Environment variables**
    - `mobile-app/.env`: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_OPENSTATES_API_KEY`, `EXPO_PUBLIC_LOCATIONIQ_API_KEY`, optional `EXPO_PUBLIC_LNF_URL`.
-   - `supabase/.env`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LEGISCAN_API_KEY`, `OpenAI_GPT_Key`, and any auxiliary secrets.
+  - `supabase/.env`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LEGISCAN_API_KEY`, `OPENSTATES_API_KEY`, `OpenAI_GPT_Key`, and any auxiliary secrets.
 
 4. **Database & functions**
    ```bash
    cd ../supabase
-   supabase start           # launches local Postgres + studio
-   supabase db push         # applies migrations & policies
-   supabase functions serve sync-updated-bills
-   supabase functions serve find-your-rep
+  supabase start           # launches local Postgres + studio
+  supabase db push         # applies migrations & policies
+  supabase functions serve sync-updated-bills
+  supabase functions serve votes-backfill
+  supabase functions serve votes-daily
+  supabase functions serve find-your-rep
    ```
 
 5. **Run the client**
@@ -117,8 +121,9 @@ Supabase REST / RPC (PostgREST + Row Level Security)
    supabase functions serve bulk-import-dataset
    supabase functions serve sync-updated-bills
 
-   # Refresh legislator roster and votes
-   supabase functions serve sync-legislators-and-votes
+   # Refresh legislator roster and vote history
+   supabase functions serve votes-backfill
+   supabase functions serve votes-daily
    ```
 
 ---

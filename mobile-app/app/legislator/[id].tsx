@@ -4,32 +4,15 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView, Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { Card, Text, Button, ActivityIndicator, Divider } from "react-native-paper";
+import { Card, Text, Button, ActivityIndicator } from "react-native-paper";
 import { supabase } from "../../src/lib/supabase";
-import { extractBillStatusDetails } from "../../src/lib/billStatus";
 import EmptyState from "../../src/components/EmptyState";
 import { IconSymbol } from "../../components/ui/IconSymbol";
-
-type VoteRow = {
-  id?: string | number;
-  vote_id?: number | null;
-  bill_id?: number;
-  bill_number?: string | null;
-  bill_title?: string | null;
-  bill_slug?: string | null;
-  bill_status?: string | null;
-  bill_status_text?: string | null;
-  bill_status_date?: string | null;
-  bill_progress?: any;
-  bill_calendar?: any;
-  option?: string | null; // yes/no/abstain/absent
-  result?: string | null; // passed/failed
-  yes_count?: number | null;
-  no_count?: number | null;
-  other_count?: number | null;
-  date?: string | null;
-  motion?: string | null;
-};
+import VotingHistory, {
+  FilterMode as VotingHistoryFilterMode,
+  BillContext as VotingHistoryBillContext,
+} from "../../src/components/VotingHistory";
+import ReachOutTemplate from "../../src/components/ReachOutTemplate";
 
 type Legislator = {
   id: string | number;
@@ -42,6 +25,11 @@ type Legislator = {
   openStatesId?: string | null;
   openstatesUrl?: string | null;
   contactUrl?: string | null;
+  billContext?: {
+    billId?: number | null;
+    billNumber?: string | null;
+    billTitle?: string | null;
+  } | null;
 };
 
 type LegislatorPayload = {
@@ -54,55 +42,33 @@ type LegislatorPayload = {
   email?: string | null;
   openstatesUrl?: string | null;
   contactUrl?: string | null;
-};
-
-const OPTION_LABELS: Record<string, string> = {
-  yea: "Yes",
-  yay: "Yes",
-  yea2: "Yes",
-  yea3: "Yes",
-  nay: "No",
-  nay2: "No",
-  nay3: "No",
-  aye: "Yes",
-  aye2: "Yes",
-  aye3: "Yes",
-  y: "Yes",
-  n: "No",
-  abstain: "Abstain",
-  present: "Present",
-  excused: "Excused",
-  absent: "Absent",
-  nv: "Present",
-  not_voting: "Not voting",
-};
-
-const formatOption = (input?: string | null) => {
-  if (!input) return "—";
-  const key = input.toLowerCase().replace(/\s+/g, "");
-  return OPTION_LABELS[key] ?? input;
-};
-
-const formatResult = (input?: string | null) => {
-  if (!input) return "—";
-  const trimmed = input.trim();
-  if (!trimmed) return "—";
-  return trimmed.replace(/_/g, " ");
+  billContext?: {
+    billId?: string | number | null;
+    billNumber?: string | null;
+    billTitle?: string | null;
+  } | null;
 };
 
 export default function LegislatorScreen() {
-  const params = useLocalSearchParams<{ id?: string | string[]; payload?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    payload?: string | string[];
+    billId?: string | string[];
+  }>();
   const idParam = Array.isArray(params.id) ? params.id[0] : params.id;
   const payloadParam = Array.isArray(params.payload) ? params.payload[0] : params.payload;
+  const billIdParam = Array.isArray(params.billId) ? params.billId[0] : params.billId;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
 
   const [leg, setLeg] = useState<Legislator | null>(null);
-  const [votes, setVotes] = useState<VoteRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"supabase" | "fallback">("supabase");
+  const [hasHistoryRows, setHasHistoryRows] = useState(false);
+  const [selectedBillContext, setSelectedBillContext] =
+    useState<VotingHistoryBillContext | null>(null);
 
   const handleGoBack = useCallback(() => {
     if (router.canGoBack()) {
@@ -123,6 +89,16 @@ export default function LegislatorScreen() {
             ? String(parsed.openStatesId)
             : null;
 
+      const rawBillContext = parsed.billContext ?? null;
+      const normalizedBillId =
+        typeof rawBillContext?.billId === "string"
+          ? Number(rawBillContext.billId)
+          : typeof rawBillContext?.billId === "number"
+            ? rawBillContext.billId
+            : null;
+      const billIdValue =
+        normalizedBillId !== null && !Number.isNaN(normalizedBillId) ? normalizedBillId : null;
+
       return {
         id: openStatesId ?? "lookup",
         name: parsed.name ?? undefined,
@@ -134,12 +110,55 @@ export default function LegislatorScreen() {
         openStatesId,
         openstatesUrl: parsed.openstatesUrl ?? null,
         contactUrl: parsed.contactUrl ?? null,
+        billContext: rawBillContext
+          ? {
+              billId: billIdValue,
+              billNumber: rawBillContext.billNumber ?? null,
+              billTitle: rawBillContext.billTitle ?? null,
+            }
+          : null,
       };
     } catch (err) {
       console.warn("Failed to parse legislator payload", err);
       return null;
     }
   }, [payloadParam]);
+
+  const initialVotingFilter = useMemo<VotingHistoryFilterMode | undefined>(() => {
+    const routeBillNumeric = billIdParam ? Number(billIdParam) : null;
+    if (routeBillNumeric !== null && !Number.isNaN(routeBillNumeric)) {
+      return { billId: String(routeBillNumeric) };
+    }
+    const fallbackBillId = fallbackProfile?.billContext?.billId;
+    if (
+      fallbackBillId !== undefined &&
+      fallbackBillId !== null &&
+      !Number.isNaN(Number(fallbackBillId))
+    ) {
+      return { billId: String(fallbackBillId) };
+    }
+    return undefined;
+  }, [billIdParam, fallbackProfile]);
+
+  const fallbackTemplateBillContext = useMemo(() => {
+    if (fallbackProfile?.billContext) {
+      return {
+        billNumber: fallbackProfile.billContext.billNumber ?? null,
+        billTitle: fallbackProfile.billContext.billTitle ?? null,
+      };
+    }
+    return null;
+  }, [fallbackProfile]);
+
+  const reachOutBillContext = useMemo(() => {
+    if (selectedBillContext) {
+      return {
+        billNumber: selectedBillContext.billNumber ?? null,
+        billTitle: selectedBillContext.billTitle ?? null,
+      };
+    }
+    return fallbackTemplateBillContext;
+  }, [selectedBillContext, fallbackTemplateBillContext]);
 
   useEffect(() => {
     let isMounted = true;
@@ -148,7 +167,6 @@ export default function LegislatorScreen() {
       setLoading(true);
 
       let nextLeg: Legislator | null = null;
-      let nextVotes: VoteRow[] = [];
       let nextError: string | null = null;
       let nextSource: "supabase" | "fallback" = "supabase";
 
@@ -182,7 +200,7 @@ export default function LegislatorScreen() {
           } else {
             const { data: legislatorData, error: legislatorError } = await supabase
               .from("legislators")
-              .select("id,name,party,district,chamber,email")
+              .select("id,name,party,district,chamber,email,title")
               .eq("id", numericId)
               .maybeSingle();
             if (legislatorError) throw legislatorError;
@@ -205,62 +223,6 @@ export default function LegislatorScreen() {
                 t("legislator.missing", "We do not have that legislator on file yet."),
               );
             }
-
-            if (nextSource === "supabase") {
-              const { data: rawVotes, error: votesError } = await supabase
-                .from("votes")
-                .select(
-                  "id,vote_id,bill_id,option,result,yes_count,no_count,other_count,date,motion",
-                )
-                .eq("legislator_id", numericId)
-                .order("date", { ascending: false })
-                .limit(100);
-              if (votesError) throw votesError;
-
-              let rows: VoteRow[] = (rawVotes as VoteRow[]) ?? [];
-
-              if (rows.length) {
-                const billIds = Array.from(
-                  new Set(rows.map((r) => r.bill_id).filter(Boolean)),
-                ) as number[];
-                if (billIds.length) {
-                  const { data: billData, error: billsError } = await supabase
-                    .from("bills")
-                    .select(
-                      "id,bill_number,title,slug,status,status_text,status_date,calendar,progress",
-                    )
-                    .in("id", billIds);
-                  if (!billsError && billData) {
-                    const billsMap = new Map<
-                      number,
-                      { bill_number?: string; title?: string; slug?: string }
-                    >();
-                    billData.forEach((bill: any) => {
-                      billsMap.set(Number(bill.id), bill);
-                    });
-                    rows = rows.map((vote) => {
-                      const bill = vote.bill_id ? billsMap.get(Number(vote.bill_id)) : null;
-                      return {
-                        ...vote,
-                        bill_number: vote.bill_number ?? bill?.bill_number ?? null,
-                        bill_title: vote.bill_title ?? bill?.title ?? null,
-                        bill_slug: vote.bill_slug ?? bill?.slug ?? null,
-                        bill_status: (vote as any).bill_status ?? (bill as any)?.status ?? null,
-                        bill_status_text:
-                          (vote as any).bill_status_text ?? (bill as any)?.status_text ?? null,
-                        bill_status_date:
-                          (vote as any).bill_status_date ?? (bill as any)?.status_date ?? null,
-                        bill_progress:
-                          (vote as any).bill_progress ?? (bill as any)?.progress ?? null,
-                        bill_calendar:
-                          (vote as any).bill_calendar ?? (bill as any)?.calendar ?? null,
-                      };
-                    });
-                  }
-                }
-              }
-
-              nextVotes = rows;
             }
           }
         }
@@ -275,9 +237,12 @@ export default function LegislatorScreen() {
       } finally {
         if (isMounted) {
           setLeg(nextLeg);
-          setVotes(nextVotes);
           setSource(nextSource);
           setError(nextError);
+          if (nextSource !== "supabase") {
+            setHasHistoryRows(false);
+            setSelectedBillContext(null);
+          }
           setLoading(false);
         }
       }
@@ -434,100 +399,29 @@ export default function LegislatorScreen() {
           </Card>
         )}
 
-        {!votes.length ? (
-          <EmptyState
-            icon="person.crop.circle.badge.questionmark"
-            title={t("legislator.votingRecord", "Voting Record")}
-            message={t(
-              "legislator.noVotes",
-              "We have not recorded any votes for this legislator yet.",
-            )}
+        {source === "supabase" && leg?.id ? (
+          <VotingHistory
+            legislatorId={String(leg.id)}
+            initialFilter={initialVotingFilter}
+            onRowsChange={(historyRows) => setHasHistoryRows(historyRows.length > 0)}
+            onBillContextChange={setSelectedBillContext}
           />
         ) : (
-          votes.map((v) => {
-            const statusDetails = extractBillStatusDetails({
-              status: v.bill_status ?? null,
-              status_text: v.bill_status_text ?? null,
-              status_date: v.bill_status_date ?? null,
-              calendar: v.bill_calendar ?? null,
-            });
-            const statusDateDisplay = statusDetails.statusDate
-              ? (() => {
-                  const parsed = new Date(statusDetails.statusDate as string);
-                  return Number.isNaN(parsed.getTime()) ? null : parsed.toLocaleDateString();
-                })()
-              : null;
-            const nextEventDescriptor = statusDetails.nextEvent
-              ? [
-                  statusDetails.nextEvent.description,
-                  statusDetails.nextEvent.chamber,
-                  statusDetails.nextEvent.location,
-                ]
-                  .filter(Boolean)
-                  .join(" • ")
-              : null;
-
-            return (
-              <Card key={String(v.id)} style={{ marginBottom: 12 }} mode="outlined">
-                <Card.Title
-                  title={`${v.bill_number ?? v.bill_slug ?? v.bill_id ?? "—"}`}
-                  subtitle={v.bill_title ?? ""}
-                />
-                <Card.Content>
-                  <Text>
-                    {t("legislator.vote", "Vote: {{option}}", { option: formatOption(v.option) })}
-                  </Text>
-                  <Text>
-                    {t("legislator.result", "Result: {{result}}", {
-                      result: formatResult(v.result),
-                    })}
-                  </Text>
-                  {v.motion && (
-                    <Text style={{ marginTop: 4, opacity: 0.8 }}>
-                      {t("legislator.motion", "Motion: {{motion}}", { motion: v.motion })}
-                    </Text>
-                  )}
-                  {statusDetails.statusLabel && (
-                    <Text style={{ marginTop: 4, opacity: 0.8 }}>
-                      {t("bill.currentStatus", "Current status: {{status}}", {
-                        status: statusDetails.statusLabel,
-                      })}
-                      {statusDateDisplay ? ` • ${statusDateDisplay}` : ""}
-                    </Text>
-                  )}
-                  {statusDetails.nextEvent && nextEventDescriptor && (
-                    <Text style={{ marginTop: 4, opacity: 0.75 }}>
-                      {t("bill.nextEventLine", "Next event: {{desc}} on {{date}}", {
-                        desc: nextEventDescriptor,
-                        date: statusDetails.nextEvent.displayDate,
-                      })}
-                    </Text>
-                  )}
-                  <Divider style={{ marginVertical: 8 }} />
-                  <Text>{`Yes: ${v.yes_count ?? 0} • No: ${v.no_count ?? 0} • Other: ${v.other_count ?? 0}`}</Text>
-                  {v.date && (
-                    <Text style={{ opacity: 0.6, marginTop: 6 }}>
-                      {new Date(v.date).toLocaleString()}
-                    </Text>
-                  )}
-                </Card.Content>
-                <Card.Actions>
-                  <Button
-                    mode="text"
-                    disabled={!v.bill_id}
-                    onPress={() => {
-                      if (v.bill_id) {
-                        router.push({ pathname: "/bill/[id]", params: { id: String(v.bill_id) } });
-                      }
-                    }}
-                  >
-                    {t("legislator.openBill", "Open bill")}
-                  </Button>
-                </Card.Actions>
-              </Card>
-            );
-          })
+          <Card mode="outlined" style={{ marginTop: 12 }}>
+            <Card.Content>
+              <Text>
+                {t(
+                  "legislator.noVotes",
+                  "We have not recorded any votes for this legislator yet.",
+                )}
+              </Text>
+            </Card.Content>
+          </Card>
         )}
+
+        {source === "supabase" && hasHistoryRows ? (
+          <ReachOutTemplate legislator={leg} billContext={reachOutBillContext} />
+        ) : null}
       </ScrollView>
     </View>
   );

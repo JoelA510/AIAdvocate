@@ -185,6 +185,13 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
             email,
             openstatesUrl: p.openstates_url ?? null,
             contactUrl: !email && rawEmail ? rawEmail : null,
+            billContext: bill
+              ? {
+                  billId: typeof bill.id === "number" ? bill.id : null,
+                  billNumber: bill.bill_number ?? null,
+                  billTitle: bill.title ?? null,
+                }
+              : null,
           });
           return (
             <Card key={p.id ?? `${nameOf(p)}-${idx}`} style={{ marginBottom: 12 }} mode="outlined">
@@ -218,12 +225,16 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
                   mode="text"
                   disabled={!hasMatch && !p.id}
                   onPress={() => {
-                    const params = hasMatch
-                      ? { id: String(p.supabaseId), payload: fallbackPayload }
-                      : typeof p.id === "string" || typeof p.id === "number"
-                        ? { id: "lookup", payload: fallbackPayload }
-                        : null;
+                    const params =
+                      hasMatch
+                        ? { id: String(p.supabaseId), payload: fallbackPayload }
+                        : typeof p.id === "string" || typeof p.id === "number"
+                          ? { id: "lookup", payload: fallbackPayload }
+                          : null;
                     if (params) {
+                      if (bill?.id) {
+                        (params as Record<string, string>).billId = String(bill.id);
+                      }
                       router.push({ pathname: "/legislator/[id]", params });
                     }
                   }}

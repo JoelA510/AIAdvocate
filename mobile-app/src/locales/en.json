@@ -99,6 +99,29 @@
     "selectBill": "Select Bill (optional)",
     "noneOption": "None"
   },
+  "votingHistory": {
+    "filter": {
+      "all": "All bills",
+      "closed": "Closed bills (passed/rejected)",
+      "specific": "Specific bill",
+      "pickBill": "Select bill",
+      "noBills": "No bills on record yet."
+    },
+    "motion": "Motion",
+    "result": "Result",
+    "choiceLabel": "Choice",
+    "choiceUnknown": "Unknown",
+    "none": "We have not recorded any votes for this legislator yet.",
+    "noneForBill": "No recorded votes for this legislator on the selected bill yet.",
+    "invalidId": "Voting history unavailable for this member.",
+    "noTitle": "No title available"
+  },
+  "reachOut": {
+    "title": "Reach Out",
+    "subtitle": "Customize the draft below, copy it, and send via your preferred channel.",
+    "copy": "Copy",
+    "copied": "Template copied"
+  },
   "share": {
     "copied": "Link copied to clipboard",
     "error": { "title": "Share failed" },
