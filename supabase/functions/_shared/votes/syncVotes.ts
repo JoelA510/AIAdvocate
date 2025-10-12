@@ -34,7 +34,7 @@ export async function syncBillVoteEvents(
       provider: "openstates",
       provider_vote_event_id: event.id,
       bill_id: bill.id,
-      motion: event.motion ?? null,
+      motion: event.motionText ?? null,
       result: event.result ?? null,
       chamber: normalizeChamber(event.organization?.classification ?? event.organization?.name ?? null),
       date: normalizeDate(event.startDate),
@@ -150,7 +150,6 @@ async function ensureLegislators(
       updated_at: nowIso,
     };
 
-    if (chamber) payload.chamber = chamber;
     const lookupKey = buildLookupKey(name, chamber, null);
     if (lookupKey) payload.lookup_key = lookupKey;
 

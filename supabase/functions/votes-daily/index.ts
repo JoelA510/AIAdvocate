@@ -16,6 +16,7 @@ const corsHeaders = {
 const JOB_KEY = "votes-daily:last-run";
 const FALLBACK_WINDOW_MS = 1000 * 60 * 60 * 48; // 48 hours
 const MAX_RETRIES = 3;
+const RATE_LIMIT_DELAY_MS = 1200;
 
 type BillRow = {
   id: number;
@@ -143,6 +144,8 @@ serve(async (req) => {
         console.log(
           `[votes-daily] Bill ${bill.bill_number ?? bill.id} processed (${voteEventsProcessed} events, ${voteRecordsProcessed} records).`,
         );
+
+        await sleep(RATE_LIMIT_DELAY_MS);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[votes-daily] Failed syncing bill ${bill.bill_number ?? bill.id}: ${message}`);
@@ -150,6 +153,7 @@ serve(async (req) => {
           provider_bill_id: providerBillId,
           reason: `Sync error: ${message}`,
         });
+        await sleep(RATE_LIMIT_DELAY_MS);
       }
     }
 
