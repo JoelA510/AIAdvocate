@@ -1,7 +1,7 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "types": ["expo-router", "jest"],
+    "types": ["expo-router", "jest", "./types/react-native-paper"],
     "strict": true,
     "baseUrl": ".",
     "paths": {

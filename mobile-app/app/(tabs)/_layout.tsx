@@ -18,6 +18,7 @@ type TabLabelProps = {
 const TabsLayout: React.FC = () => {
   const { t } = useTranslation();
   const theme = useTheme();
+  const colors = theme.colors as unknown as Record<string, string>;
 
   const makeLabel = (label: string) => {
     const TabLabel = ({ color }: TabLabelProps): React.ReactElement => (
@@ -44,7 +45,8 @@ const TabsLayout: React.FC = () => {
           tabBarLabelStyle: { fontSize: 12, fontWeight: "500", textTransform: "none" },
           tabBarStyle: {
             borderTopWidth: Platform.OS === "web" ? 0 : undefined,
-            backgroundColor: theme.colors.surface,
+            backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
+            borderTopColor: colors.outlineVariant ?? theme.colors.outline,
           },
           lazy: true,
         }}

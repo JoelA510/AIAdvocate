@@ -11,9 +11,8 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { Provider as PaperProvider, MD3LightTheme, MD3DarkTheme } from "react-native-paper";
+import { Provider as PaperProvider } from "react-native-paper";
 import Toast from "react-native-toast-message";
-import { useFonts } from "expo-font";
 import i18next from "i18next";
 
 import "../src/lib/i18n";
@@ -22,9 +21,11 @@ import { AuthProvider } from "../src/providers/AuthProvider";
 import { initConfig } from "../src/lib/config";
 import { LanguageProvider } from "../src/providers/LanguageProvider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+import { LightTheme, DarkTheme } from "../constants/paper-theme";
+import { Colors } from "../constants/Colors";
 const queryClient = new QueryClient();
 
-const BRAND = "#078A97" as const;
 const BANNER = require("../assets/images/header-banner.png");
 const LOGO_ASPECT_RATIO = 1500 / 257;
 
@@ -32,10 +33,8 @@ const LOGO_ASPECT_RATIO = 1500 / 257;
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
-  const [fontsLoaded, fontError] = useFonts({
-    "SpaceMono-Regular": require("../assets/fonts/SpaceMono-Regular.ttf"),
-  });
   const [configError, setConfigError] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false);
   const colorScheme = useColorScheme();
   const { width: screenWidth } = useWindowDimensions();
   const resolvedWidth = screenWidth > 0 ? screenWidth : 360;
@@ -46,22 +45,13 @@ export default function RootLayout() {
   useEffect(() => {
     try {
       initConfig();
+      setIsReady(true);
+      SplashScreen.hideAsync().catch(() => {});
     } catch (e: any) {
       setConfigError(e?.message ?? "Unknown configuration error");
+      SplashScreen.hideAsync().catch(() => {});
     }
   }, []);
-
-  useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [fontsLoaded, fontError]);
-
-  useEffect(() => {
-    if (!fontsLoaded && !fontError) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [fontsLoaded, fontError]);
 
   useEffect(() => {
     if (configError) {
@@ -83,8 +73,8 @@ export default function RootLayout() {
     );
   }
 
-  if (!fontsLoaded && !fontError) {
-    const fallbackColor = colorScheme === "dark" ? "#0b0b0b" : "#ffffff";
+  if (!isReady && !configError) {
+    const fallbackColor = colorScheme === "dark" ? Colors.dark.background : Colors.light.background;
     return (
       <View style={[styles.fallbackContainer, { backgroundColor: fallbackColor }]}>
         <Image
@@ -97,26 +87,8 @@ export default function RootLayout() {
       </View>
     );
   }
-  if (fontError) console.error("Font loading error:", fontError);
-
   // Theme overrides for MD3.
-  const Light = {
-    ...MD3LightTheme,
-    colors: {
-      ...MD3LightTheme.colors,
-      primary: BRAND,
-      surfaceTint: BRAND,
-    },
-  };
-  const Dark = {
-    ...MD3DarkTheme,
-    colors: {
-      ...MD3DarkTheme.colors,
-      primary: BRAND,
-      surfaceTint: BRAND,
-    },
-  };
-  const theme = colorScheme === "dark" ? Dark : Light;
+  const theme = colorScheme === "dark" ? DarkTheme : LightTheme;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

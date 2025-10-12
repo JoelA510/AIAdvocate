@@ -15,6 +15,7 @@ export default function HeaderBanner({ forceShow }: Props) {
   const pathname = usePathname();
   const router = useRouter();
   const theme = useTheme();
+  const colors = theme.colors as unknown as Record<string, string>;
   const { i18n } = useTranslation();
 
   // Hide (collapse) on splash route unless forced
@@ -32,18 +33,19 @@ export default function HeaderBanner({ forceShow }: Props) {
         {
           paddingTop: insets.top,
           height: collapsed ? insets.top : insets.top + HEADER_HEIGHT,
-          backgroundColor: theme.colors.surface,
-          borderBottomColor: theme.colors.outlineVariant ?? "#e5e5e5",
+          backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
+          borderBottomColor: colors.outlineVariant ?? theme.colors.outline,
+          shadowColor: colors.shadow ?? "#000",
         },
       ]}
     >
-      {/* Banner */}
       {!collapsed && (
         <TouchableOpacity
-          onPress={() => router.navigate("/(tabs)/index" as Href)}
+          onPress={() => router.navigate("/" as Href)}
           style={styles.bannerTouchable}
           accessibilityRole="button"
           accessibilityLabel="AI Advocate home"
+          activeOpacity={0.85}
         >
           <Image
             source={BANNER}
@@ -53,13 +55,13 @@ export default function HeaderBanner({ forceShow }: Props) {
         </TouchableOpacity>
       )}
 
-      {/* Language toggle aligned with banner */}
       {!collapsed && (
         <View style={styles.right}>
           <TouchableOpacity
             onPress={onToggleLang}
-            style={styles.langButton}
+            style={[styles.langButton, { backgroundColor: theme.colors.primary }]}
             accessibilityRole="button"
+            activeOpacity={0.85}
           >
             <Text style={{ color: theme.colors.onPrimary, fontWeight: "600" }}>
               {i18n.language === "es" ? "ES" : "EN"}
@@ -76,6 +78,7 @@ const styles = StyleSheet.create({
     width: "100%",
     borderBottomWidth: StyleSheet.hairlineWidth,
     justifyContent: "flex-end",
+    paddingHorizontal: 16,
   },
   banner: {
     width: "100%",
@@ -97,7 +100,6 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     paddingHorizontal: 12,
-    backgroundColor: "#078A97",
     alignItems: "center",
     justifyContent: "center",
   },

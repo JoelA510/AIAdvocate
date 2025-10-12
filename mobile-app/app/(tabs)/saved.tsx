@@ -3,6 +3,7 @@ import { StyleSheet, FlatList, View, RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, Stack } from "expo-router";
 import { useTranslation } from "react-i18next";
+import { useTheme } from "react-native-paper";
 
 import { ThemedView } from "../../components/ThemedView";
 import BillComponent from "../../src/components/Bill";
@@ -15,6 +16,8 @@ export default function SavedBillsScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
+  const theme = useTheme();
+  const colors = theme.colors as unknown as Record<string, string>;
 
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,16 +122,32 @@ export default function SavedBillsScreen() {
   }, [loading, bills, insets.bottom, refreshing, onRefresh, t]);
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 8, paddingHorizontal: 16 }]}>
       <Stack.Screen
         options={{ title: t("tabs.saved", { defaultValue: "Saved" }), headerShown: false }}
       />
-      <View style={styles.content}>{content}</View>
+      <View
+        style={[
+          styles.content,
+          {
+            backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
+            borderColor: colors.outlineVariant ?? theme.colors.outline,
+          },
+        ]}
+      >
+        {content}
+      </View>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { flex: 1, paddingHorizontal: 16 },
+  content: {
+    flex: 1,
+    marginTop: 12,
+    borderRadius: 28,
+    borderWidth: 1,
+    padding: 16,
+  },
 });
