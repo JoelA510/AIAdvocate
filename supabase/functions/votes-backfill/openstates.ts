@@ -20,7 +20,7 @@ export type OpenStatesVote = {
 
 export type OpenStatesVoteEvent = {
   id: string;
-  motion: string | null;
+  motionText: string | null;
   result: string | null;
   startDate: string | null;
   updatedAt?: string | null;
@@ -66,19 +66,23 @@ export async function fetchBillVoteEvents(
   billExternalId: string,
 ): Promise<OpenStatesVoteEvent[]> {
   const query = `
-    query BillVoteEvents($id: ID!) {
+    query BillVoteEvents($id: String!) {
       bill(id: $id) {
         id
-        votes {
-          id
-          motion
-          result
-          startDate
-          updatedAt
-          organization { classification name }
-          votes {
-            option
-            voter { id name }
+        votes(first: 200) {
+          edges {
+            node {
+              id
+              motionText
+              result
+              startDate
+              updatedAt
+              organization { classification name }
+              votes {
+                option
+                voter { id name }
+              }
+            }
           }
         }
       }
@@ -86,10 +90,17 @@ export async function fetchBillVoteEvents(
   `;
 
   const data = await performQuery<{
-    bill: { votes: OpenStatesVoteEvent[] | null } | null;
+    bill: {
+      votes: {
+        edges: Array<{ node: OpenStatesVoteEvent | null }>;
+      } | null;
+    } | null;
   }>({ query, variables: { id: billExternalId }, apiKey });
 
-  return data.bill?.votes?.filter((vote) => vote?.id) ?? [];
+  const edges = data.bill?.votes?.edges ?? [];
+  return edges
+    .map((edge) => edge?.node)
+    .filter((vote): vote is OpenStatesVoteEvent => Boolean(vote?.id));
 }
 
 export async function fetchRecentVoteEvents(
@@ -107,7 +118,7 @@ export async function fetchRecentVoteEvents(
         edges {
           node {
             id
-            motion
+            motionText
             result
             startDate
             updatedAt
