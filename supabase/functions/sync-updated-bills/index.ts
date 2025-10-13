@@ -35,7 +35,11 @@ const cleanText = (rawText: string): string => {
     .replace(/ /g, " ")
     .replace(/Â/g, "")
     .replace(/\uFFFD/g, "")
-    .replace(/\s\s+/g, " ")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\t+/g, " ")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
   return cleanedText;
 };
@@ -121,6 +125,7 @@ serve(async (req) => {
       const summaryPrompt = `
         Read the legislative content below and return a JSON object with this exact shape:
         {
+          "formatted_text": "...",
           "english": {
             "simple": "...",
             "medium": "...",
@@ -134,6 +139,7 @@ serve(async (req) => {
         }
 
         Requirements:
+        - "formatted_text" must contain the exact wording of the legislative text while improving whitespace: insert blank lines between sections, preserve numbered or bulleted items on their own lines, and avoid altering or paraphrasing the content.
         - The English summaries must use only ASCII characters (replace smart quotes, dashes, etc.).
         - "simple" explains the bill for a 5th-grade reader in at least one paragraph.
         - "medium" is a detailed 10th-grade explanation in at least two paragraphs.
@@ -146,47 +152,83 @@ serve(async (req) => {
         ${originalText}
       `;
 
-      const summaryResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openAiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content:
-                "You analyze legislation and return strictly valid JSON containing bilingual tiered summaries.",
-            },
-            { role: "user", content: summaryPrompt.trim() },
-          ],
-        }),
-      });
+      const makeSummaryRequest = async () => {
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${openAiKey}`,
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            response_format: { type: "json_object" },
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You analyze legislation and return strictly valid JSON containing bilingual tiered summaries and a formatted version of the source text.",
+              },
+              { role: "user", content: summaryPrompt.trim() },
+            ],
+          }),
+        });
 
-      if (!summaryResponse.ok) {
-        const errorDetails = await summaryResponse.text();
-        throw new Error(`OpenAI chat completion failed (${summaryResponse.status}): ${errorDetails}`);
+        if (!response.ok) {
+          const errorDetails = await response.text();
+          throw new Error(`OpenAI chat completion failed (${response.status}): ${errorDetails}`);
+        }
+
+        const payload = await response.json();
+        const content = payload?.choices?.[0]?.message?.content;
+        if (!content) {
+          throw new Error("OpenAI chat completion returned no summary content.");
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(content.trim());
+        } catch (err) {
+          throw new Error(`Failed to parse OpenAI JSON response: ${(err as Error).message}`);
+        }
+
+        return parsed;
+      };
+
+      let summaries: any;
+      const MAX_ATTEMPTS = 2;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          summaries = await makeSummaryRequest();
+          break;
+        } catch (err) {
+          if (attempt === MAX_ATTEMPTS) throw err;
+          console.warn(`OpenAI summary attempt ${attempt} failed. Retrying...`, err);
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        }
       }
 
-      const summaryPayload = await summaryResponse.json();
-      const summaryContent = summaryPayload?.choices?.[0]?.message?.content;
-      if (!summaryContent) {
-        throw new Error("OpenAI chat completion returned no summary content.");
+      if (!summaries) {
+        throw new Error("OpenAI summary attempts failed without a response payload.");
       }
 
-      const summaries = JSON.parse(summaryContent.trim());
+      const formattedText = summaries?.formatted_text;
       const englishSummaries = summaries?.english;
       const spanishSummaries = summaries?.spanish;
 
+      if (!formattedText || typeof formattedText !== "string") {
+        throw new Error("Missing formatted_text in OpenAI response.");
+      }
       if (!englishSummaries?.simple || !englishSummaries?.medium || !englishSummaries?.complex) {
         throw new Error("Missing English summaries in response.");
       }
       if (!spanishSummaries?.simple || !spanishSummaries?.medium || !spanishSummaries?.complex) {
         throw new Error("Missing Spanish summaries in response.");
       }
+
+      const formattedOriginalText = formattedText
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .trim();
 
       console.log(`- Generating vector embedding for ${billData.bill_number}...`);
       const textForEmbedding = [
@@ -234,7 +276,7 @@ serve(async (req) => {
         status_date: statusDate,
         state_link: billData.state_link,
         change_hash: billData.change_hash,
-        original_text: originalText,
+        original_text: formattedOriginalText,
         summary_simple: toAscii(englishSummaries.simple),
         summary_medium: toAscii(englishSummaries.medium),
         summary_complex: toAscii(englishSummaries.complex),
