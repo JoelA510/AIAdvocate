@@ -3,15 +3,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView } from "react-native";
-import {
-  ActivityIndicator,
-  Button,
-  Card,
-  Chip,
-  Menu,
-  Text,
-  useTheme,
-} from "react-native-paper";
+import { ActivityIndicator, Button, Card, Chip, Menu, Text, useTheme } from "react-native-paper";
 import { useTranslation } from "react-i18next";
 
 import { supabase } from "@/lib/supabase";
@@ -128,16 +120,10 @@ export default function VotingHistory({
   }, [numericLegislatorId]);
 
   useEffect(() => {
-    let isMounted = true;
     fetchBillOptions();
-    return () => {
-      isMounted = false;
-    };
   }, [fetchBillOptions]);
 
   useEffect(() => {
-    let isMounted = true;
-
     const loadRows = async () => {
       if (!numericLegislatorId) {
         setRows([]);
@@ -176,7 +162,6 @@ export default function VotingHistory({
 
         const { data, error: queryError } = await query;
         if (queryError) throw queryError;
-        if (!isMounted) return;
 
         const nextRows = (data ?? []) as VoteHistoryRow[];
         setRows(nextRows);
@@ -205,21 +190,17 @@ export default function VotingHistory({
           onBillContextChange?.(null);
         }
       } catch (err: any) {
-        if (!isMounted) return;
         console.error("Failed to load voting history", err);
         setError(err.message ?? "Unable to load voting history.");
         setRows([]);
         onRowsChange?.([]);
         onBillContextChange?.(null);
       } finally {
-        if (isMounted) setLoading(false);
+        setLoading(false);
       }
     };
 
     loadRows();
-    return () => {
-      isMounted = false;
-    };
   }, [
     filterMode,
     numericLegislatorId,
@@ -402,9 +383,7 @@ export default function VotingHistory({
           </Card.Content>
         </Card>
       ) : (
-        <ScrollView style={{ maxHeight: 360 }}>
-          {rows.map(renderRow)}
-        </ScrollView>
+        <ScrollView style={{ maxHeight: 360 }}>{rows.map(renderRow)}</ScrollView>
       )}
     </View>
   );
