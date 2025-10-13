@@ -5,10 +5,55 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
+interface SummaryPayload {
+  english: {
+    simple: string;
+    medium: string;
+    complex: string;
+  };
+  spanish: {
+    simple: string;
+    medium: string;
+    complex: string;
+  };
+}
+
+class HttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+    public readonly retryAfterMs?: number,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
 // --- Configuration ---
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "600",
+  Vary: "Origin",
+};
+
+const toJson = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
+const constantTimeEquals = (a: string, b: string): boolean => {
+  const encoder = new TextEncoder();
+  const A = encoder.encode(a);
+  const B = encoder.encode(b);
+  if (A.length !== B.length) return false;
+  let result = 0;
+  for (let i = 0; i < A.length; i++) {
+    result |= A[i] ^ B[i];
+  }
+  return result === 0;
 };
 
 const BROWSER_HEADERS = {
@@ -16,43 +61,308 @@ const BROWSER_HEADERS = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
 };
 
-const MAX_BILLS_PER_RUN = Number(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "3");
+const MAX_BILLS_PER_RUN = Math.max(0, Number.parseInt(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "3", 10) || 0);
+const MAX_MODEL_INPUT_CHARS = 12000;
+const MIN_SUMMARY_LENGTHS = {
+  simple: 200,
+  medium: 400,
+  complex: 600,
+};
+const asciiGuard = /[^ -~\n]/;
 
 console.log("🚀 Initializing sync-updated-bills v3.0 (Bilingual summaries + batching)");
 
-const cleanText = (rawText: string): string => {
-  if (!rawText) return "";
-  let cleanedText = rawText;
-  if (cleanedText.trim().startsWith("<")) {
+const normalizeNewlines = (s: string) => s.replace(/\r\n?/g, "\n");
+const collapseSpacesExceptNL = (s: string) => s.replace(/[^\S\n]+/g, " ");
+const collapseNLBlocks = (s: string) => s.replace(/\n{3,}/g, "\n\n");
+
+const sanitizeRawText = (raw: string): string =>
+  normalizeNewlines(raw.replace(/\uFFFD/g, "")).replace(/Â/g, "").replace(/\u00A0/g, " ");
+
+const formatLegislationText = (raw: string): string => {
+  if (!raw) return "";
+  let working = raw;
+  if (working.trim().startsWith("<")) {
     try {
-      const dom = new DOMParser().parseFromString(cleanedText, "text/html");
-      cleanedText = dom?.body.textContent ?? "";
-    } catch (e) {
-      console.error("DOMParser failed, falling back to raw text cleaning.", e);
+      const doc = new DOMParser().parseFromString(working, "text/html");
+      const walk = (node: Node, acc: string[] = []): string[] => {
+        if (node.nodeType === 3) acc.push((node as Text).data);
+        if (node.nodeType === 1) {
+          const el = node as Element;
+          if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(el.tagName)) {
+            return acc;
+          }
+          if (["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6"].includes(el.tagName)) {
+            acc.push("\n\n");
+          }
+          if (el.tagName === "LI") acc.push("\n• ");
+          if (el.tagName === "BR") acc.push("\n");
+          for (const child of Array.from(el.childNodes)) {
+            walk(child, acc);
+          }
+          if (el.tagName === "LI") acc.push("\n");
+        }
+        return acc;
+      };
+      working = walk(doc?.body ?? ({} as any)).join("");
+    } catch (error) {
+      console.warn("DOMParser parse failure", { error: String(error) });
     }
   }
-  cleanedText = cleanedText
-    .replace(/ /g, " ")
-    .replace(/Â/g, "")
-    .replace(/\uFFFD/g, "")
-    .replace(/\s\s+/g, " ")
-    .trim();
-  return cleanedText;
+  const collapsed = collapseNLBlocks(
+    collapseSpacesExceptNL(
+      normalizeNewlines(working.replace(/\uFFFD|Â|\u00A0/g, " ")),
+    ),
+  );
+  return collapsed.trim();
 };
 
 const toAscii = (input: string): string =>
   input
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[\u2018\u2019\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/[\u2022\u25CF]/g, "*")
     .replace(/[^\x00-\x7F]+/g, " ")
-    .replace(/\s\s+/g, " ")
+    .replace(/[^\S\n]+/g, " ")
     .trim();
 
+const summarySchema = {
+  name: "SummaryPayload",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      english: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          simple: { type: "string" },
+          medium: { type: "string" },
+          complex: { type: "string" },
+        },
+        required: ["simple", "medium", "complex"],
+      },
+      spanish: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          simple: { type: "string" },
+          medium: { type: "string" },
+          complex: { type: "string" },
+        },
+        required: ["simple", "medium", "complex"],
+      },
+    },
+    required: ["english", "spanish"],
+  },
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const parseRetryAfter = (header: string | null): number | undefined => {
+  if (!header) return undefined;
+  if (/^\d+$/.test(header)) return Number(header) * 1000;
+  const parsed = Date.parse(header);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.max(0, parsed - Date.now());
+};
+
+const withRetries = async <T>(
+  fn: (attempt: number, signal: AbortSignal) => Promise<T>,
+  attempts = 3,
+): Promise<T> => {
+  let backoffMs = 1000;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    try {
+      return await fn(attempt, controller.signal);
+    } catch (error) {
+      if (attempt === attempts) throw error;
+      const retryAfterMs =
+        error instanceof HttpError && typeof error.retryAfterMs === "number"
+          ? error.retryAfterMs
+          : undefined;
+      const waitMs = Number.isFinite(retryAfterMs) ? Number(retryAfterMs) : backoffMs;
+      console.warn("Retrying", { wait_ms: waitMs, attempt, error: String(error) });
+      const jitter = Math.floor(Math.random() * 250);
+      await sleep(waitMs + jitter);
+      backoffMs = Math.min(backoffMs * 2, 16_000);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error("Retry logic exhausted without completion");
+};
+
+const fetchJsonWithRetries = async <T>(url: string, name: string): Promise<T> => {
+  return withRetries<T>(async (_attempt, signal) => {
+    const res = await fetch(url, { headers: BROWSER_HEADERS, signal });
+    if (!res.ok) {
+      throw new HttpError(
+        `${name} ${res.status}`,
+        res.status,
+        parseRetryAfter(res.headers.get("retry-after")),
+      );
+    }
+    try {
+      return await res.json() as T;
+    } catch (error) {
+      throw new Error(`${name} JSON parse failed: ${(error as Error).message}`);
+    }
+  });
+};
+
+const callSummarizer = async (
+  text: string,
+  openAiKey: string,
+  signal: AbortSignal,
+  userIdentifier: string,
+): Promise<SummaryPayload> => {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${openAiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0.2,
+      max_tokens: 4096,
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: summarySchema.name, schema: summarySchema.schema, strict: true },
+      },
+      user: userIdentifier,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Return only valid JSON per the provided schema. Summarize legislation into English and Spanish at three complexity levels. Do not repeat the source text.",
+        },
+        {
+          role: "user",
+          content:
+            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph. Medium ≈10th grade with ≥2 paragraphs. Complex is an expert legal analysis. Spanish should remain natural with diacritics.`,
+        },
+      ],
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new HttpError(
+      `openai chat ${res.status}`,
+      res.status,
+      parseRetryAfter(res.headers.get("retry-after")),
+    );
+  }
+
+  const payload = await res.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("Empty content from OpenAI summarizer");
+  }
+  try {
+    return JSON.parse(content) as SummaryPayload;
+  } catch (error) {
+    throw new Error(`Invalid JSON from OpenAI summarizer: ${(error as Error).message}`);
+  }
+};
+
+const callEmbedding = async (
+  input: string,
+  openAiKey: string,
+  signal: AbortSignal,
+): Promise<number[]> => {
+  const res = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${openAiKey}`,
+    },
+    body: JSON.stringify({
+      model: "text-embedding-3-small",
+      input,
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new HttpError(
+      `openai embedding ${res.status}`,
+      res.status,
+      parseRetryAfter(res.headers.get("retry-after")),
+    );
+  }
+
+  const payload = await res.json();
+  const embedding = payload?.data?.[0]?.embedding;
+  if (!Array.isArray(embedding)) {
+    throw new Error("Embedding payload missing embedding array");
+  }
+  if (embedding.length !== 1536) {
+    throw new Error(`Embedding dimension mismatch: expected 1536, received ${embedding.length}`);
+  }
+  return embedding as number[];
+};
+
+const toHex = (bytes: ArrayBuffer): string =>
+  Array.from(new Uint8Array(bytes))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+const sha256 = async (input: string): Promise<string> => {
+  const data = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return toHex(hash);
+};
+
+const buildSummarizerSource = (
+  billData: Record<string, any>,
+  formattedText: string,
+): string => {
+  const sections: string[] = [];
+  if (billData?.title) {
+    sections.push(`Title: ${billData.title}`);
+  }
+  if (billData?.description) {
+    sections.push(`Description: ${billData.description}`);
+  }
+  if (billData?.summary) {
+    sections.push(`LegiScan Summary: ${billData.summary}`);
+  }
+  if (billData?.synopsis) {
+    sections.push(`Synopsis: ${billData.synopsis}`);
+  }
+  sections.push(`Legislation:\n${formattedText}`);
+  const combined = sections.join("\n\n").trim();
+  if (combined.length <= MAX_MODEL_INPUT_CHARS) return combined;
+  return `${combined.slice(0, MAX_MODEL_INPUT_CHARS)}\n\n[Text truncated for model input. Focus on the salient sections above.]`;
+};
+
+const reuseEmbedding = (value: unknown): string | null => {
+  if (Array.isArray(value)) return `[${value.join(",")}]`;
+  if (typeof value === "string") return value;
+  return null;
+};
+
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  const AUTH = Deno.env.get("SYNC_SECRET") ?? "";
+  const supplied = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (req.method !== "POST") {
+    return toJson({ error: "Method Not Allowed" }, 405);
+  }
+  if (!AUTH || !constantTimeEquals(supplied, AUTH)) {
+    return toJson({ error: "Unauthorized" }, 401);
+  }
 
   try {
     const legiscanApiKey = Deno.env.get("LEGISCAN_API_KEY");
@@ -66,156 +376,168 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const owner = (crypto as any).randomUUID?.() ?? String(Date.now());
+
     const processedBills: number[] = [];
     const failures: Array<{ billId: number; reason: string }> = [];
 
-    const fetchNextBillId = async (): Promise<number | null> => {
-      const { data, error } = await supabaseAdmin
-        .from("bills")
-        .select("id")
-        .or("summary_simple.ilike.Placeholder for%,summary_simple.ilike.AI_SUMMARY_FAILED%")
-        .order("id", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
+    const leaseNextBillId = async (): Promise<number | null> => {
+      const { data, error } = await supabaseAdmin.rpc<number>("lease_next_bill", {
+        p_owner: owner,
+        p_ttl_seconds: 900,
+      });
       if (error) throw error;
-      return data?.id ?? null;
+      if (data === null || data === undefined) return null;
+      const id = typeof data === "number" ? data : Number(data);
+      return Number.isFinite(id) ? id : null;
     };
 
     const processBill = async (billId: number) => {
-      console.log(`Processing bill ID: ${billId}...`);
+      console.log("Processing bill", { bill_id: billId });
+
+      const { data: existingBillMeta, error: existingBillError } = await supabaseAdmin
+        .from("bills")
+        .select("summary_hash, embedding")
+        .eq("id", billId)
+        .maybeSingle();
+      if (existingBillError) throw existingBillError;
 
       const billDetailsUrl = `https://api.legiscan.com/?op=getBill&id=${billId}&key=${legiscanApiKey}`;
-      const billDetailsRes = await fetch(billDetailsUrl, { headers: BROWSER_HEADERS });
-      const { bill: billData } = await billDetailsRes.json();
+      const { bill: billData } = await fetchJsonWithRetries<{ bill: any }>(
+        billDetailsUrl,
+        "legiscan getBill",
+      );
 
-      let rawTextForCleaning: string | undefined;
+      let decodedText: string | undefined;
       const latestTextDoc =
         billData.texts?.length > 0 ? billData.texts[billData.texts.length - 1] : null;
 
       if (latestTextDoc?.doc_id) {
         const billTextUrl = `https://api.legiscan.com/?op=getBillText&id=${latestTextDoc.doc_id}&key=${legiscanApiKey}`;
-        const billTextRes = await fetch(billTextUrl, { headers: BROWSER_HEADERS });
-        const { text: textData } = await billTextRes.json();
+        const { text: textData } = await fetchJsonWithRetries<{ text: { doc: string } }>(
+          billTextUrl,
+          "legiscan getBillText",
+        );
         const binaryString = atob(textData.doc);
         const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
         const decoder = new TextDecoder("utf-8", { fatal: false });
-        rawTextForCleaning = decoder.decode(bytes);
+        decodedText = decoder
+          .decode(bytes)
+          .replace(/^\uFEFF/, "")
+          .replace(/[\u200B-\u200D\u2060]/g, "");
       } else {
-        console.log(`- Bill ${billData.bill_number} has no text document. Using title as fallback.`);
-        rawTextForCleaning = billData.title;
+        console.log("- No LegiScan text, using title", {
+          bill_id: billData.bill_id,
+          bill_number: billData.bill_number,
+        });
+        decodedText = billData.title;
       }
 
-      const originalText = cleanText(rawTextForCleaning ?? "");
-
-      if (!originalText) {
-        await supabaseAdmin
-          .from("bills")
-          .update({ summary_simple: "No text available." })
-          .eq("id", billId);
-        failures.push({ billId, reason: "No text available" });
-        return;
+      const originalTextRaw = sanitizeRawText(decodedText ?? "");
+      if (!originalTextRaw.trim()) {
+        throw new Error("No text available");
       }
 
-      console.log(`- Generating bilingual summaries for ${billData.bill_number}...`);
-      const summaryPrompt = `
-        Read the legislative content below and return a JSON object with this exact shape:
-        {
-          "english": {
-            "simple": "...",
-            "medium": "...",
-            "complex": "..."
-          },
-          "spanish": {
-            "simple": "...",
-            "medium": "...",
-            "complex": "..."
-          }
-        }
-
-        Requirements:
-        - The English summaries must use only ASCII characters (replace smart quotes, dashes, etc.).
-        - "simple" explains the bill for a 5th-grade reader in at least one paragraph.
-        - "medium" is a detailed 10th-grade explanation in at least two paragraphs.
-        - "complex" is an expert-level summary outlining legal changes and implications.
-        - Spanish summaries should be natural Latin American Spanish, maintaining diacritics.
-        - Do not include any additional keys, commentary, or markdown.
-
-        Legislative Text:
-        ---
-        ${originalText}
-      `;
-
-      const summaryResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openAiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content:
-                "You analyze legislation and return strictly valid JSON containing bilingual tiered summaries.",
-            },
-            { role: "user", content: summaryPrompt.trim() },
-          ],
-        }),
-      });
-
-      if (!summaryResponse.ok) {
-        const errorDetails = await summaryResponse.text();
-        throw new Error(`OpenAI chat completion failed (${summaryResponse.status}): ${errorDetails}`);
+      const originalTextFormatted = formatLegislationText(originalTextRaw);
+      if (!originalTextFormatted) {
+        throw new Error("Formatter returned empty text");
       }
 
-      const summaryPayload = await summaryResponse.json();
-      const summaryContent = summaryPayload?.choices?.[0]?.message?.content;
-      if (!summaryContent) {
-        throw new Error("OpenAI chat completion returned no summary content.");
-      }
+      console.log("- Summarizing", { bill_id: billData.bill_id, bill_number: billData.bill_number });
+      const summarizerSource = buildSummarizerSource(billData, originalTextFormatted);
 
-      const summaries = JSON.parse(summaryContent.trim());
-      const englishSummaries = summaries?.english;
-      const spanishSummaries = summaries?.spanish;
+      const summaries = await withRetries((_, signal) =>
+        callSummarizer(
+          summarizerSource,
+          openAiKey,
+          signal,
+          String(billData?.bill_id ?? billId ?? "unknown"),
+        )
+      );
+
+      const englishSummaries = summaries.english;
+      const spanishSummaries = summaries.spanish;
 
       if (!englishSummaries?.simple || !englishSummaries?.medium || !englishSummaries?.complex) {
-        throw new Error("Missing English summaries in response.");
+        throw new Error("Incomplete English summaries returned");
       }
       if (!spanishSummaries?.simple || !spanishSummaries?.medium || !spanishSummaries?.complex) {
-        throw new Error("Missing Spanish summaries in response.");
+        throw new Error("Incomplete Spanish summaries returned");
       }
 
-      console.log(`- Generating vector embedding for ${billData.bill_number}...`);
-      const textForEmbedding = [
-        `Title: ${billData.title}`,
-        `Description: ${billData.description}`,
-        `Expert Summary: ${englishSummaries.complex}`,
-      ].join("\n\n");
+      const asciiEnglish = {
+        simple: toAscii(englishSummaries.simple),
+        medium: toAscii(englishSummaries.medium),
+        complex: toAscii(englishSummaries.complex),
+      };
 
-      const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openAiKey}`,
-        },
-        body: JSON.stringify({
-          model: "text-embedding-3-small",
-          input: textForEmbedding,
-        }),
-      });
-
-      if (!embeddingResponse.ok) {
-        const embeddingError = await embeddingResponse.text();
-        throw new Error(`OpenAI embedding request failed (${embeddingResponse.status}): ${embeddingError}`);
+      if (Object.values(asciiEnglish).some((text) => !text)) {
+        throw new Error("Empty English summaries after ASCII normalization");
       }
 
-      const embeddingPayload = await embeddingResponse.json();
-      const embedding = embeddingPayload?.data?.[0]?.embedding;
-      if (!embedding) {
-        throw new Error("OpenAI embedding response was missing embedding data.");
+      if (Object.values(asciiEnglish).some((text) => asciiGuard.test(text))) {
+        throw new Error("English summaries contain non-ASCII characters");
+      }
+
+      if (asciiEnglish.simple.length < MIN_SUMMARY_LENGTHS.simple) {
+        throw new Error(`Simple summary below minimum length (${asciiEnglish.simple.length})`);
+      }
+      if (asciiEnglish.medium.length < MIN_SUMMARY_LENGTHS.medium) {
+        throw new Error(`Medium summary below minimum length (${asciiEnglish.medium.length})`);
+      }
+      if (asciiEnglish.complex.length < MIN_SUMMARY_LENGTHS.complex) {
+        throw new Error(`Complex summary below minimum length (${asciiEnglish.complex.length})`);
+      }
+
+      const spanishTrimmed = {
+        simple: spanishSummaries.simple.trim(),
+        medium: spanishSummaries.medium.trim(),
+        complex: spanishSummaries.complex.trim(),
+      };
+
+      if (Object.values(spanishTrimmed).some((text) => !text)) {
+        throw new Error("Spanish summaries contain empty values after trim");
+      }
+
+      const summaryHash = await sha256(asciiEnglish.complex);
+      const summaryLenSimple = asciiEnglish.simple.length;
+
+      const existingSummaryHash = existingBillMeta?.summary_hash ?? null;
+      const existingEmbeddingValue = existingBillMeta?.embedding ?? null;
+      const summaryHashUnchanged = existingSummaryHash !== null && existingSummaryHash === summaryHash;
+      const existingEmbeddingSerialized = reuseEmbedding(existingEmbeddingValue);
+
+      let embeddingPayload: string | null = null;
+
+      if (summaryHashUnchanged) {
+        if (existingEmbeddingSerialized) {
+          console.log("- Reusing embedding", {
+            bill_id: billData.bill_id,
+            bill_number: billData.bill_number,
+          });
+        } else {
+          console.warn("- Missing embedding despite matching hash; regenerating", {
+            bill_id: billData.bill_id,
+            bill_number: billData.bill_number,
+          });
+        }
+      }
+
+      if (!summaryHashUnchanged || !existingEmbeddingSerialized) {
+        console.log("- Embedding", { bill_id: billData.bill_id, bill_number: billData.bill_number });
+        const textForEmbedding = [
+          `Title: ${billData.title}`,
+          billData.description ? `Description: ${billData.description}` : null,
+          `Expert Summary: ${asciiEnglish.complex}`,
+        ]
+          .filter((segment): segment is string => Boolean(segment))
+          .join("\n\n");
+
+        const embedding = await withRetries((_, signal) =>
+          callEmbedding(textForEmbedding, openAiKey, signal)
+        );
+
+        embeddingPayload = `[${embedding.join(",")}]`;
       }
 
       const statusText = billData.status_text ?? null;
@@ -224,86 +546,91 @@ serve(async (req) => {
       const calendar = Array.isArray(billData.calendar) ? billData.calendar : [];
       const history = Array.isArray(billData.history) ? billData.history : [];
 
-      const billToUpsert = {
+      const billPayload: Record<string, unknown> = {
         id: billData.bill_id,
         bill_number: billData.bill_number,
         title: billData.title,
         description: billData.description,
-        status: String(billData.status),
+        status: billData.status !== undefined ? String(billData.status) : null,
         status_text: statusText,
         status_date: statusDate,
         state_link: billData.state_link,
         change_hash: billData.change_hash,
-        original_text: originalText,
-        summary_simple: toAscii(englishSummaries.simple),
-        summary_medium: toAscii(englishSummaries.medium),
-        summary_complex: toAscii(englishSummaries.complex),
+        original_text: originalTextRaw,
+        original_text_formatted: originalTextFormatted,
+        summary_simple: asciiEnglish.simple,
+        summary_medium: asciiEnglish.medium,
+        summary_complex: asciiEnglish.complex,
+        summary_ok: true,
+        summary_len_simple: summaryLenSimple,
+        summary_hash: summaryHash,
         progress,
         calendar,
         history,
-        embedding,
       };
 
-      const { error: upsertError } = await supabaseAdmin
-        .from("bills")
-        .upsert(billToUpsert, { onConflict: "id" });
-      if (upsertError) throw upsertError;
+      if (embeddingPayload !== null) {
+        billPayload.embedding = embeddingPayload;
+      }
 
       const spanishPayload = {
         bill_id: billData.bill_id,
         language_code: "es",
-        summary_simple: spanishSummaries.simple.trim(),
-        summary_medium: spanishSummaries.medium.trim(),
-        summary_complex: spanishSummaries.complex.trim(),
+        summary_simple: spanishTrimmed.simple,
+        summary_medium: spanishTrimmed.medium,
+        summary_complex: spanishTrimmed.complex,
         updated_at: new Date().toISOString(),
       };
 
-      const { error: translationError } = await supabaseAdmin
-        .from("bill_translations")
-        .upsert(spanishPayload, { onConflict: "bill_id,language_code" });
-      if (translationError) {
-        console.error("Failed to upsert Spanish summaries", translationError);
-      }
+      const { error: rpcError } = await supabaseAdmin.rpc(
+        "upsert_bill_and_translation",
+        { bill: billPayload, tr: spanishPayload },
+      );
+      if (rpcError) throw rpcError;
+
+      console.log("- Summary checks", {
+        bill_id: billData.bill_id,
+        raw_len: originalTextRaw.length,
+        formatted_len: originalTextFormatted.length,
+        summary_ok: true,
+      });
 
       processedBills.push(billData.bill_id);
-      console.log(`✅ Successfully processed bill ${billData.bill_number}.`);
+      console.log("✅ Processed bill", { bill_id: billData.bill_id, bill_number: billData.bill_number });
     };
 
-    for (let processed = 0; processed < Math.max(1, MAX_BILLS_PER_RUN); processed++) {
-      const nextId = await fetchNextBillId();
+    const maxBillsToProcess = MAX_BILLS_PER_RUN;
+    for (let i = 0; i < maxBillsToProcess; i++) {
+      const nextId = await leaseNextBillId();
       if (!nextId) break;
 
       try {
         await processBill(nextId);
+        const { error: releaseError } = await supabaseAdmin
+          .rpc("release_bill_lease", { p_id: nextId, p_owner: owner, p_ok: true });
+        if (releaseError) throw releaseError;
       } catch (err) {
-        console.error(`❌ Failed processing bill ${nextId}:`, err);
-        await supabaseAdmin
-          .from("bills")
-          .update({ summary_simple: "AI_SUMMARY_FAILED" })
-          .eq("id", nextId);
+        console.error("❌ Failed processing bill", { bill_id: nextId, error: String(err) });
+        const { error: releaseError } = await supabaseAdmin
+          .rpc("release_bill_lease", { p_id: nextId, p_owner: owner, p_ok: false });
+        if (releaseError) {
+          console.error("Failed to release lease", { bill_id: nextId, error: String(releaseError) });
+        }
         failures.push({ billId: nextId, reason: (err as Error).message });
       }
     }
 
     if (processedBills.length === 0) {
-      return new Response(JSON.stringify({ message: "Sync complete. All bills are up-to-date." }), {
-        headers: corsHeaders,
-      });
+      return toJson({ message: "Sync complete. All bills are up-to-date." });
     }
 
-    return new Response(
-      JSON.stringify({
-        message: `Processed ${processedBills.length} bill(s).`,
-        processedBills,
-        failures,
-      }),
-      { headers: corsHeaders },
-    );
+    return toJson({
+      message: `Processed ${processedBills.length} bill(s).`,
+      processedBills,
+      failures,
+    });
   } catch (error) {
-    console.error("Function failed:", error);
-    return new Response(
-      JSON.stringify({ error: (error as Error).message ?? "Unexpected error" }),
-      { status: 500, headers: corsHeaders },
-    );
+    console.error("Function failed", { error: String(error) });
+    return toJson({ error: (error as Error).message ?? "Unexpected error" }, 500);
   }
 });

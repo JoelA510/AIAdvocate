@@ -225,12 +225,11 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
                   mode="text"
                   disabled={!hasMatch && !p.id}
                   onPress={() => {
-                    const params =
-                      hasMatch
-                        ? { id: String(p.supabaseId), payload: fallbackPayload }
-                        : typeof p.id === "string" || typeof p.id === "number"
-                          ? { id: "lookup", payload: fallbackPayload }
-                          : null;
+                    const params = hasMatch
+                      ? { id: String(p.supabaseId), payload: fallbackPayload }
+                      : typeof p.id === "string" || typeof p.id === "number"
+                        ? { id: "lookup", payload: fallbackPayload }
+                        : null;
                     if (params) {
                       if (bill?.id) {
                         (params as Record<string, string>).billId = String(bill.id);
