@@ -124,8 +124,6 @@ export default function VotingHistory({
   }, [fetchBillOptions]);
 
   useEffect(() => {
-    let isMounted = true;
-
     const loadRows = async () => {
       if (!numericLegislatorId) {
         setRows([]);
@@ -164,7 +162,6 @@ export default function VotingHistory({
 
         const { data, error: queryError } = await query;
         if (queryError) throw queryError;
-        if (!isMounted) return;
 
         const nextRows = (data ?? []) as VoteHistoryRow[];
         setRows(nextRows);
@@ -193,21 +190,17 @@ export default function VotingHistory({
           onBillContextChange?.(null);
         }
       } catch (err: any) {
-        if (!isMounted) return;
         console.error("Failed to load voting history", err);
         setError(err.message ?? "Unable to load voting history.");
         setRows([]);
         onRowsChange?.([]);
         onBillContextChange?.(null);
       } finally {
-        if (isMounted) setLoading(false);
+        setLoading(false);
       }
     };
 
     loadRows();
-    return () => {
-      isMounted = false;
-    };
   }, [
     filterMode,
     numericLegislatorId,
