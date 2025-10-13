@@ -5,6 +5,10 @@ ALTER TABLE public.bills
   ADD COLUMN IF NOT EXISTS summary_len_simple INTEGER,
   ADD COLUMN IF NOT EXISTS summary_hash TEXT;
 
+ALTER TABLE public.bills
+  ADD COLUMN IF NOT EXISTS summary_lease_until TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS summary_lease_owner TEXT;
+
 -- Upsert helper to ensure bills and translations update atomically
 CREATE OR REPLACE FUNCTION public.upsert_bill_and_translation(bill JSONB, tr JSONB)
 RETURNS VOID
@@ -116,7 +120,9 @@ $$;
 REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
 
-CREATE OR REPLACE FUNCTION public.lease_next_bill() RETURNS BIGINT
+DROP FUNCTION IF EXISTS public.lease_next_bill();
+CREATE OR REPLACE FUNCTION public.lease_next_bill(p_owner text, p_ttl_seconds int DEFAULT 900)
+RETURNS BIGINT
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public
@@ -124,19 +130,21 @@ AS $$
   WITH cte AS (
     SELECT id FROM public.bills
     WHERE (summary_ok IS DISTINCT FROM TRUE)
+      AND (summary_lease_until IS NULL OR summary_lease_until < now())
     ORDER BY id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
   )
   UPDATE public.bills b
-     SET summary_ok = NULL
+     SET summary_lease_until = now() + make_interval(secs => p_ttl_seconds),
+         summary_lease_owner = p_owner
   FROM cte
   WHERE b.id = cte.id
   RETURNING b.id;
 $$;
 
-REVOKE ALL ON FUNCTION public.lease_next_bill() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.lease_next_bill() TO service_role;
+REVOKE ALL ON FUNCTION public.lease_next_bill(text, int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.lease_next_bill(text, int) TO service_role;
 
 CREATE INDEX IF NOT EXISTS bills_summary_ok_idx
   ON public.bills ((summary_ok IS DISTINCT FROM TRUE));
