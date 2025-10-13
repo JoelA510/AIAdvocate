@@ -342,6 +342,28 @@ $$;
 REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.lease_next_bill() RETURNS BIGINT
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  WITH cte AS (
+    SELECT id FROM public.bills
+    WHERE (summary_ok IS DISTINCT FROM TRUE)
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+  )
+  UPDATE public.bills b
+     SET summary_ok = NULL
+  FROM cte
+  WHERE b.id = cte.id
+  RETURNING b.id;
+$$;
+
+REVOKE ALL ON FUNCTION public.lease_next_bill() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.lease_next_bill() TO service_role;
+
 CREATE OR REPLACE FUNCTION public.invoke_full_legislative_refresh() RETURNS VOID AS $$
 DECLARE
   i INT;
