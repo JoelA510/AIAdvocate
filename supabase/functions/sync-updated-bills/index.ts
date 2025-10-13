@@ -33,6 +33,26 @@ class HttpError extends Error {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  Vary: "Origin",
+};
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
+const constantTimeEquals = (a: string, b: string): boolean => {
+  const encoder = new TextEncoder();
+  const A = encoder.encode(a);
+  const B = encoder.encode(b);
+  if (A.length !== B.length) return false;
+  let result = 0;
+  for (let i = 0; i < A.length; i++) {
+    result |= A[i] ^ B[i];
+  }
+  return result === 0;
 };
 
 const BROWSER_HEADERS = {
@@ -68,6 +88,9 @@ const formatLegislationText = (raw: string): string => {
         if (node.nodeType === 3) acc.push((node as Text).data);
         if (node.nodeType === 1) {
           const el = node as Element;
+          if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(el.tagName)) {
+            return acc;
+          }
           if (["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6"].includes(el.tagName)) {
             acc.push("\n\n");
           }
@@ -168,8 +191,9 @@ const withRetries = async <T>(
         ? retryAfterMs
         : backoffMs;
       console.warn(`Retrying after ${waitMs}ms due to error:`, error);
-      await sleep(waitMs);
-      backoffMs *= 2;
+      const jitter = Math.floor(Math.random() * 250);
+      await sleep(waitMs + jitter);
+      backoffMs = Math.min(backoffMs * 2, 16_000);
     } finally {
       clearTimeout(timeout);
     }
@@ -303,14 +327,17 @@ const buildSummarizerSource = (
 };
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-
-  const AUTH = Deno.env.get("SYNC_SECRET");
-  if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
-  if (!AUTH || req.headers.get("authorization") !== `Bearer ${AUTH}`) {
-    return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+
+  const AUTH = Deno.env.get("SYNC_SECRET") ?? "";
+  const supplied = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (req.method !== "POST") {
+    return json({ error: "Method Not Allowed" }, 405);
+  }
+  if (!AUTH || !constantTimeEquals(supplied, AUTH)) {
+    return json({ error: "Unauthorized" }, 401);
   }
 
   try {
@@ -328,17 +355,12 @@ serve(async (req) => {
     const processedBills: number[] = [];
     const failures: Array<{ billId: number; reason: string }> = [];
 
-    const fetchNextBillId = async (): Promise<number | null> => {
-      const { data, error } = await supabaseAdmin
-        .from("bills")
-        .select("id")
-        .or("summary_ok.is.false,summary_ok.is.null")
-        .order("id", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
+    const leaseNextBillId = async (): Promise<number | null> => {
+      const { data, error } = await supabaseAdmin.rpc<number>("lease_next_bill");
       if (error) throw error;
-      return data?.id ?? null;
+      if (data === null || data === undefined) return null;
+      const id = typeof data === "number" ? data : Number(data);
+      return Number.isFinite(id) ? id : null;
     };
 
     const processBill = async (billId: number) => {
@@ -443,26 +465,20 @@ serve(async (req) => {
       const summaryHash = await sha256(asciiEnglish.complex);
       const summaryLenSimple = asciiEnglish.simple.length;
 
-      let embeddingText: string | undefined;
       const existingSummaryHash = existingBillMeta?.summary_hash ?? null;
       const existingEmbeddingValue = existingBillMeta?.embedding ?? null;
+      const summaryHashUnchanged = existingSummaryHash !== null && existingSummaryHash === summaryHash;
 
-      if (existingSummaryHash && existingSummaryHash === summaryHash && existingEmbeddingValue) {
-        if (Array.isArray(existingEmbeddingValue)) {
-          embeddingText = `[${existingEmbeddingValue.join(",")}]`;
-        } else if (typeof existingEmbeddingValue === "string") {
-          embeddingText = existingEmbeddingValue;
-        }
-        if (embeddingText) {
-          console.log(`- Reusing existing embedding for ${billData.bill_number}`);
-        } else {
+      let embeddingPayload: string | null = null;
+
+      if (summaryHashUnchanged && existingEmbeddingValue) {
+        console.log(`- Reusing existing embedding for ${billData.bill_number}`);
+      } else {
+        if (summaryHashUnchanged && !existingEmbeddingValue) {
           console.warn(
-            `- Existing embedding for ${billData.bill_number} was not reusable. Regenerating...`,
+            `- Existing embedding missing for ${billData.bill_number} despite matching summary hash. Regenerating...`,
           );
         }
-      }
-
-      if (!embeddingText) {
         console.log(`- Generating vector embedding for ${billData.bill_number}...`);
         const textForEmbedding = [
           `Title: ${billData.title}`,
@@ -476,7 +492,7 @@ serve(async (req) => {
           callEmbedding(textForEmbedding, openAiKey, signal)
         );
 
-        embeddingText = `[${embedding.join(",")}]`;
+        embeddingPayload = `[${embedding.join(",")}]`;
       }
 
       const statusText = billData.status_text ?? null;
@@ -485,7 +501,7 @@ serve(async (req) => {
       const calendar = Array.isArray(billData.calendar) ? billData.calendar : [];
       const history = Array.isArray(billData.history) ? billData.history : [];
 
-      const billPayload = {
+      const billPayload: Record<string, unknown> = {
         id: billData.bill_id,
         bill_number: billData.bill_number,
         title: billData.title,
@@ -506,8 +522,11 @@ serve(async (req) => {
         progress,
         calendar,
         history,
-        embedding: embeddingText,
       };
+
+      if (embeddingPayload !== null) {
+        billPayload.embedding = embeddingPayload;
+      }
 
       const spanishPayload = {
         bill_id: billData.bill_id,
@@ -532,8 +551,11 @@ serve(async (req) => {
       console.log(`✅ Successfully processed bill ${billData.bill_number}.`);
     };
 
-    for (let processed = 0; processed < Math.max(1, MAX_BILLS_PER_RUN); processed++) {
-      const nextId = await fetchNextBillId();
+    const maxBillsToProcess = Number.isFinite(MAX_BILLS_PER_RUN)
+      ? Math.max(0, MAX_BILLS_PER_RUN)
+      : 0;
+    for (let processed = 0; processed < maxBillsToProcess; processed++) {
+      const nextId = await leaseNextBillId();
       if (!nextId) break;
 
       try {
@@ -549,24 +571,16 @@ serve(async (req) => {
     }
 
     if (processedBills.length === 0) {
-      return new Response(JSON.stringify({ message: "Sync complete. All bills are up-to-date." }), {
-        headers: corsHeaders,
-      });
+      return json({ message: "Sync complete. All bills are up-to-date." });
     }
 
-    return new Response(
-      JSON.stringify({
-        message: `Processed ${processedBills.length} bill(s).`,
-        processedBills,
-        failures,
-      }),
-      { headers: corsHeaders },
-    );
+    return json({
+      message: `Processed ${processedBills.length} bill(s).`,
+      processedBills,
+      failures,
+    });
   } catch (error) {
     console.error("Function failed:", error);
-    return new Response(
-      JSON.stringify({ error: (error as Error).message ?? "Unexpected error" }),
-      { status: 500, headers: corsHeaders },
-    );
+    return json({ error: (error as Error).message ?? "Unexpected error" }, 500);
   }
 });
