@@ -1,10 +1,11 @@
 // mobile-app/src/lib/config.ts
 
+import Constants from "expo-constants";
+import * as Updates from "expo-updates";
+
 /**
  * Centralized runtime config for the app (web + native).
- * - Reads EXPO_PUBLIC_* env vars on first access
- * - Throws a clear error listing any missing keys
- * - Can be eagerly initialized at app boot via initConfig()
+ * Values are injected at build time through `app.config.ts`.
  */
 
 export type AppConfig = {
@@ -12,49 +13,64 @@ export type AppConfig = {
   supabaseAnonKey: string;
   openstatesApiKey: string;
   locationIqApiKey: string;
-  /** Optional extras if you use them */
   recaptchaSiteKey?: string;
   firebaseWebConfigJson?: string;
 };
 
+type PublicEnvPayload = Partial<AppConfig> & {
+  lnfUrl?: string;
+};
+
+const REQUIRED_FIELDS: Array<keyof AppConfig> = [
+  "supabaseUrl",
+  "supabaseAnonKey",
+  "openstatesApiKey",
+  "locationIqApiKey",
+];
+
 let config: AppConfig | null = null;
 
-const REQUIRED_KEYS = [
-  "EXPO_PUBLIC_SUPABASE_URL",
-  "EXPO_PUBLIC_SUPABASE_ANON_KEY",
-  "EXPO_PUBLIC_OPENSTATES_API_KEY",
-  "EXPO_PUBLIC_LOCATIONIQ_API_KEY",
-] as const;
+function resolvePublicEnv(): PublicEnvPayload | null {
+  const extraLayers = [
+    Constants.expoConfig?.extra,
+    (Constants.manifest as any)?.extra,
+    (Updates.manifest as any)?.extra,
+    (Updates.manifest2 as any)?.extra,
+  ];
 
-function buildFromEnv(): AppConfig {
-  const env = process.env as Record<string, string | undefined>;
+  for (const layer of extraLayers) {
+    if (layer?.publicEnv && typeof layer.publicEnv === "object") {
+      return layer.publicEnv as PublicEnvPayload;
+    }
+  }
 
-  const missing = REQUIRED_KEYS.filter((k) => !env[k] || String(env[k]).trim() === "");
+  return null;
+}
+
+function buildConfigFromPublicEnv(): AppConfig {
+  const source =
+    resolvePublicEnv() ??
+    Object.fromEntries(Object.values(REQUIRED_FIELDS).map((field) => [field, null]));
+
+  const missing = REQUIRED_FIELDS.filter(
+    (field) => !source[field] || String(source[field]).trim().length === 0,
+  );
+
   if (missing.length > 0) {
-    // Throw a helpful message so web dev surfaces exactly what's wrong
     throw new Error(
       `Missing environment variables: ${missing.join(
         ", ",
-      )}. Ensure they are set in mobile-app/.env (EXPO_PUBLIC_*) and that you restarted the dev server.`,
+      )}. Ensure EXPO_PUBLIC_* values are defined in app.config.ts at build time.`,
     );
   }
 
-  // Safe non-null by this point
-  const supabaseUrl = env.EXPO_PUBLIC_SUPABASE_URL!;
-  const supabaseAnonKey = env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
-  const openstatesApiKey = env.EXPO_PUBLIC_OPENSTATES_API_KEY!;
-  const locationIqApiKey = env.EXPO_PUBLIC_LOCATIONIQ_API_KEY!;
-
-  const recaptchaSiteKey = env.EXPO_PUBLIC_RECAPTCHA_SITE_KEY;
-  const firebaseWebConfigJson = env.EXPO_PUBLIC_FIREBASE_WEB_CONFIG;
-
   return {
-    supabaseUrl: supabaseUrl.trim(),
-    supabaseAnonKey: supabaseAnonKey.trim(),
-    openstatesApiKey: openstatesApiKey.trim(),
-    locationIqApiKey: locationIqApiKey.trim(),
-    recaptchaSiteKey: recaptchaSiteKey?.trim(),
-    firebaseWebConfigJson: firebaseWebConfigJson?.trim(),
+    supabaseUrl: String(source.supabaseUrl).trim(),
+    supabaseAnonKey: String(source.supabaseAnonKey).trim(),
+    openstatesApiKey: String(source.openstatesApiKey).trim(),
+    locationIqApiKey: String(source.locationIqApiKey).trim(),
+    recaptchaSiteKey: source.recaptchaSiteKey?.trim(),
+    firebaseWebConfigJson: source.firebaseWebConfigJson?.trim(),
   };
 }
 
@@ -64,7 +80,7 @@ function buildFromEnv(): AppConfig {
  */
 export function initConfig(overrides?: Partial<AppConfig>): AppConfig {
   if (!config) {
-    config = { ...buildFromEnv(), ...(overrides ?? {}) };
+    config = { ...buildConfigFromPublicEnv(), ...(overrides ?? {}) };
   }
   return config;
 }
@@ -74,7 +90,7 @@ export function initConfig(overrides?: Partial<AppConfig>): AppConfig {
  */
 export function getConfig(): AppConfig {
   if (!config) {
-    config = buildFromEnv();
+    config = buildConfigFromPublicEnv();
   }
   return config;
 }
@@ -82,3 +98,4 @@ export function getConfig(): AppConfig {
 export function setConfig(overrides: AppConfig) {
   config = { ...overrides };
 }
+
