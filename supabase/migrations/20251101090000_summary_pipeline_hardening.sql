@@ -148,3 +148,26 @@ GRANT EXECUTE ON FUNCTION public.lease_next_bill(text, int) TO service_role;
 
 CREATE INDEX IF NOT EXISTS bills_summary_ok_idx
   ON public.bills ((summary_ok IS DISTINCT FROM TRUE));
+
+CREATE OR REPLACE FUNCTION public.release_bill_lease(p_id bigint, p_owner text, p_ok boolean)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  UPDATE public.bills
+     SET summary_ok = p_ok,
+         summary_lease_until = NULL,
+         summary_lease_owner = NULL
+   WHERE id = p_id
+     AND summary_lease_owner = p_owner;
+$$;
+
+REVOKE ALL ON FUNCTION public.release_bill_lease(bigint, text, boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.release_bill_lease(bigint, text, boolean) TO service_role;
+
+CREATE OR REPLACE VIEW public.v_bill_summary_leases AS
+SELECT id, summary_ok, summary_lease_owner, summary_lease_until
+FROM public.bills
+WHERE summary_ok IS DISTINCT FROM TRUE
+   OR summary_lease_until IS NOT NULL;

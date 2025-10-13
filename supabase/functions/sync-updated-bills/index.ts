@@ -34,6 +34,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "600",
   Vary: "Origin",
 };
 
@@ -60,7 +61,7 @@ const BROWSER_HEADERS = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
 };
 
-const MAX_BILLS_PER_RUN = Number(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "3");
+const MAX_BILLS_PER_RUN = Math.max(0, Number.parseInt(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "3", 10) || 0);
 const MAX_MODEL_INPUT_CHARS = 12000;
 const MIN_SUMMARY_LENGTHS = {
   simple: 200,
@@ -105,7 +106,7 @@ const formatLegislationText = (raw: string): string => {
       };
       working = walk(doc?.body ?? ({} as any)).join("");
     } catch (error) {
-      console.warn("DOMParser failed, using raw text for formatting", error);
+      console.warn("DOMParser parse failure", { error: String(error) });
     }
   }
   const collapsed = collapseNLBlocks(
@@ -186,7 +187,7 @@ const withRetries = async <T>(
           ? error.retryAfterMs
           : undefined;
       const waitMs = Number.isFinite(retryAfterMs) ? Number(retryAfterMs) : backoffMs;
-      console.warn(`Retrying after ${waitMs}ms due to error:`, error);
+      console.warn("Retrying", { wait_ms: waitMs, attempt, error: String(error) });
       const jitter = Math.floor(Math.random() * 250);
       await sleep(waitMs + jitter);
       backoffMs = Math.min(backoffMs * 2, 16_000);
@@ -195,6 +196,24 @@ const withRetries = async <T>(
     }
   }
   throw new Error("Retry logic exhausted without completion");
+};
+
+const fetchJsonWithRetries = async <T>(url: string, name: string): Promise<T> => {
+  return withRetries<T>(async (_attempt, signal) => {
+    const res = await fetch(url, { headers: BROWSER_HEADERS, signal });
+    if (!res.ok) {
+      throw new HttpError(
+        `${name} ${res.status}`,
+        res.status,
+        parseRetryAfter(res.headers.get("retry-after")),
+      );
+    }
+    try {
+      return await res.json() as T;
+    } catch (error) {
+      throw new Error(`${name} JSON parse failed: ${(error as Error).message}`);
+    }
+  });
 };
 
 const callSummarizer = async (
@@ -374,7 +393,7 @@ serve(async (req) => {
     };
 
     const processBill = async (billId: number) => {
-      console.log(`Processing bill ID: ${billId}...`);
+      console.log("Processing bill", { bill_id: billId });
 
       const { data: existingBillMeta, error: existingBillError } = await supabaseAdmin
         .from("bills")
@@ -384,8 +403,10 @@ serve(async (req) => {
       if (existingBillError) throw existingBillError;
 
       const billDetailsUrl = `https://api.legiscan.com/?op=getBill&id=${billId}&key=${legiscanApiKey}`;
-      const billDetailsRes = await fetch(billDetailsUrl, { headers: BROWSER_HEADERS });
-      const { bill: billData } = await billDetailsRes.json();
+      const { bill: billData } = await fetchJsonWithRetries<{ bill: any }>(
+        billDetailsUrl,
+        "legiscan getBill",
+      );
 
       let decodedText: string | undefined;
       const latestTextDoc =
@@ -393,30 +414,36 @@ serve(async (req) => {
 
       if (latestTextDoc?.doc_id) {
         const billTextUrl = `https://api.legiscan.com/?op=getBillText&id=${latestTextDoc.doc_id}&key=${legiscanApiKey}`;
-        const billTextRes = await fetch(billTextUrl, { headers: BROWSER_HEADERS });
-        const { text: textData } = await billTextRes.json();
+        const { text: textData } = await fetchJsonWithRetries<{ text: { doc: string } }>(
+          billTextUrl,
+          "legiscan getBillText",
+        );
         const binaryString = atob(textData.doc);
         const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
         const decoder = new TextDecoder("utf-8", { fatal: false });
-        decodedText = decoder.decode(bytes);
+        decodedText = decoder
+          .decode(bytes)
+          .replace(/^\uFEFF/, "")
+          .replace(/[\u200B-\u200D\u2060]/g, "");
       } else {
-        console.log(`- Bill ${billData.bill_number} has no text document. Using title as fallback.`);
+        console.log("- No LegiScan text, using title", {
+          bill_id: billData.bill_id,
+          bill_number: billData.bill_number,
+        });
         decodedText = billData.title;
       }
 
       const originalTextRaw = sanitizeRawText(decodedText ?? "");
       if (!originalTextRaw.trim()) {
-        failures.push({ billId, reason: "No text available" });
-        return;
+        throw new Error("No text available");
       }
 
       const originalTextFormatted = formatLegislationText(originalTextRaw);
       if (!originalTextFormatted) {
-        failures.push({ billId, reason: "Formatter returned empty text" });
-        return;
+        throw new Error("Formatter returned empty text");
       }
 
-      console.log(`- Generating bilingual summaries for ${billData.bill_number}...`);
+      console.log("- Summarizing", { bill_id: billData.bill_id, bill_number: billData.bill_number });
       const summarizerSource = buildSummarizerSource(billData, originalTextFormatted);
 
       const summaries = await withRetries((_, signal) =>
@@ -484,16 +511,20 @@ serve(async (req) => {
 
       if (summaryHashUnchanged) {
         if (existingEmbeddingSerialized) {
-          console.log(`- Reusing existing embedding for ${billData.bill_number}`);
+          console.log("- Reusing embedding", {
+            bill_id: billData.bill_id,
+            bill_number: billData.bill_number,
+          });
         } else {
-          console.warn(
-            `- Existing embedding missing for ${billData.bill_number} despite matching summary hash. Regenerating...`,
-          );
+          console.warn("- Missing embedding despite matching hash; regenerating", {
+            bill_id: billData.bill_id,
+            bill_number: billData.bill_number,
+          });
         }
       }
 
       if (!summaryHashUnchanged || !existingEmbeddingSerialized) {
-        console.log(`- Generating vector embedding for ${billData.bill_number}...`);
+        console.log("- Embedding", { bill_id: billData.bill_id, bill_number: billData.bill_number });
         const textForEmbedding = [
           `Title: ${billData.title}`,
           billData.description ? `Description: ${billData.description}` : null,
@@ -557,15 +588,18 @@ serve(async (req) => {
       );
       if (rpcError) throw rpcError;
 
-      console.log(
-        `- Summary checks for bill ${billData.bill_number}: raw_len=${originalTextRaw.length}, formatted_len=${originalTextFormatted.length}, summary_ok=true`,
-      );
+      console.log("- Summary checks", {
+        bill_id: billData.bill_id,
+        raw_len: originalTextRaw.length,
+        formatted_len: originalTextFormatted.length,
+        summary_ok: true,
+      });
 
       processedBills.push(billData.bill_id);
-      console.log(`✅ Successfully processed bill ${billData.bill_number}.`);
+      console.log("✅ Processed bill", { bill_id: billData.bill_id, bill_number: billData.bill_number });
     };
 
-    const maxBillsToProcess = Math.max(0, Number(MAX_BILLS_PER_RUN) || 0);
+    const maxBillsToProcess = MAX_BILLS_PER_RUN;
     for (let i = 0; i < maxBillsToProcess; i++) {
       const nextId = await leaseNextBillId();
       if (!nextId) break;
@@ -573,20 +607,15 @@ serve(async (req) => {
       try {
         await processBill(nextId);
         const { error: releaseError } = await supabaseAdmin
-          .from("bills")
-          .update({
-            summary_ok: true,
-            summary_lease_until: null,
-            summary_lease_owner: null,
-          })
-          .eq("id", nextId);
+          .rpc("release_bill_lease", { p_id: nextId, p_owner: owner, p_ok: true });
         if (releaseError) throw releaseError;
       } catch (err) {
-        console.error(`❌ Failed processing bill ${nextId}:`, err);
-        await supabaseAdmin
-          .from("bills")
-          .update({ summary_ok: false, summary_lease_until: null, summary_lease_owner: null })
-          .eq("id", nextId);
+        console.error("❌ Failed processing bill", { bill_id: nextId, error: String(err) });
+        const { error: releaseError } = await supabaseAdmin
+          .rpc("release_bill_lease", { p_id: nextId, p_owner: owner, p_ok: false });
+        if (releaseError) {
+          console.error("Failed to release lease", { bill_id: nextId, error: String(releaseError) });
+        }
         failures.push({ billId: nextId, reason: (err as Error).message });
       }
     }
@@ -601,7 +630,7 @@ serve(async (req) => {
       failures,
     });
   } catch (error) {
-    console.error("Function failed:", error);
+    console.error("Function failed", { error: String(error) });
     return toJson({ error: (error as Error).message ?? "Unexpected error" }, 500);
   }
 });
