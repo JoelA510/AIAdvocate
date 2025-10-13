@@ -3,15 +3,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView } from "react-native";
-import {
-  ActivityIndicator,
-  Button,
-  Card,
-  Chip,
-  Menu,
-  Text,
-  useTheme,
-} from "react-native-paper";
+import { ActivityIndicator, Button, Card, Chip, Menu, Text, useTheme } from "react-native-paper";
 import { useTranslation } from "react-i18next";
 
 import { supabase } from "@/lib/supabase";
@@ -128,11 +120,7 @@ export default function VotingHistory({
   }, [numericLegislatorId]);
 
   useEffect(() => {
-    let isMounted = true;
     fetchBillOptions();
-    return () => {
-      isMounted = false;
-    };
   }, [fetchBillOptions]);
 
   useEffect(() => {
@@ -402,9 +390,7 @@ export default function VotingHistory({
           </Card.Content>
         </Card>
       ) : (
-        <ScrollView style={{ maxHeight: 360 }}>
-          {rows.map(renderRow)}
-        </ScrollView>
+        <ScrollView style={{ maxHeight: 360 }}>{rows.map(renderRow)}</ScrollView>
       )}
     </View>
   );

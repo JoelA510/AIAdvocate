@@ -21,7 +21,7 @@ type PublicEnvPayload = Partial<AppConfig> & {
   lnfUrl?: string;
 };
 
-const REQUIRED_FIELDS: Array<keyof AppConfig> = [
+const REQUIRED_FIELDS: (keyof AppConfig)[] = [
   "supabaseUrl",
   "supabaseAnonKey",
   "openstatesApiKey",
@@ -31,11 +31,11 @@ const REQUIRED_FIELDS: Array<keyof AppConfig> = [
 let config: AppConfig | null = null;
 
 function resolvePublicEnv(): PublicEnvPayload | null {
+  const manifest = Updates.manifest as any;
   const extraLayers = [
     Constants.expoConfig?.extra,
     (Constants.manifest as any)?.extra,
-    (Updates.manifest as any)?.extra,
-    (Updates.manifest2 as any)?.extra,
+    manifest?.extra,
   ];
 
   for (const layer of extraLayers) {
@@ -98,4 +98,3 @@ export function getConfig(): AppConfig {
 export function setConfig(overrides: AppConfig) {
   config = { ...overrides };
 }
-
