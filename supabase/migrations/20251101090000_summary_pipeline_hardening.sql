@@ -82,7 +82,10 @@ BEGIN
     progress = EXCLUDED.progress,
     calendar = EXCLUDED.calendar,
     history = EXCLUDED.history,
-    embedding = EXCLUDED.embedding;
+    embedding = CASE
+      WHEN EXCLUDED.summary_hash IS DISTINCT FROM public.bills.summary_hash THEN EXCLUDED.embedding
+      ELSE public.bills.embedding
+    END;
 
   IF tr IS NOT NULL THEN
     INSERT INTO public.bill_translations (
@@ -109,3 +112,9 @@ BEGIN
   END IF;
 END;
 $$;
+
+REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS bills_summary_ok_idx
+  ON public.bills ((summary_ok IS DISTINCT FROM TRUE));
