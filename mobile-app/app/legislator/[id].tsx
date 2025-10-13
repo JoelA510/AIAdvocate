@@ -67,8 +67,9 @@ export default function LegislatorScreen() {
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"supabase" | "fallback">("supabase");
   const [hasHistoryRows, setHasHistoryRows] = useState(false);
-  const [selectedBillContext, setSelectedBillContext] =
-    useState<VotingHistoryBillContext | null>(null);
+  const [selectedBillContext, setSelectedBillContext] = useState<VotingHistoryBillContext | null>(
+    null,
+  );
 
   const handleGoBack = useCallback(() => {
     if (router.canGoBack()) {
@@ -409,10 +410,7 @@ export default function LegislatorScreen() {
           <Card mode="outlined" style={{ marginTop: 12 }}>
             <Card.Content>
               <Text>
-                {t(
-                  "legislator.noVotes",
-                  "We have not recorded any votes for this legislator yet.",
-                )}
+                {t("legislator.noVotes", "We have not recorded any votes for this legislator yet.")}
               </Text>
             </Card.Content>
           </Card>

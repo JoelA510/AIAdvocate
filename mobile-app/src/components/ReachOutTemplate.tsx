@@ -2,8 +2,9 @@
 // Provides a reusable outreach template with copy-to-clipboard support.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { StyleSheet, View } from "react-native";
-import { Button, Card, Text, TextInput, useTheme } from "react-native-paper";
+import { StyleSheet } from "react-native";
+import { Button, Card, TextInput, useTheme } from "react-native-paper";
+// removed unused View, Text
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
 import Toast from "react-native-toast-message";
@@ -19,44 +20,21 @@ type ReachOutTemplateProps = {
   } | null;
 };
 
-const TEMPLATE_BASE = `Subject: Regarding [Bill Number/Title]
-
-Dear [Title] [Last Name],
-
-I’m a constituent in [Your City/ZIP]. I’m writing about [Bill Number] – “[Bill Title]”.
-
-I appreciate your service and wanted to share my perspective:
-[Briefly state your position in 1–2 sentences.]
-
-Key points:
-- [Point 1]
-- [Point 2]
-- [Optional personal impact or data point]
-
-I respectfully ask that you vote [for/against] [Bill Number].
-Thank you for your time and consideration.
-
-Sincerely,
-[Your Full Name]
-[Street or Neighborhood, City/ZIP]
-[Optional phone/email]
-`;
-
 export default function ReachOutTemplate({ legislator, billContext }: ReachOutTemplateProps) {
   const { t } = useTranslation();
   const theme = useTheme();
 
   const templateText = useMemo(() => {
-    const subjectLine = billContext?.billNumber || billContext?.billTitle
-      ? `Subject: Regarding ${billContext.billNumber ?? ""}${
-          billContext?.billTitle ? ` — "${billContext.billTitle}"` : ""
-        }`
-      : "Subject: Regarding [Bill Number/Title]";
+    const subjectLine =
+      billContext?.billNumber || billContext?.billTitle
+        ? `Subject: Regarding ${billContext.billNumber ?? ""}${
+            billContext?.billTitle ? ` — "${billContext.billTitle}"` : ""
+          }`
+        : "Subject: Regarding [Bill Number/Title]";
 
     const greeting = (() => {
       const rawName = legislator?.name ?? "";
-      const lastName =
-        rawName.trim().split(" ").filter(Boolean).slice(-1)[0] ?? "[Last Name]";
+      const lastName = rawName.trim().split(" ").filter(Boolean).slice(-1)[0] ?? "[Last Name]";
       const title = legislator?.title?.trim() || "[Title]";
       return `Dear ${title} ${lastName},`;
     })();

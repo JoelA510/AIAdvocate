@@ -24,7 +24,9 @@ const REQUIRED_KEYS = [
 ] as const;
 
 function collectPublicEnv(): PublicEnv {
-  const missing = REQUIRED_KEYS.filter((key) => !process.env[key] || process.env[key]?.trim() === "");
+  const missing = REQUIRED_KEYS.filter(
+    (key) => !process.env[key] || process.env[key]?.trim() === "",
+  );
   if (missing.length) {
     throw new Error(
       `Missing environment variables for build: ${missing.join(", ")}. ` +
