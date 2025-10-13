@@ -37,10 +37,6 @@ ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS status_date DATE;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS progress JSONB;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS calendar JSONB;
 ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS history JSONB;
-ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS original_text_formatted TEXT;
-ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS summary_ok BOOLEAN;
-ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS summary_len_simple INTEGER;
-ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS summary_hash TEXT;
 
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE
@@ -259,7 +255,10 @@ BEGIN
     progress = EXCLUDED.progress,
     calendar = EXCLUDED.calendar,
     history = EXCLUDED.history,
-    embedding = EXCLUDED.embedding;
+    embedding = CASE
+      WHEN EXCLUDED.summary_hash IS DISTINCT FROM public.bills.summary_hash THEN EXCLUDED.embedding
+      ELSE public.bills.embedding
+    END;
 
   IF tr IS NOT NULL THEN
     INSERT INTO public.bill_translations (
@@ -287,6 +286,9 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
+
 CREATE OR REPLACE FUNCTION public.invoke_full_legislative_refresh() RETURNS VOID AS $$
 DECLARE
   i INT;
@@ -312,6 +314,8 @@ CREATE INDEX IF NOT EXISTS idx_bills_change_hash ON public.bills(change_hash);
 CREATE INDEX IF NOT EXISTS idx_bills_bill_number ON public.bills(bill_number);
 CREATE INDEX IF NOT EXISTS idx_bills_embed ON public.bills
   USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS bills_summary_ok_idx
+  ON public.bills ((summary_ok IS DISTINCT FROM TRUE));
 CREATE INDEX IF NOT EXISTS idx_cron_job_errors_occurred_at ON public.cron_job_errors(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_location_lookup_cache_expires_at ON public.location_lookup_cache(expires_at);
 

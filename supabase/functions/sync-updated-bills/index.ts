@@ -152,7 +152,7 @@ const withRetries = async <T>(
   let backoffMs = 1000;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const timeout = setTimeout(() => controller.abort(), 45_000);
     try {
       return await fn(attempt, controller.signal);
     } catch (error) {
@@ -181,6 +181,7 @@ const callSummarizer = async (
   text: string,
   openAiKey: string,
   signal: AbortSignal,
+  userIdentifier: string,
 ): Promise<SummaryPayload> => {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -191,8 +192,9 @@ const callSummarizer = async (
     body: JSON.stringify({
       model: "gpt-4o-mini",
       temperature: 0.2,
-      max_tokens: 1400,
+      max_tokens: 4096,
       response_format: { type: "json_schema", json_schema: summarySchema },
+      user: userIdentifier,
       messages: [
         {
           role: "system",
@@ -210,9 +212,8 @@ const callSummarizer = async (
   });
 
   if (!res.ok) {
-    const errorText = await res.text();
     throw new HttpError(
-      `openai chat ${res.status}: ${errorText}`,
+      `openai chat ${res.status}`,
       res.status,
       parseRetryAfter(res.headers.get("retry-after")),
     );
@@ -249,9 +250,8 @@ const callEmbedding = async (
   });
 
   if (!res.ok) {
-    const errorText = await res.text();
     throw new HttpError(
-      `openai embedding ${res.status}: ${errorText}`,
+      `openai embedding ${res.status}`,
       res.status,
       parseRetryAfter(res.headers.get("retry-after")),
     );
@@ -305,6 +305,14 @@ const buildSummarizerSource = (
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  const AUTH = Deno.env.get("SYNC_SECRET");
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
+  }
+  if (!AUTH || req.headers.get("authorization") !== `Bearer ${AUTH}`) {
+    return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+  }
+
   try {
     const legiscanApiKey = Deno.env.get("LEGISCAN_API_KEY");
     const openAiKey = Deno.env.get("OpenAI_GPT_Key");
@@ -324,9 +332,7 @@ serve(async (req) => {
       const { data, error } = await supabaseAdmin
         .from("bills")
         .select("id")
-        .or(
-          "summary_ok.is.false,summary_ok.is.null,summary_simple.ilike.AI_SUMMARY_FAILED%,summary_simple.ilike.Placeholder for%",
-        )
+        .or("summary_ok.is.false,summary_ok.is.null")
         .order("id", { ascending: true })
         .limit(1)
         .maybeSingle();
@@ -337,6 +343,13 @@ serve(async (req) => {
 
     const processBill = async (billId: number) => {
       console.log(`Processing bill ID: ${billId}...`);
+
+      const { data: existingBillMeta, error: existingBillError } = await supabaseAdmin
+        .from("bills")
+        .select("summary_hash, embedding")
+        .eq("id", billId)
+        .maybeSingle();
+      if (existingBillError) throw existingBillError;
 
       const billDetailsUrl = `https://api.legiscan.com/?op=getBill&id=${billId}&key=${legiscanApiKey}`;
       const billDetailsRes = await fetch(billDetailsUrl, { headers: BROWSER_HEADERS });
@@ -375,7 +388,12 @@ serve(async (req) => {
       const summarizerSource = buildSummarizerSource(billData, originalTextFormatted);
 
       const summaries = await withRetries((_, signal) =>
-        callSummarizer(summarizerSource, openAiKey, signal)
+        callSummarizer(
+          summarizerSource,
+          openAiKey,
+          signal,
+          String(billData?.bill_id ?? billId ?? "unknown"),
+        )
       );
 
       const englishSummaries = summaries.english;
@@ -425,20 +443,41 @@ serve(async (req) => {
       const summaryHash = await sha256(asciiEnglish.complex);
       const summaryLenSimple = asciiEnglish.simple.length;
 
-      console.log(`- Generating vector embedding for ${billData.bill_number}...`);
-      const textForEmbedding = [
-        `Title: ${billData.title}`,
-        billData.description ? `Description: ${billData.description}` : null,
-        `Expert Summary: ${asciiEnglish.complex}`,
-      ]
-        .filter((segment): segment is string => Boolean(segment))
-        .join("\n\n");
+      let embeddingText: string | undefined;
+      const existingSummaryHash = existingBillMeta?.summary_hash ?? null;
+      const existingEmbeddingValue = existingBillMeta?.embedding ?? null;
 
-      const embedding = await withRetries((_, signal) =>
-        callEmbedding(textForEmbedding, openAiKey, signal)
-      );
+      if (existingSummaryHash && existingSummaryHash === summaryHash && existingEmbeddingValue) {
+        if (Array.isArray(existingEmbeddingValue)) {
+          embeddingText = `[${existingEmbeddingValue.join(",")}]`;
+        } else if (typeof existingEmbeddingValue === "string") {
+          embeddingText = existingEmbeddingValue;
+        }
+        if (embeddingText) {
+          console.log(`- Reusing existing embedding for ${billData.bill_number}`);
+        } else {
+          console.warn(
+            `- Existing embedding for ${billData.bill_number} was not reusable. Regenerating...`,
+          );
+        }
+      }
 
-      const embeddingText = `[${embedding.join(",")}]`;
+      if (!embeddingText) {
+        console.log(`- Generating vector embedding for ${billData.bill_number}...`);
+        const textForEmbedding = [
+          `Title: ${billData.title}`,
+          billData.description ? `Description: ${billData.description}` : null,
+          `Expert Summary: ${asciiEnglish.complex}`,
+        ]
+          .filter((segment): segment is string => Boolean(segment))
+          .join("\n\n");
+
+        const embedding = await withRetries((_, signal) =>
+          callEmbedding(textForEmbedding, openAiKey, signal)
+        );
+
+        embeddingText = `[${embedding.join(",")}]`;
+      }
 
       const statusText = billData.status_text ?? null;
       const statusDate = billData.status_date ?? null;
