@@ -37,7 +37,7 @@ const corsHeaders = {
   Vary: "Origin",
 };
 
-const json = (body: unknown, status = 200) =>
+const toJson = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -61,7 +61,7 @@ const BROWSER_HEADERS = {
 };
 
 const MAX_BILLS_PER_RUN = Number(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "3");
-const MAX_MODEL_INPUT_CHARS = 16000;
+const MAX_MODEL_INPUT_CHARS = 12000;
 const MIN_SUMMARY_LENGTHS = {
   simple: 200,
   medium: 400,
@@ -163,9 +163,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parseRetryAfter = (header: string | null): number | undefined => {
   if (!header) return undefined;
-  const seconds = Number(header);
-  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
-  return seconds * 1000;
+  if (/^\d+$/.test(header)) return Number(header) * 1000;
+  const parsed = Date.parse(header);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.max(0, parsed - Date.now());
 };
 
 const withRetries = async <T>(
@@ -181,15 +182,10 @@ const withRetries = async <T>(
     } catch (error) {
       if (attempt === attempts) throw error;
       const retryAfterMs =
-        typeof error === "object" && error !== null && "retryAfterMs" in error
-          ? (error as { retryAfterMs?: number }).retryAfterMs ?? null
-          : (() => {
-            const match = /Retry-After:\s*(\d+)/i.exec(String(error));
-            return match ? Number(match[1]) * 1000 : null;
-          })();
-      const waitMs = typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs)
-        ? retryAfterMs
-        : backoffMs;
+        error instanceof HttpError && typeof error.retryAfterMs === "number"
+          ? error.retryAfterMs
+          : undefined;
+      const waitMs = Number.isFinite(retryAfterMs) ? Number(retryAfterMs) : backoffMs;
       console.warn(`Retrying after ${waitMs}ms due to error:`, error);
       const jitter = Math.floor(Math.random() * 250);
       await sleep(waitMs + jitter);
@@ -217,7 +213,10 @@ const callSummarizer = async (
       model: "gpt-4o-mini",
       temperature: 0.2,
       max_tokens: 4096,
-      response_format: { type: "json_schema", json_schema: summarySchema },
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: summarySchema.name, schema: summarySchema.schema, strict: true },
+      },
       user: userIdentifier,
       messages: [
         {
@@ -243,8 +242,8 @@ const callSummarizer = async (
     );
   }
 
-  const json = await res.json();
-  const content = json?.choices?.[0]?.message?.content;
+  const payload = await res.json();
+  const content = payload?.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error("Empty content from OpenAI summarizer");
   }
@@ -326,6 +325,12 @@ const buildSummarizerSource = (
   return `${combined.slice(0, MAX_MODEL_INPUT_CHARS)}\n\n[Text truncated for model input. Focus on the salient sections above.]`;
 };
 
+const reuseEmbedding = (value: unknown): string | null => {
+  if (Array.isArray(value)) return `[${value.join(",")}]`;
+  if (typeof value === "string") return value;
+  return null;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -334,10 +339,10 @@ serve(async (req) => {
   const AUTH = Deno.env.get("SYNC_SECRET") ?? "";
   const supplied = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (req.method !== "POST") {
-    return json({ error: "Method Not Allowed" }, 405);
+    return toJson({ error: "Method Not Allowed" }, 405);
   }
   if (!AUTH || !constantTimeEquals(supplied, AUTH)) {
-    return json({ error: "Unauthorized" }, 401);
+    return toJson({ error: "Unauthorized" }, 401);
   }
 
   try {
@@ -352,11 +357,16 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const owner = (crypto as any).randomUUID?.() ?? String(Date.now());
+
     const processedBills: number[] = [];
     const failures: Array<{ billId: number; reason: string }> = [];
 
     const leaseNextBillId = async (): Promise<number | null> => {
-      const { data, error } = await supabaseAdmin.rpc<number>("lease_next_bill");
+      const { data, error } = await supabaseAdmin.rpc<number>("lease_next_bill", {
+        p_owner: owner,
+        p_ttl_seconds: 900,
+      });
       if (error) throw error;
       if (data === null || data === undefined) return null;
       const id = typeof data === "number" ? data : Number(data);
@@ -468,17 +478,21 @@ serve(async (req) => {
       const existingSummaryHash = existingBillMeta?.summary_hash ?? null;
       const existingEmbeddingValue = existingBillMeta?.embedding ?? null;
       const summaryHashUnchanged = existingSummaryHash !== null && existingSummaryHash === summaryHash;
+      const existingEmbeddingSerialized = reuseEmbedding(existingEmbeddingValue);
 
       let embeddingPayload: string | null = null;
 
-      if (summaryHashUnchanged && existingEmbeddingValue) {
-        console.log(`- Reusing existing embedding for ${billData.bill_number}`);
-      } else {
-        if (summaryHashUnchanged && !existingEmbeddingValue) {
+      if (summaryHashUnchanged) {
+        if (existingEmbeddingSerialized) {
+          console.log(`- Reusing existing embedding for ${billData.bill_number}`);
+        } else {
           console.warn(
             `- Existing embedding missing for ${billData.bill_number} despite matching summary hash. Regenerating...`,
           );
         }
+      }
+
+      if (!summaryHashUnchanged || !existingEmbeddingSerialized) {
         console.log(`- Generating vector embedding for ${billData.bill_number}...`);
         const textForEmbedding = [
           `Title: ${billData.title}`,
@@ -551,36 +565,43 @@ serve(async (req) => {
       console.log(`✅ Successfully processed bill ${billData.bill_number}.`);
     };
 
-    const maxBillsToProcess = Number.isFinite(MAX_BILLS_PER_RUN)
-      ? Math.max(0, MAX_BILLS_PER_RUN)
-      : 0;
-    for (let processed = 0; processed < maxBillsToProcess; processed++) {
+    const maxBillsToProcess = Math.max(0, Number(MAX_BILLS_PER_RUN) || 0);
+    for (let i = 0; i < maxBillsToProcess; i++) {
       const nextId = await leaseNextBillId();
       if (!nextId) break;
 
       try {
         await processBill(nextId);
+        const { error: releaseError } = await supabaseAdmin
+          .from("bills")
+          .update({
+            summary_ok: true,
+            summary_lease_until: null,
+            summary_lease_owner: null,
+          })
+          .eq("id", nextId);
+        if (releaseError) throw releaseError;
       } catch (err) {
         console.error(`❌ Failed processing bill ${nextId}:`, err);
         await supabaseAdmin
           .from("bills")
-          .update({ summary_ok: false })
+          .update({ summary_ok: false, summary_lease_until: null, summary_lease_owner: null })
           .eq("id", nextId);
         failures.push({ billId: nextId, reason: (err as Error).message });
       }
     }
 
     if (processedBills.length === 0) {
-      return json({ message: "Sync complete. All bills are up-to-date." });
+      return toJson({ message: "Sync complete. All bills are up-to-date." });
     }
 
-    return json({
+    return toJson({
       message: `Processed ${processedBills.length} bill(s).`,
       processedBills,
       failures,
     });
   } catch (error) {
     console.error("Function failed:", error);
-    return json({ error: (error as Error).message ?? "Unexpected error" }, 500);
+    return toJson({ error: (error as Error).message ?? "Unexpected error" }, 500);
   }
 });

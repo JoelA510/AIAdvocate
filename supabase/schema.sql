@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS public.bills (
   summary_ok BOOLEAN,
   summary_len_simple INTEGER,
   summary_hash TEXT,
+  summary_lease_until TIMESTAMPTZ,
+  summary_lease_owner TEXT,
   embedding vector(1536), -- For semantic search
   openstates_bill_id TEXT
 );
@@ -342,7 +344,8 @@ $$;
 REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
 
-CREATE OR REPLACE FUNCTION public.lease_next_bill() RETURNS BIGINT
+CREATE OR REPLACE FUNCTION public.lease_next_bill(p_owner text, p_ttl_seconds int DEFAULT 900)
+RETURNS BIGINT
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public
@@ -350,19 +353,21 @@ AS $$
   WITH cte AS (
     SELECT id FROM public.bills
     WHERE (summary_ok IS DISTINCT FROM TRUE)
+      AND (summary_lease_until IS NULL OR summary_lease_until < now())
     ORDER BY id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
   )
   UPDATE public.bills b
-     SET summary_ok = NULL
+     SET summary_lease_until = now() + make_interval(secs => p_ttl_seconds),
+         summary_lease_owner = p_owner
   FROM cte
   WHERE b.id = cte.id
   RETURNING b.id;
 $$;
 
-REVOKE ALL ON FUNCTION public.lease_next_bill() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.lease_next_bill() TO service_role;
+REVOKE ALL ON FUNCTION public.lease_next_bill(text, int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.lease_next_bill(text, int) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.invoke_full_legislative_refresh() RETURNS VOID AS $$
 DECLARE
