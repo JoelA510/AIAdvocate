@@ -5,7 +5,7 @@ returns trigger
 language plpgsql
 as $$
 begin
-  if new.summary_simple ~* '^Placeholder for' then
+  if new.summary_simple ~* '^Placeholder for[[:space:]]' then
     new.summary_simple := null;
   end if;
   return new;
@@ -22,6 +22,6 @@ alter table public.bills
   add constraint bills_summary_simple_no_placeholder
   check (
     summary_simple is null
-    or summary_simple !~* '^Placeholder for'
+    or summary_simple !~* '^Placeholder for[[:space:]]'
   )
   not valid;
