@@ -1,0 +1,5 @@
+{
+  "installCommand": "yarn install --frozen-lockfile",
+  "buildCommand": "npx expo export -p web",
+  "outputDirectory": "dist"
+}
