@@ -25,6 +25,7 @@ if [[ -z "${SUPABASE_URL:-}" ]]; then
   exit 1
 fi
 
-curl -X POST "${SUPABASE_URL%/}/functions/v1/sync-legislators-and-votes" \
+curl -X POST "${SUPABASE_URL%/}/functions/v1/votes-backfill" \
   -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-  -H "Content-Type: application/json"
+  -H "Content-Type: application/json" \
+  -d '{"force":true}'
