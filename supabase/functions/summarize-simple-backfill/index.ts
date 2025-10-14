@@ -1,51 +1,79 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  ensureEnv,
+  invokeFunction,
+  isPlaceholder,
+  runConcurrent,
+} from "../_shared/utils.ts";
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const supabaseUrl = ensureEnv("SUPABASE_URL");
+const serviceKey = ensureEnv("SUPABASE_SERVICE_ROLE_KEY");
 const db = createClient(supabaseUrl, serviceKey);
 
-function isPlaceholder(s: string | null): boolean {
-  return !!s && /^Placeholder for\s/i.test(s);
-}
+const parsedConcurrency = Number(Deno.env.get("BACKFILL_CONCURRENCY"));
+const CONCURRENCY = Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
+  ? Math.floor(parsedConcurrency)
+  : 5;
+const BATCH_SIZE = 200;
+const TARGET_FILTER = [
+  "summary_simple.is.null.and(is_curated.is.null)",
+  "summary_simple.is.null.and(is_curated.eq.false)",
+  "summary_simple.ilike.Placeholder%.and(is_curated.is.null)",
+  "summary_simple.ilike.Placeholder%.and(is_curated.eq.false)",
+].join(",");
 
 Deno.serve(async (_req) => {
-  let from = 0;
-  const size = 200;
-  let updated = 0;
+  let totalUpdated = 0;
 
   while (true) {
     const { data: rows, error } = await db
       .from("bills")
       .select("id,summary_simple,is_curated")
-      .or("summary_simple.is.null,summary_simple.ilike.Placeholder%")
+      .or(TARGET_FILTER)
       .order("id", { ascending: true })
-      .range(from, from + size - 1);
+      .range(0, BATCH_SIZE - 1);
 
     if (error) {
       return new Response(`DB error: ${error.message}`, { status: 500 });
     }
-    if (!rows?.length) break;
 
-    for (const r of rows) {
-      if (r.is_curated) continue;
-      if (r.summary_simple && !isPlaceholder(r.summary_simple)) continue;
-
-      const resp = await fetch(
-        `${supabaseUrl}/functions/v1/summarize-simple`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${serviceKey}`
-          },
-          body: JSON.stringify({ bill_id: r.id })
-        }
-      );
-      if (resp.ok) updated++;
+    if (!rows?.length) {
+      break;
     }
 
-    from += size;
+    const ids = rows
+      .filter((row) => !row.summary_simple || isPlaceholder(row.summary_simple))
+      .map((row) => row.id);
+
+    if (!ids.length) {
+      continue;
+    }
+
+    let updated = 0;
+    await runConcurrent(ids, CONCURRENCY, async (id) => {
+      try {
+        const resp = await invokeFunction({
+          url: `${supabaseUrl}/functions/v1/summarize-simple`,
+          token: serviceKey,
+          body: { bill_id: id },
+        });
+
+        if (resp.ok) {
+          updated++;
+        } else {
+          console.error(
+            `Failed bill ${id}: ${resp.status} ${await resp.text()}`,
+          );
+        }
+      } catch (err) {
+        console.error(`Error bill ${id}:`, err);
+      }
+    });
+
+    totalUpdated += updated;
   }
 
-  return new Response(`Backfill complete, updated=${updated}`, { status: 200 });
+  return new Response(`Backfill complete. totalUpdated=${totalUpdated}`, {
+    status: 200,
+  });
 });
