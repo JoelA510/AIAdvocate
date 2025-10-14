@@ -41,6 +41,7 @@ mobile-app/.env.production
 
 # Re-include example files so they CAN be committed
 !supabase/.env.example
+!supabase/functions/.env.local
 !mobile-app/.env.example
 
 # Build artifacts and binaries
