@@ -11,3 +11,4 @@ mobile-app/.env.production
 supabase/.env.example
 supabase/.envios/
 android/
+.vercel

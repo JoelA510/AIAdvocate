@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "name": "ai-advocate",
+  "workspaces": ["mobile-app"]
+}
