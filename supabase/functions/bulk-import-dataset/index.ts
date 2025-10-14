@@ -80,7 +80,7 @@ serve(async (req) => {
                 status: String(billData.status),
                 state_link: billData.state_link,
                 change_hash: billData.change_hash,
-                summary_simple: `Placeholder for ${billData.bill_number}.`, // Mark for processing
+                summary_simple: null,
             });
           }
         } catch (e) { console.error(`Skipping file due to error: ${file.name}`, e); }
