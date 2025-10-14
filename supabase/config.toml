@@ -17,10 +17,6 @@ import_map = "./functions/verify-app-check/deno.json"
 verify_jwt = true
 import_map = "./functions/send-push-notifications/deno.json"
 
-[functions.sync-legislators-and-votes]
-verify_jwt = false
-import_map = "./functions/sync-legislators-and-votes/deno.json"
-
 [functions.translate-bill]
 verify_jwt = false
 import_map = "./functions/translate-bill/deno.json"
