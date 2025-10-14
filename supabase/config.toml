@@ -28,3 +28,9 @@ import_map = "./functions/translate-bills/deno.json"
 [functions.find-your-rep]
 verify_jwt = false
 import_map = "./functions/find-your-rep/deno.json"
+
+[functions."summarize-simple"]
+verify_jwt = false
+
+[functions."summarize-simple-backfill"]
+verify_jwt = false
