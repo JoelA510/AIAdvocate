@@ -3,6 +3,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
+import { ensureEnv, isPlaceholder } from "../_shared/utils.ts";
 
 // --- Configuration ---
 const corsHeaders = {
@@ -51,7 +52,10 @@ serve(async (req) => {
     
     // Step 3: Process bill metadata from ZIP
     console.log("✅ Dataset received! Seeding database with bill metadata...");
-    const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const supabaseAdmin = createClient(
+      ensureEnv("SUPABASE_URL"),
+      ensureEnv("SUPABASE_SERVICE_ROLE_KEY"),
+    );
     const zip = await new JSZip().loadAsync(dataset.zip, { base64: true });
     
     const billsToUpsert = [] as Array<{
@@ -80,7 +84,7 @@ serve(async (req) => {
                 status: String(billData.status),
                 state_link: billData.state_link,
                 change_hash: billData.change_hash,
-                summary_simple: `Placeholder for ${billData.bill_number}.`, // Mark for processing
+                summary_simple: null,
             });
           }
         } catch (e) { console.error(`Skipping file due to error: ${file.name}`, e); }
@@ -114,7 +118,7 @@ serve(async (req) => {
       if (!value) return false;
       const normalized = value.trim();
       if (!normalized) return false;
-      if (/^Placeholder for /i.test(normalized)) return false;
+      if (isPlaceholder(normalized)) return false;
       if (/^AI_SUMMARY_FAILED/i.test(normalized)) return false;
       return true;
     };
