@@ -419,6 +419,14 @@ CREATE OR REPLACE FUNCTION public.get_related_bills(p_bill_id BIGINT) RETURNS TA
 
 -- SECTION 7A: VIEWS
 CREATE OR REPLACE VIEW public.v_rep_vote_history AS
+WITH access AS (
+  SELECT
+    CASE
+      WHEN auth.role() = 'service_role' THEN TRUE
+      WHEN auth.uid() IS NOT NULL THEN TRUE
+      ELSE FALSE
+    END AS allowed
+)
 SELECT
   l.id AS legislator_id,
   l.name AS legislator_name,
@@ -436,7 +444,9 @@ SELECT
 FROM public.vote_records vr
 JOIN public.vote_events ve ON ve.id = vr.vote_event_id
 JOIN public.bills b ON b.id = ve.bill_id
-JOIN public.legislators l ON l.id = vr.legislator_id;
+JOIN public.legislators l ON l.id = vr.legislator_id
+CROSS JOIN access
+WHERE access.allowed;
 
 -- SECTION 8: ROW-LEVEL SECURITY (RLS) POLICIES
 ALTER TABLE public.bills ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Public can view bills" ON public.bills; CREATE POLICY "Public can view bills" ON public.bills FOR SELECT USING (true);
@@ -447,12 +457,18 @@ ALTER TABLE public.legislators ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS 
 ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Public can view votes" ON public.votes; CREATE POLICY "Public can view votes" ON public.votes FOR SELECT USING (true);
 ALTER TABLE public.vote_events ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Public can view vote events" ON public.vote_events; CREATE POLICY "Public can view vote events" ON public.vote_events FOR SELECT USING (true); DROP POLICY IF EXISTS "Service role manages vote events" ON public.vote_events; CREATE POLICY "Service role manages vote events" ON public.vote_events FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
 ALTER TABLE public.vote_records ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Public can view vote records" ON public.vote_records; CREATE POLICY "Public can view vote records" ON public.vote_records FOR SELECT USING (true); DROP POLICY IF EXISTS "Service role manages vote records" ON public.vote_records; CREATE POLICY "Service role manages vote records" ON public.vote_records FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
-DROP POLICY IF EXISTS "Public can view v_rep_vote_history" ON public.v_rep_vote_history; CREATE POLICY "Public can view v_rep_vote_history" ON public.v_rep_vote_history FOR SELECT USING (true);
+ALTER TABLE public.job_state ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "job_state_service_role" ON public.job_state; CREATE POLICY job_state_service_role ON public.job_state FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
 ALTER TABLE public.bill_translations ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Public can view translations" ON public.bill_translations; CREATE POLICY "Public can view translations" ON public.bill_translations FOR SELECT USING (true); DROP POLICY IF EXISTS "Service role can manage translations" ON public.bill_translations; CREATE POLICY "Service role can manage translations" ON public.bill_translations FOR ALL USING (auth.role() = 'service_role');
 ALTER TABLE public.user_push_tokens ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Users can manage their own push token" ON public.user_push_tokens; CREATE POLICY "Users can manage their own push token" ON public.user_push_tokens FOR ALL USING (auth.uid() = user_id);
 ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Users can manage their own subscriptions" ON public.subscriptions; CREATE POLICY "Users can manage their own subscriptions" ON public.subscriptions FOR ALL USING (auth.uid() = user_id);
 ALTER TABLE public.events ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Allow service role to insert events" ON public.events; CREATE POLICY "Allow service role to insert events" ON public.events FOR INSERT WITH CHECK (auth.role() = 'service_role');
 ALTER TABLE public.cron_job_errors ENABLE ROW LEVEL SECURITY; DROP POLICY IF EXISTS "Admins can view errors" ON public.cron_job_errors; CREATE POLICY "Admins can view errors" ON public.cron_job_errors FOR SELECT USING (auth.role() = 'service_role');
+
+REVOKE ALL ON public.job_state FROM PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.job_state TO service_role;
+REVOKE ALL ON public.v_rep_vote_history FROM PUBLIC;
+GRANT SELECT ON public.v_rep_vote_history TO authenticated;
+GRANT SELECT ON public.v_rep_vote_history TO service_role;
 
 -- SECTION 9: CRON JOBS
 DO $$
