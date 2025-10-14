@@ -38,7 +38,7 @@ BEGIN
   FOR i IN 1..5 LOOP
     PERFORM public.invoke_edge_function('sync-updated-bills', 'daily-bill-sync');
   END LOOP;
-  PERFORM public.invoke_edge_function('sync-legislators-and-votes', 'daily-bill-sync');
+  PERFORM public.invoke_edge_function('votes-backfill', 'daily-bill-sync');
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 

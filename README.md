@@ -33,7 +33,7 @@ Supabase REST / RPC (PostgREST + Row Level Security)
     ├─ Edge Functions (Deno):
     │     • bulk-import-dataset  • sync-updated-bills
     │     • votes-backfill • votes-daily
-    │     • sync-legislators-and-votes (legacy) • translate-bill(s)
+    │     • translate-bill(s)
     │     • find-your-rep • invoke_full_legislative_refresh helpers
     │
     └─ PostgreSQL + Extensions:
@@ -58,13 +58,60 @@ Supabase REST / RPC (PostgREST + Row Level Security)
    *Edge functions expose RPCs the app calls when a new locale is requested; cached results come from `bill_translations` before hitting OpenAI again.*
 
 4. **Legislator roster & vote history** (`votes-backfill`, `votes-daily`)  
-   *Backfills OpenStates vote events for every tracked bill, upserts normalized data into `legislators`, `vote_events`, and `vote_records`, and uses the `job_state` checkpoint table so the nightly incremental sync (02:15 America/Los_Angeles) resumes safely. The legacy `sync-legislators-and-votes` function remains for one-off LegiScan imports.* Deploy with `supabase functions deploy votes-backfill` / `votes-daily`, then schedule the cron job via `supabase functions schedule create votes-daily "15 2 * * *" --timezone "America/Los_Angeles"`.
+   *Backfills OpenStates vote events for every tracked bill, upserts normalized data into `legislators`, `vote_events`, and `vote_records`, and uses the `job_state` checkpoint table so the nightly incremental sync (02:15 America/Los_Angeles) resumes safely. The pipeline now relies solely on OpenStates APIs; the legacy LegiScan sync has been removed.* Deploy with `supabase functions deploy votes-backfill` / `votes-daily`, then schedule the cron job via `supabase functions schedule create votes-daily "15 2 * * *" --timezone "America/Los_Angeles"`.
 
 5. **Location caching** (`find-your-rep`)  
    *Accepts ZIP/city input, uses LocationIQ + OpenStates, upserts results into `location_lookup_cache`, and increments hit counts. Short queries return cached coordinates instantly.*
 
 6. **Cron health** (`cleanup-location-cache`, `cleanup-old-cron-job-errors`)  
    *Keeps cache tables lean and logs only actionable failures. Each job writes to `cron_job_errors` for observability.*
+
+### Vote history operations
+
+1. **Secrets**  
+   Configure Supabase Edge Function secrets before deploying:  
+   `supabase functions secrets set SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… OPENSTATES_API_KEY=…`. Mirror these three values in Vercel (or any external scheduler) when invoking `votes-backfill`/`votes-daily`. Never expose the service-role key to client code.
+2. **Deployment & scheduling**  
+   ```bash
+   supabase functions deploy votes-backfill
+   supabase functions deploy votes-daily
+   supabase functions invoke votes-backfill --no-verify-jwt --body '{"force":true}'
+   supabase functions schedule create votes-daily "15 2 * * *" --timezone "America/Los_Angeles"
+   ```
+3. **Acceptance checks**  
+   ```sql
+   -- Bills missing OpenStates IDs
+   select count(*) as bills_missing_os_id from bills where openstates_bill_id is null;
+
+   -- Vote events and records exist
+   select count(*) as vote_events_ct from vote_events;
+   select count(*) as vote_records_ct from vote_records;
+   select date_trunc('day', date) d, count(*)
+   from vote_events group by 1 order by 1 desc limit 7;
+   select count(*) as view_rows from v_rep_vote_history;
+
+   -- Integrity checks
+   select count(*) as orphans from vote_records r
+     left join vote_events e on e.id = r.vote_event_id
+     where e.id is null;
+   with d as (
+     select vote_event_id, person_openstates_id, count(*) c
+     from vote_records group by 1,2 having count(*)>1
+   ) select count(*) from d;
+
+   -- Simple summaries restored
+   select count(*) as simple_en_null from bills where simple_summary_en is null;
+   select count(*) as simple_es_null from bills where simple_summary_es is null;
+   ```
+4. **Observability**  
+   Both vote functions emit JSON logs that include `processedBills`, `voteEventsUpserted`, `voteRecordsUpserted`, and `errors`. Configure Supabase alerts for (a) any function execution error and (b) log entries where `processedBills=0` so failures surface quickly.
+5. **Rollback**  
+   If a backfill must be reverted, delete rows created after the start timestamp:
+   ```sql
+   delete from vote_records where updated_at >= :backfill_start;
+   delete from vote_events  where updated_at >= :backfill_start;
+   ```
+   Fix the upstream issue and rerun the backfill command above.
 
 ---
 

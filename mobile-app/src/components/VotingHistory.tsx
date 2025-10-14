@@ -1,7 +1,7 @@
 // mobile-app/src/components/VotingHistory.tsx
 // Displays a legislator's voting history with simple filtering controls.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView } from "react-native";
 import { ActivityIndicator, Button, Card, Chip, Menu, Text, useTheme } from "react-native-paper";
 import { useTranslation } from "react-i18next";
@@ -42,6 +42,35 @@ export type BillContext = {
 
 const CLOSED_RESULTS = ["passed", "failed"];
 
+export function getBillOptions(rows: VoteHistoryRow[]): BillOption[] {
+  const unique = new Map<number, BillOption>();
+  rows.forEach((row) => {
+    if (!row.bill_id) return;
+    if (unique.has(row.bill_id)) return;
+    unique.set(row.bill_id, {
+      bill_id: row.bill_id,
+      bill_number: row.bill_number ?? null,
+      bill_title: row.bill_title ?? null,
+    });
+  });
+  return Array.from(unique.values());
+}
+
+export function getFilteredRows(
+  rows: VoteHistoryRow[],
+  mode: "all" | "closed" | "specific",
+  selectedBillId: number | null,
+): VoteHistoryRow[] {
+  let next = rows;
+  if (mode === "closed") {
+    next = next.filter((row) => CLOSED_RESULTS.includes((row.vote_result ?? "").toLowerCase()));
+  }
+  if (mode === "specific" && selectedBillId) {
+    next = next.filter((row) => row.bill_id === selectedBillId);
+  }
+  return next;
+}
+
 export default function VotingHistory({
   legislatorId,
   initialFilter,
@@ -73,8 +102,7 @@ export default function VotingHistory({
   const [selectedBillId, setSelectedBillId] = useState<number | null>(initialBillId);
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
   const [billMenuVisible, setBillMenuVisible] = useState(false);
-  const [billOptions, setBillOptions] = useState<BillOption[]>([]);
-  const [rows, setRows] = useState<VoteHistoryRow[]>([]);
+  const [allRows, setAllRows] = useState<VoteHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,127 +116,47 @@ export default function VotingHistory({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMode, initialBillId, legislatorId]);
 
-  const fetchBillOptions = useCallback(async () => {
-    if (!numericLegislatorId) return;
-    try {
-      const { data, error: billError } = await supabase
-        .from("v_rep_vote_history")
-        .select("bill_id,bill_number,bill_title,vote_date")
-        .eq("legislator_id", numericLegislatorId)
-        .not("bill_id", "is", null)
-        .order("vote_date", { ascending: false })
-        .limit(200);
+  const billOptions = useMemo(() => getBillOptions(allRows), [allRows]);
 
-      if (billError) throw billError;
-
-      const unique: BillOption[] = [];
-      const seen = new Set<number>();
-      (data ?? []).forEach((row) => {
-        if (row.bill_id && !seen.has(row.bill_id)) {
-          seen.add(row.bill_id);
-          unique.push({
-            bill_id: row.bill_id,
-            bill_number: row.bill_number ?? null,
-            bill_title: row.bill_title ?? null,
-          });
-        }
-      });
-      setBillOptions(unique);
-    } catch (err: any) {
-      console.error("Failed to load bill options", err);
-    }
-  }, [numericLegislatorId]);
-
-  useEffect(() => {
-    fetchBillOptions();
-  }, [fetchBillOptions]);
+  const filteredRows = useMemo(
+    () => getFilteredRows(allRows, filterMode, selectedBillId),
+    [allRows, filterMode, selectedBillId],
+  );
 
   useEffect(() => {
     const loadRows = async () => {
       if (!numericLegislatorId) {
-        setRows([]);
+        setAllRows([]);
         setLoading(false);
-        onRowsChange?.([]);
-        onBillContextChange?.(null);
-        return;
-      }
-
-      if (filterMode === "specific" && !selectedBillId) {
-        setRows([]);
-        setLoading(false);
-        onRowsChange?.([]);
-        onBillContextChange?.(null);
+        setError(null);
         return;
       }
 
       setLoading(true);
       setError(null);
       try {
-        let query = supabase
+        const { data, error: queryError } = await supabase
           .from("v_rep_vote_history")
           .select(
             "vote_event_id,vote_date,motion,vote_result,vote_choice,bill_id,bill_number,bill_title",
           )
           .eq("legislator_id", numericLegislatorId)
           .order("vote_date", { ascending: false })
-          .limit(100);
+          .limit(200);
 
-        if (filterMode === "closed") {
-          query = query.in("vote_result", CLOSED_RESULTS);
-        }
-        if (filterMode === "specific" && selectedBillId) {
-          query = query.eq("bill_id", selectedBillId);
-        }
-
-        const { data, error: queryError } = await query;
         if (queryError) throw queryError;
-
-        const nextRows = (data ?? []) as VoteHistoryRow[];
-        setRows(nextRows);
-        onRowsChange?.(nextRows);
-
-        if (filterMode === "specific" && selectedBillId) {
-          const option =
-            billOptions.find((item) => item.bill_id === selectedBillId) ??
-            (nextRows.length
-              ? {
-                  bill_id: nextRows[0].bill_id ?? selectedBillId,
-                  bill_number: nextRows[0].bill_number ?? null,
-                  bill_title: nextRows[0].bill_title ?? null,
-                }
-              : null);
-          if (option) {
-            onBillContextChange?.({
-              billId: option.bill_id,
-              billNumber: option.bill_number ?? null,
-              billTitle: option.bill_title ?? null,
-            });
-          } else {
-            onBillContextChange?.(null);
-          }
-        } else {
-          onBillContextChange?.(null);
-        }
+        setAllRows((data ?? []) as VoteHistoryRow[]);
       } catch (err: any) {
         console.error("Failed to load voting history", err);
         setError(err.message ?? "Unable to load voting history.");
-        setRows([]);
-        onRowsChange?.([]);
-        onBillContextChange?.(null);
+        setAllRows([]);
       } finally {
         setLoading(false);
       }
     };
 
     loadRows();
-  }, [
-    filterMode,
-    numericLegislatorId,
-    onRowsChange,
-    onBillContextChange,
-    selectedBillId,
-    billOptions,
-  ]);
+  }, [numericLegislatorId]);
 
   const currentFilterLabel = useMemo(() => {
     if (filterMode === "all") {
@@ -240,6 +188,41 @@ export default function VotingHistory({
       setSelectedBillId(billOptions[0].bill_id);
     }
   };
+
+  useEffect(() => {
+    if (filterMode !== "specific") return;
+    if (!billOptions.length) return;
+    if (!selectedBillId || !billOptions.some((option) => option.bill_id === selectedBillId)) {
+      setSelectedBillId(billOptions[0].bill_id);
+    }
+  }, [filterMode, selectedBillId, billOptions]);
+
+  useEffect(() => {
+    onRowsChange?.(filteredRows);
+
+    if (filterMode === "specific" && selectedBillId) {
+      const option =
+        billOptions.find((item) => item.bill_id === selectedBillId) ??
+        (filteredRows.length
+          ? {
+              bill_id: filteredRows[0].bill_id ?? selectedBillId,
+              bill_number: filteredRows[0].bill_number ?? null,
+              bill_title: filteredRows[0].bill_title ?? null,
+            }
+          : null);
+      if (option) {
+        onBillContextChange?.({
+          billId: option.bill_id,
+          billNumber: option.bill_number ?? null,
+          billTitle: option.bill_title ?? null,
+        });
+      } else {
+        onBillContextChange?.(null);
+      }
+    } else {
+      onBillContextChange?.(null);
+    }
+  }, [filteredRows, filterMode, selectedBillId, billOptions, onRowsChange, onBillContextChange]);
 
   const renderRow = (row: VoteHistoryRow) => {
     const dateDisplay = row.vote_date
@@ -366,7 +349,7 @@ export default function VotingHistory({
             <Text style={{ color: theme.colors.error }}>{error}</Text>
           </Card.Content>
         </Card>
-      ) : rows.length === 0 ? (
+      ) : filteredRows.length === 0 ? (
         <Card mode="outlined" style={styles.card}>
           <Card.Content>
             <Text>
@@ -383,7 +366,7 @@ export default function VotingHistory({
           </Card.Content>
         </Card>
       ) : (
-        <ScrollView style={{ maxHeight: 360 }}>{rows.map(renderRow)}</ScrollView>
+        <ScrollView style={{ maxHeight: 360 }}>{filteredRows.map(renderRow)}</ScrollView>
       )}
     </View>
   );

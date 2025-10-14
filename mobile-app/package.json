@@ -91,7 +91,7 @@
     "msw": "^2.10.5",
     "prettier": "^3.6.2",
     "pretty-format": "29.7.0",
-    "react-test-renderer": "18.2.0",
+    "react-test-renderer": "19.0.0",
     "typescript": "~5.8.3",
     "webpack": "^5",
     "whatwg-fetch": "^3.6.20"
