@@ -11,7 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { extractBillStatusDetails } from "@/lib/billStatus";
 import { useAuth } from "@/providers/AuthProvider";
 
-export interface Bill {
+export type Bill = {
   id: number;
   bill_number: string;
   title: string;
@@ -19,6 +19,7 @@ export interface Bill {
   status: string | null;
   status_text?: string | null;
   status_date?: string | null;
+  rank?: number | string | null;
   progress?: any;
   calendar?: any;
   history?: any;
@@ -35,10 +36,11 @@ export interface Bill {
   summary_complex_es?: string | null;
   is_curated: boolean;
   original_text: string | null;
+  original_text_es?: string | null;
   change_hash: string;
   created_at: string;
   panel_review: any;
-}
+};
 
 type BillHistoryEntry = {
   date?: string | null;
