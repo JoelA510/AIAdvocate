@@ -143,7 +143,7 @@ export default function BillsHomeScreen() {
       setError(null);
 
       try {
-        const trimmed = normalizeQuery(searchQuery);
+        const trimmed = normalizedQuery;
         if (!trimmed) {
           const { data: d, error: e } = await supabase
             .from("bills")
