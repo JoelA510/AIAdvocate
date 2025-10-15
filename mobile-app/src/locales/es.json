@@ -44,6 +44,13 @@
     "composeTo": "Redactar un correo"
   },
   "error": { "title": "Ocurrió un error" },
+  "router": {
+    "error": {
+      "title": "Algo salió mal",
+      "message": "No pudimos cargar esta pantalla. Inténtalo de nuevo en un momento.",
+      "retry": "Reintentar"
+    }
+  },
   "findYourRep": {
     "error": {
       "empty": "Ingresa una dirección o código postal.",
