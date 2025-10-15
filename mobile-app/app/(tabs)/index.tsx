@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
@@ -13,6 +14,17 @@ import { fetchTranslationsForBills } from "../../src/lib/translation";
 
 const SESSION_FILTER_ENABLED = false; // Set to true once the 2027-2028 cycle should be exposed to users.
 const SESSION_ALL = "all";
+const MAX_Q_LEN = 200;
+
+const normalizeQuery = (raw: string) => raw.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
+
+const coerceParamToString = (value: string | string[] | undefined): string => {
+  if (Array.isArray(value)) {
+    const first = value.find((item): item is string => typeof item === "string");
+    return first ?? "";
+  }
+  return typeof value === "string" ? value : "";
+};
 
 const extractSessionLabel = (stateLink: string | null | undefined): string | null => {
   if (!stateLink) return null;
@@ -70,24 +82,68 @@ const sortBills = (items: any[] | null | undefined) => {
 
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
+  const router = useRouter();
+  const { q: rawQueryParam } = useLocalSearchParams<{ q?: string | string[] }>();
+  const extractQueryFromParam = useCallback(
+    (param: string | string[] | undefined) => coerceParamToString(param),
+    [],
+  );
+  const initialQuery = useMemo(
+    () => normalizeQuery(extractQueryFromParam(rawQueryParam)),
+    [extractQueryFromParam, rawQueryParam],
+  );
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>(initialQuery);
   const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
+  const listRef = useRef<FlatList<any>>(null);
+  const latestRequestRef = useRef<symbol | null>(null);
+  const lastQueryRef = useRef<string | null>(null);
+  const lastSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const fetchBills = async () => {
-      setLoading(true);
-      try {
-        const trimmed = searchQuery.trim();
-        const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
-        let data: any[] = [];
+    const nextQuery = normalizeQuery(extractQueryFromParam(rawQueryParam));
+    setSearchQuery((prev) => (prev === nextQuery ? prev : nextQuery));
+  }, [extractQueryFromParam, rawQueryParam]);
 
+  const handleSearchChange = useCallback(
+    (text: string) => {
+      const normalized = normalizeQuery(text);
+      setSearchQuery(normalized);
+      router.replace({
+        pathname: "/(tabs)/index",
+        params: { q: normalized || undefined },
+      });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    const normalizedQuery = normalizeQuery(searchQuery);
+    const hasSameQuery = lastQueryRef.current === normalizedQuery;
+    const hasSameSession = lastSessionRef.current === sessionFilter;
+    if (hasSameQuery && hasSameSession) {
+      return;
+    }
+
+    lastQueryRef.current = normalizedQuery;
+    lastSessionRef.current = sessionFilter;
+
+    const controller = new AbortController();
+    const requestToken = Symbol("billsRequest");
+    latestRequestRef.current = requestToken;
+
+    const performFetch = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const trimmed = normalizeQuery(searchQuery);
         if (!trimmed) {
           const { data: d, error: e } = await supabase
             .from("bills")
@@ -96,8 +152,39 @@ export default function BillsHomeScreen() {
             .order("status_date", { ascending: false })
             .order("id", { ascending: false });
           if (e) throw e;
-          data = d ?? [];
-        } else if (billNumberRegex.test(trimmed)) {
+          if (latestRequestRef.current !== requestToken || controller.signal.aborted) return;
+
+          const sessionSet = new Set<string>();
+          (d ?? []).forEach((item) => {
+            const session = extractSessionLabel(item?.state_link);
+            if (session) sessionSet.add(session);
+          });
+          setAvailableSessions(Array.from(sessionSet).sort((a, b) => b.localeCompare(a)));
+
+          const filtered =
+            sessionFilter === SESSION_ALL
+              ? d ?? []
+              : (d ?? []).filter((item) => extractSessionLabel(item?.state_link) === sessionFilter);
+
+          setBills(sortBills(filtered));
+          setLoading(false);
+          return;
+        }
+
+        if (trimmed.length > MAX_Q_LEN) {
+          if (latestRequestRef.current === requestToken) {
+            setBills([]);
+            setAvailableSessions([]);
+            setError(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
+        let data: any[] = [];
+
+        if (billNumberRegex.test(trimmed)) {
           const processed = trimmed.replace(/\s/g, "");
           const { data: d, error: e } = await supabase
             .from("bills")
@@ -136,20 +223,18 @@ export default function BillsHomeScreen() {
           }
         }
 
+        if (latestRequestRef.current !== requestToken || controller.signal.aborted) {
+          return;
+        }
+
         const sessionSet = new Set<string>();
-        (data ?? []).forEach((item) => {
+        data.forEach((item) => {
           const session = extractSessionLabel(item?.state_link);
           if (session) sessionSet.add(session);
         });
-        if (sessionSet.size) {
-          setAvailableSessions((prev) => {
-            const combined = new Set(prev);
-            sessionSet.forEach((session) => combined.add(session));
-            return Array.from(combined).sort((a, b) => b.localeCompare(a));
-          });
-        }
+        setAvailableSessions(Array.from(sessionSet).sort((a, b) => b.localeCompare(a)));
 
-        let filtered = data ?? [];
+        let filtered = data;
         if (sessionFilter !== SESSION_ALL) {
           filtered = filtered.filter(
             (item) => extractSessionLabel(item?.state_link) === sessionFilter,
@@ -157,17 +242,28 @@ export default function BillsHomeScreen() {
         }
 
         setBills(sortBills(filtered));
-        setError(null);
+        setLoading(false);
       } catch (err: any) {
+        if (latestRequestRef.current !== requestToken || controller.signal.aborted) {
+          return;
+        }
         setError(err.message);
         setBills([]);
-      } finally {
+        setAvailableSessions([]);
         setLoading(false);
       }
     };
 
-    const searchTimeout = setTimeout(fetchBills, 300);
-    return () => clearTimeout(searchTimeout);
+    const searchTimeout = setTimeout(() => {
+      if (!controller.signal.aborted) {
+        void performFetch();
+      }
+    }, 300);
+
+    return () => {
+      controller.abort();
+      clearTimeout(searchTimeout);
+    };
   }, [searchQuery, sessionFilter]);
 
   // Stable list of visible IDs; avoids listing `bills` as a dependency.
@@ -271,6 +367,7 @@ export default function BillsHomeScreen() {
     }
     return (
       <FlatList
+        ref={listRef}
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
@@ -279,6 +376,10 @@ export default function BillsHomeScreen() {
       />
     );
   };
+
+  useEffect(() => {
+    listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+  }, [searchQuery, sessionFilter, idsKey]);
 
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
@@ -294,7 +395,7 @@ export default function BillsHomeScreen() {
       >
         <Searchbar
           placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
           value={searchQuery}
           style={[
             styles.searchbar,
@@ -306,6 +407,9 @@ export default function BillsHomeScreen() {
           inputStyle={{ fontSize: 16 }}
           iconColor={theme.colors.primary}
           placeholderTextColor={theme.colors.onSurfaceVariant}
+          onClearIconPress={() => {
+            handleSearchChange("");
+          }}
         />
         {SESSION_FILTER_ENABLED && sessionButtons.length > 1 && (
           <SegmentedButtons
