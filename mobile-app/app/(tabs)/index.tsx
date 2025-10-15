@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
@@ -14,14 +15,18 @@ import { fetchTranslationsForBills } from "../../src/lib/translation";
 const SESSION_FILTER_ENABLED = false; // Set to true once the 2027-2028 cycle should be exposed to users.
 const SESSION_ALL = "all";
 
-const extractSessionLabel = (stateLink: string | null | undefined): string | null => {
+// ---- helpers (outside component) ----
+const MAX_Q_LEN = 200;
+const normalizeQuery = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
+
+function extractSessionLabel(stateLink: string | null | undefined): string | null {
   if (!stateLink) return null;
   const match = stateLink.match(/bill_id=(\d{4})(\d{4})/);
   if (!match) return null;
   return `${match[1]}-${match[2]}`;
-};
+}
 
-const buildOrIlikeFilter = (fields: string[], raw: string) => {
+function buildOrIlikeFilter(fields: string[], raw: string) {
   const escaped = raw
     .replace(/\\/g, "\\\\")
     .replace(/%/g, "\\%")
@@ -31,9 +36,9 @@ const buildOrIlikeFilter = (fields: string[], raw: string) => {
     .replace(/\(/g, "\\(");
   const pattern = `%${escaped}%`;
   return fields.map((field) => `${field}.ilike.${pattern}`).join(",");
-};
+}
 
-const sortBills = (items: any[] | null | undefined) => {
+function sortBills(items: any[] | null | undefined) {
   const toRank = (value: any) => {
     if (typeof value === "number") return Number.isFinite(value) ? value : null;
     if (typeof value === "string" && value.trim() !== "") {
@@ -66,14 +71,25 @@ const sortBills = (items: any[] | null | undefined) => {
 
     return (b?.id ?? 0) - (a?.id ?? 0);
   });
-};
+}
 
+// ---- component ----
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
+  const router = useRouter();
+  const { q: rawQueryParam } = useLocalSearchParams<{ q?: string | string[] }>();
+
+  const initialQuery =
+    typeof rawQueryParam === "string"
+      ? normalizeQuery(rawQueryParam)
+      : Array.isArray(rawQueryParam)
+      ? normalizeQuery(rawQueryParam.find((s) => typeof s === "string" && s.length > 0) ?? "")
+      : "";
+
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>(initialQuery);
   const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const requestTokenRef = useRef(0);
@@ -81,11 +97,34 @@ export default function BillsHomeScreen() {
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
 
+  // Keep input in sync with URL q (raw → normalize for internal state)
+  useEffect(() => {
+    const next =
+      typeof rawQueryParam === "string"
+        ? normalizeQuery(rawQueryParam)
+        : Array.isArray(rawQueryParam)
+        ? normalizeQuery(rawQueryParam.find((s) => typeof s === "string" && s.length > 0) ?? "")
+        : "";
+    setSearchQuery((prev) => (prev === next ? prev : next));
+  }, [rawQueryParam]);
+
+  // Input change updates URL (raw text in URL; normalization happens in fetch)
+  const handleSearchChange = useCallback(
+    (text: string) => {
+      setSearchQuery(text);
+      router.replace({ params: { q: text || undefined } });
+    },
+    [router],
+  );
+
+  // Data loading (stale-safe + abortable)
   useEffect(() => {
     const controller = new AbortController();
     requestTokenRef.current += 1;
     const token = requestTokenRef.current;
-    const trimmed = searchQuery.trim();
+    const isStale = () => token !== requestTokenRef.current || controller.signal.aborted;
+
+    const trimmed = normalizeQuery(searchQuery);
     const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
 
     const fetchBills = async () => {
@@ -101,7 +140,7 @@ export default function BillsHomeScreen() {
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
             .order("id", { ascending: false });
-          if (token !== requestTokenRef.current || controller.signal.aborted) return;
+          if (isStale()) return;
           if (e) throw e;
           data = d ?? [];
         } else if (billNumberRegex.test(trimmed)) {
@@ -114,20 +153,16 @@ export default function BillsHomeScreen() {
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
             .order("id", { ascending: false });
-          if (token !== requestTokenRef.current || controller.signal.aborted) return;
+          if (isStale()) return;
           if (e) throw e;
           data = d ?? [];
         } else {
           const { data: d, error: e } = await supabase.rpc(
             "search_bills",
-            {
-              p_query: trimmed,
-            },
-            {
-              signal: controller.signal,
-            },
+            { p_query: trimmed },
+            { signal: controller.signal },
           );
-          if (token !== requestTokenRef.current || controller.signal.aborted) return;
+          if (isStale()) return;
           if (!e) {
             data = d ?? [];
           } else if (
@@ -146,7 +181,7 @@ export default function BillsHomeScreen() {
               .order("status_date", { ascending: false })
               .order("created_at", { ascending: false })
               .order("id", { ascending: false });
-            if (token !== requestTokenRef.current || controller.signal.aborted) return;
+            if (isStale()) return;
             if (fallbackError) throw fallbackError;
             data = fallbackData ?? [];
           } else {
@@ -159,7 +194,7 @@ export default function BillsHomeScreen() {
           const session = extractSessionLabel(item?.state_link);
           if (session) sessionSet.add(session);
         });
-        if (token !== requestTokenRef.current || controller.signal.aborted) return;
+        if (isStale()) return;
 
         if (sessionSet.size) {
           setAvailableSessions((prev) => {
@@ -176,17 +211,16 @@ export default function BillsHomeScreen() {
           );
         }
 
-        if (token !== requestTokenRef.current || controller.signal.aborted) return;
-
+        if (isStale()) return;
         setBills(sortBills(filtered));
         setError(null);
       } catch (err: any) {
-        if (token !== requestTokenRef.current || controller.signal.aborted) return;
+        if (isStale()) return;
         if (err?.name === "AbortError") return;
         setError(err.message);
         setBills([]);
       } finally {
-        if (token !== requestTokenRef.current || controller.signal.aborted) return;
+        if (isStale()) return;
         setLoading(false);
       }
     };
@@ -195,7 +229,7 @@ export default function BillsHomeScreen() {
     return () => {
       controller.abort();
       clearTimeout(searchTimeout);
-      setAvailableSessions([]);
+      // DO NOT clear availableSessions here; it causes filter resets on every keystroke.
     };
   }, [searchQuery, sessionFilter]);
 
@@ -323,7 +357,7 @@ export default function BillsHomeScreen() {
       >
         <Searchbar
           placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
           value={searchQuery}
           style={[
             styles.searchbar,
@@ -335,6 +369,10 @@ export default function BillsHomeScreen() {
           inputStyle={{ fontSize: 16 }}
           iconColor={theme.colors.primary}
           placeholderTextColor={theme.colors.onSurfaceVariant}
+          onClearIconPress={() => {
+            setSearchQuery("");
+            router.replace({ params: { q: undefined } });
+          }}
         />
         {SESSION_FILTER_ENABLED && sessionButtons.length > 1 && (
           <SegmentedButtons
