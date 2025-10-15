@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -76,25 +76,32 @@ export default function BillsHomeScreen() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
+  const requestTokenRef = useRef(0);
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
 
   useEffect(() => {
+    const controller = new AbortController();
+    requestTokenRef.current += 1;
+    const token = requestTokenRef.current;
+    const trimmed = searchQuery.trim();
+    const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
+
     const fetchBills = async () => {
       setLoading(true);
       try {
-        const trimmed = searchQuery.trim();
-        const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
         let data: any[] = [];
 
         if (!trimmed) {
           const { data: d, error: e } = await supabase
             .from("bills")
             .select("*")
+            .abortSignal(controller.signal)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
             .order("id", { ascending: false });
+          if (token !== requestTokenRef.current || controller.signal.aborted) return;
           if (e) throw e;
           data = d ?? [];
         } else if (billNumberRegex.test(trimmed)) {
@@ -102,16 +109,25 @@ export default function BillsHomeScreen() {
           const { data: d, error: e } = await supabase
             .from("bills")
             .select("*")
+            .abortSignal(controller.signal)
             .ilike("bill_number", `%${processed}%`)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
             .order("id", { ascending: false });
+          if (token !== requestTokenRef.current || controller.signal.aborted) return;
           if (e) throw e;
           data = d ?? [];
         } else {
-          const { data: d, error: e } = await supabase.rpc("search_bills", {
-            p_query: trimmed,
-          });
+          const { data: d, error: e } = await supabase.rpc(
+            "search_bills",
+            {
+              p_query: trimmed,
+            },
+            {
+              signal: controller.signal,
+            },
+          );
+          if (token !== requestTokenRef.current || controller.signal.aborted) return;
           if (!e) {
             data = d ?? [];
           } else if (
@@ -124,11 +140,13 @@ export default function BillsHomeScreen() {
             const { data: fallbackData, error: fallbackError } = await supabase
               .from("bills")
               .select("*")
+              .abortSignal(controller.signal)
               .or(orFilter)
               .order("is_curated", { ascending: false })
               .order("status_date", { ascending: false })
               .order("created_at", { ascending: false })
               .order("id", { ascending: false });
+            if (token !== requestTokenRef.current || controller.signal.aborted) return;
             if (fallbackError) throw fallbackError;
             data = fallbackData ?? [];
           } else {
@@ -141,6 +159,8 @@ export default function BillsHomeScreen() {
           const session = extractSessionLabel(item?.state_link);
           if (session) sessionSet.add(session);
         });
+        if (token !== requestTokenRef.current || controller.signal.aborted) return;
+
         if (sessionSet.size) {
           setAvailableSessions((prev) => {
             const combined = new Set(prev);
@@ -156,18 +176,27 @@ export default function BillsHomeScreen() {
           );
         }
 
+        if (token !== requestTokenRef.current || controller.signal.aborted) return;
+
         setBills(sortBills(filtered));
         setError(null);
       } catch (err: any) {
+        if (token !== requestTokenRef.current || controller.signal.aborted) return;
+        if (err?.name === "AbortError") return;
         setError(err.message);
         setBills([]);
       } finally {
+        if (token !== requestTokenRef.current || controller.signal.aborted) return;
         setLoading(false);
       }
     };
 
     const searchTimeout = setTimeout(fetchBills, 300);
-    return () => clearTimeout(searchTimeout);
+    return () => {
+      controller.abort();
+      clearTimeout(searchTimeout);
+      setAvailableSessions([]);
+    };
   }, [searchQuery, sessionFilter]);
 
   // Stable list of visible IDs; avoids listing `bills` as a dependency.
