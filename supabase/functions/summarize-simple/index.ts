@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
         job:'summarize-simple', bill_id, status:'empty', http_status:200,
         finish_reason: choice?.finish_reason ?? null,
         model: res.model ?? null, response_id: (res as any).id ?? null,
-        token_usage: res.usage ? JSON.parse(JSON.stringify(res.usage)) : null,
+        token_usage: res.usage ?? null,
         prompt_chars: source.length, content_chars: 0, preview: null,
         error: 'OpenAI responded but content was empty',
       })
@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
         job:'summarize-simple', bill_id, status:'http_error', http_status:null,
         finish_reason: choice?.finish_reason ?? null,
         model: res.model ?? null, response_id: (res as any).id ?? null,
-        token_usage: res.usage ? JSON.parse(JSON.stringify(res.usage)) : null,
+        token_usage: res.usage ?? null,
         prompt_chars: source.length, content_chars: content.length,
         preview: content.slice(0,200),
         error: `DB update failed: ${upErr.message}`,
@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
       job:'summarize-simple', bill_id, status:'ok', http_status:200,
       finish_reason: choice?.finish_reason ?? null,
       model: res.model ?? null, response_id: (res as any).id ?? null,
-      token_usage: res.usage ? JSON.parse(JSON.stringify(res.usage)) : null,
+      token_usage: res.usage ?? null,
       prompt_chars: source.length, content_chars: content.length,
       preview: content.slice(0,200),
     })

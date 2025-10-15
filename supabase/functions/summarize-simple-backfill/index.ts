@@ -16,10 +16,12 @@ Deno.serve(async () => {
   let totalUpdated = 0
 
   for (;;) {
+    // Exclude curated=true at the SQL level
     const { data: rows, error } = await db
       .from('bills')
       .select('id,summary_simple,is_curated')
       .or('summary_simple.is.null,summary_simple.ilike.Placeholder%')
+      .eq('is_curated', false)
       .order('id', { ascending: true })
       .range(0, BATCH - 1)
 
@@ -27,11 +29,12 @@ Deno.serve(async () => {
     if (!rows?.length) break
 
     const ids = rows
-      .filter(r => !r.is_curated)
       .filter(r => !r.summary_simple || isPlaceholder(r.summary_simple))
       .map(r => r.id)
 
-    let updated = 0
+    if (ids.length === 0) break
+
+    const successes: number[] = []
     await runConcurrent(ids, CONCURRENCY, async (id) => {
       try {
         const resp = await invokeFunction({
@@ -40,7 +43,7 @@ Deno.serve(async () => {
           body: { bill_id: id },
         })
         if (resp.ok) {
-          updated++
+          successes.push(id)
         } else {
           await log({
             job:'summarize-backfill', bill_id:id, status:'invoke_error',
@@ -56,7 +59,7 @@ Deno.serve(async () => {
       }
     })
 
-    totalUpdated += updated
+    totalUpdated += successes.length
   }
 
   return new Response(`Backfill complete. totalUpdated=${totalUpdated}`, { status: 200 })

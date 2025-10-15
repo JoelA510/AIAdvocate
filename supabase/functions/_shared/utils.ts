@@ -1,7 +1,7 @@
 export function ensureEnv(name: string): string {
-  const v = Deno.env.get(name);
-  if (!v) throw new Error(`${name} must be set`);
-  return v;
+  const value = Deno.env.get(name);
+  if (!value) throw new Error(`${name} must be set`);
+  return value;
 }
 
 export function isPlaceholder(s: string | null | undefined): boolean {
@@ -27,12 +27,16 @@ export async function runConcurrent<T>(
   limit: number,
   worker: (item: T) => Promise<void>,
 ) {
-  let i = 0;
-  const L = Math.max(1, limit);
-  const workers = Array.from({ length: L }, async () => {
-    while (i < items.length) {
-      const idx = i++;
-      await worker(items[idx]);
+  let index = 0;
+  const normalizedLimit =
+    Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 1;
+  const workerCount =
+    items.length === 0 ? 0 : Math.min(items.length, Math.max(1, normalizedLimit));
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (index < items.length) {
+      const current = index++;
+      await worker(items[current]);
     }
   });
   await Promise.all(workers);
