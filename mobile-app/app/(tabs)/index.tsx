@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
@@ -70,15 +71,41 @@ const sortBills = (items: any[] | null | undefined) => {
 
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
+  const router = useRouter();
+  const { q: rawQueryParam } = useLocalSearchParams<{ q?: string | string[] }>();
+  const extractQueryFromParam = useCallback((value: string | string[] | undefined) => {
+    if (Array.isArray(value)) {
+      return value.find((item) => typeof item === "string" && item.length > 0) ?? "";
+    }
+    return typeof value === "string" ? value : "";
+  }, []);
+  const normalizedQueryParam = extractQueryFromParam(rawQueryParam);
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>(normalizedQueryParam);
   const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
+
+  useEffect(() => {
+    const nextQuery = extractQueryFromParam(rawQueryParam);
+    setSearchQuery((prev) => (prev === nextQuery ? prev : nextQuery));
+  }, [extractQueryFromParam, rawQueryParam]);
+
+  const handleSearchChange = useCallback(
+    (text: string) => {
+      setSearchQuery(text);
+      const trimmed = text.trim();
+      router.replace({
+        pathname: "/(tabs)/index",
+        params: { q: trimmed || undefined },
+      });
+    },
+    [router],
+  );
 
   useEffect(() => {
     const fetchBills = async () => {
@@ -294,7 +321,7 @@ export default function BillsHomeScreen() {
       >
         <Searchbar
           placeholder={t("home.searchPlaceholder", "Search by keyword or bill...")}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
           value={searchQuery}
           style={[
             styles.searchbar,
