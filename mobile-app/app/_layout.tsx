@@ -24,6 +24,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { LightTheme, DarkTheme } from "../constants/paper-theme";
 import { Colors } from "../constants/Colors";
+import { RouterErrorBoundary } from "../components/RouterErrorBoundary";
 const queryClient = new QueryClient();
 
 const BANNER = require("../assets/images/header-banner.png");
@@ -98,13 +99,15 @@ export default function RootLayout() {
             <LanguageProvider>
               <AuthProvider>
                 <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-                <Stack>
-                  <Stack.Screen name="index" options={{ headerShown: false }} />
-                  <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
-                  <Stack.Screen name="legislator/[id]" options={{ headerShown: false }} />
-                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                  <Stack.Screen name="language" options={{ headerShown: false }} />
-                </Stack>
+                <RouterErrorBoundary>
+                  <Stack>
+                    <Stack.Screen name="index" options={{ headerShown: false }} />
+                    <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
+                    <Stack.Screen name="legislator/[id]" options={{ headerShown: false }} />
+                    <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                    <Stack.Screen name="language" options={{ headerShown: false }} />
+                  </Stack>
+                </RouterErrorBoundary>
                 <Toast />
               </AuthProvider>
             </LanguageProvider>
