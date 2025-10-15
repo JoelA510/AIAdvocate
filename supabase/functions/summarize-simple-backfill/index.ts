@@ -1,79 +1,66 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
-import {
-  ensureEnv,
-  invokeFunction,
-  isPlaceholder,
-  runConcurrent,
-} from "../_shared/utils.ts";
+import { createClient } from 'npm:@supabase/supabase-js@2'
+import { ensureEnv, isPlaceholder, invokeFunction, runConcurrent } from '../_shared/utils.ts'
 
-const supabaseUrl = ensureEnv("SUPABASE_URL");
-const serviceKey = ensureEnv("SUPABASE_SERVICE_ROLE_KEY");
-const db = createClient(supabaseUrl, serviceKey);
+const supabaseUrl = ensureEnv('SUPABASE_URL')
+const serviceKey  = ensureEnv('SUPABASE_SERVICE_ROLE_KEY')
+const db = createClient(supabaseUrl, serviceKey)
 
-const parsedConcurrency = Number(Deno.env.get("BACKFILL_CONCURRENCY"));
-const CONCURRENCY = Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
-  ? Math.floor(parsedConcurrency)
-  : 5;
-const BATCH_SIZE = 200;
-const TARGET_FILTER = [
-  "summary_simple.is.null.and(is_curated.is.null)",
-  "summary_simple.is.null.and(is_curated.eq.false)",
-  "summary_simple.ilike.Placeholder%.and(is_curated.is.null)",
-  "summary_simple.ilike.Placeholder%.and(is_curated.eq.false)",
-].join(",");
+const CONCURRENCY = Number(Deno.env.get('BACKFILL_CONCURRENCY') ?? '5')
+const BATCH = 200
 
-Deno.serve(async (_req) => {
-  let totalUpdated = 0;
+async function log(row: Record<string, unknown>) {
+  await db.from('ai_job_log').insert(row).select().single().catch(() => {})
+}
 
-  while (true) {
+Deno.serve(async () => {
+  let totalUpdated = 0
+
+  for (;;) {
+    // Exclude curated=true at the SQL level
     const { data: rows, error } = await db
-      .from("bills")
-      .select("id,summary_simple,is_curated")
-      .or(TARGET_FILTER)
-      .order("id", { ascending: true })
-      .range(0, BATCH_SIZE - 1);
+      .from('bills')
+      .select('id,summary_simple,is_curated')
+      .or('summary_simple.is.null,summary_simple.ilike.Placeholder%')
+      .eq('is_curated', false)
+      .order('id', { ascending: true })
+      .range(0, BATCH - 1)
 
-    if (error) {
-      return new Response(`DB error: ${error.message}`, { status: 500 });
-    }
-
-    if (!rows?.length) {
-      break;
-    }
+    if (error) return new Response(`DB error: ${error.message}`, { status: 500 })
+    if (!rows?.length) break
 
     const ids = rows
-      .filter((row) => !row.summary_simple || isPlaceholder(row.summary_simple))
-      .map((row) => row.id);
+      .filter(r => !r.summary_simple || isPlaceholder(r.summary_simple))
+      .map(r => r.id)
 
-    if (!ids.length) {
-      continue;
-    }
+    if (ids.length === 0) break
 
-    let updated = 0;
+    const successes: number[] = []
     await runConcurrent(ids, CONCURRENCY, async (id) => {
       try {
         const resp = await invokeFunction({
           url: `${supabaseUrl}/functions/v1/summarize-simple`,
           token: serviceKey,
           body: { bill_id: id },
-        });
-
+        })
         if (resp.ok) {
-          updated++;
+          successes.push(id)
         } else {
-          console.error(
-            `Failed bill ${id}: ${resp.status} ${await resp.text()}`,
-          );
+          await log({
+            job:'summarize-backfill', bill_id:id, status:'invoke_error',
+            http_status: resp.status,
+            error: (await resp.text()).slice(0, 1000),
+          })
         }
-      } catch (err) {
-        console.error(`Error bill ${id}:`, err);
+      } catch (e) {
+        await log({
+          job:'summarize-backfill', bill_id:id, status:'exception',
+          error: String(e).slice(0, 1000),
+        })
       }
-    });
+    })
 
-    totalUpdated += updated;
+    totalUpdated += successes.length
   }
 
-  return new Response(`Backfill complete. totalUpdated=${totalUpdated}`, {
-    status: 200,
-  });
-});
+  return new Response(`Backfill complete. totalUpdated=${totalUpdated}`, { status: 200 })
+})
