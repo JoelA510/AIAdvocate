@@ -41,6 +41,13 @@
     "composeTo": "Compose an Email"
   },
   "error": { "title": "An Error Occurred" },
+  "router": {
+    "error": {
+      "title": "Something went wrong",
+      "message": "We hit a snag while loading this screen. Try again in a moment.",
+      "retry": "Try again"
+    }
+  },
   "findYourRep": {
     "error": {
       "empty": "Please enter an address or ZIP code.",
