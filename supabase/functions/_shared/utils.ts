@@ -9,9 +9,7 @@ export function isPlaceholder(s: string | null | undefined): boolean {
 }
 
 export async function invokeFunction(opts: {
-  url: string;
-  token: string;
-  body: unknown;
+  url: string; token: string; body: unknown;
 }): Promise<Response> {
   const { url, token, body } = opts;
   return fetch(url, {
@@ -30,12 +28,10 @@ export async function runConcurrent<T>(
   worker: (item: T) => Promise<void>,
 ) {
   let index = 0;
-  const normalizedLimit = Number.isFinite(limit) && limit > 0
-    ? Math.floor(limit)
-    : 1;
-  const workerCount = items.length === 0
-    ? 0
-    : Math.min(items.length, Math.max(1, normalizedLimit));
+  const normalizedLimit =
+    Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 1;
+  const workerCount =
+    items.length === 0 ? 0 : Math.min(items.length, Math.max(1, normalizedLimit));
 
   const workers = Array.from({ length: workerCount }, async () => {
     while (index < items.length) {
