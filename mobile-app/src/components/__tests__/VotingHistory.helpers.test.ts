@@ -1,3 +1,5 @@
+/* eslint-disable import/first */
+
 jest.mock("@/lib/supabase", () => ({
   supabase: {},
 }));
