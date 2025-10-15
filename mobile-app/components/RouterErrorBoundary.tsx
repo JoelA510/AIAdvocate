@@ -99,20 +99,12 @@ export function RouterErrorBoundary({ children, onError }: RouterErrorBoundaryPr
   const { t } = useTranslation();
 
   const handleRetry = React.useCallback(() => {
-    if (pathname) {
-      try {
-        router.replace(pathname);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("RouterErrorBoundary failed to replace path", e);
-      }
-    } else {
-      try {
-        router.replace("/");
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("RouterErrorBoundary failed to replace root path", e);
-      }
+    const targetPath = pathname || "/";
+    try {
+      router.replace(targetPath);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`RouterErrorBoundary failed to replace ${pathname ? "path" : "root path"}`, e);
     }
   }, [pathname, router]);
 
