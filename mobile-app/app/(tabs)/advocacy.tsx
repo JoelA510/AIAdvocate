@@ -1,6 +1,6 @@
 // mobile-app/app/(tabs)/advocacy.tsx (hotfix)
 import React, { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
@@ -42,65 +42,72 @@ export default function AdvocacyScreen() {
   }, []);
 
   return (
-    <ThemedView
-      style={[
-        styles.container,
-        {
-          paddingTop: insets.top + 8,
-          paddingBottom: insets.bottom + 16,
-          paddingHorizontal: 16,
-        },
-      ]}
-    >
+    <ThemedView style={styles.container}>
       <Stack.Screen
         options={{ title: t("tabs.advocacy", { defaultValue: "Advocacy" }), headerShown: false }}
       />
-      <View
-        style={[
-          styles.content,
+      <ScrollView
+        style={styles.scroll}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[
+          styles.scrollContent,
           {
-            backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
-            borderColor: colors.outlineVariant ?? theme.colors.outline,
+            paddingTop: insets.top + 8,
+            paddingBottom: insets.bottom + 16,
+            paddingHorizontal: 16,
           },
         ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        alwaysBounceVertical={false}
       >
-        <ThemedText type="title" style={styles.title}>
-          {t("advocacy.lookupTitle", { defaultValue: "Find Your Representatives" })}
-        </ThemedText>
+        <View
+          style={[
+            styles.content,
+            {
+              backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
+              borderColor: colors.outlineVariant ?? theme.colors.outline,
+            },
+          ]}
+        >
+          <ThemedText type="title" style={styles.title}>
+            {t("advocacy.lookupTitle", { defaultValue: "Find Your Representatives" })}
+          </ThemedText>
 
-        {bills.length > 0 && (
-          <Menu
-            visible={menuVisible}
-            onDismiss={() => setMenuVisible(false)}
-            anchor={
-              <Button
-                mode="contained-tonal"
-                onPress={() => setMenuVisible(true)}
-                style={styles.menuButton}
-                textColor={theme.colors.onSecondaryContainer}
-              >
-                {selectedBill
-                  ? `${selectedBill.bill_number ?? selectedBill.slug ?? selectedBill.id}`
-                  : t("advocacy.selectBill", { defaultValue: "Select Bill (optional)" })}
-              </Button>
-            }
-          >
-            <Menu.Item
-              title={t("advocacy.noneOption", { defaultValue: "None" })}
-              onPress={() => setSelectedBill(null)}
-            />
-            {bills.map((bill) => (
+          {bills.length > 0 && (
+            <Menu
+              visible={menuVisible}
+              onDismiss={() => setMenuVisible(false)}
+              anchor={
+                <Button
+                  mode="contained-tonal"
+                  onPress={() => setMenuVisible(true)}
+                  style={styles.menuButton}
+                  textColor={theme.colors.onSecondaryContainer}
+                >
+                  {selectedBill
+                    ? `${selectedBill.bill_number ?? selectedBill.slug ?? selectedBill.id}`
+                    : t("advocacy.selectBill", { defaultValue: "Select Bill (optional)" })}
+                </Button>
+              }
+            >
               <Menu.Item
-                key={String(bill.id)}
-                title={`${bill.bill_number ?? bill.slug ?? bill.id} — ${bill.title}`}
-                onPress={() => setSelectedBill(bill)}
+                title={t("advocacy.noneOption", { defaultValue: "None" })}
+                onPress={() => setSelectedBill(null)}
               />
-            ))}
-          </Menu>
-        )}
+              {bills.map((bill) => (
+                <Menu.Item
+                  key={String(bill.id)}
+                  title={`${bill.bill_number ?? bill.slug ?? bill.id} — ${bill.title}`}
+                  onPress={() => setSelectedBill(bill)}
+                />
+              ))}
+            </Menu>
+          )}
 
-        <FindYourRep bill={selectedBill ?? undefined} />
-      </View>
+          <FindYourRep bill={selectedBill ?? undefined} />
+        </View>
+      </ScrollView>
     </ThemedView>
   );
 }
@@ -109,8 +116,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  content: {
+  scroll: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+  },
+  content: {
+    flexGrow: 1,
     borderRadius: 28,
     borderWidth: 1,
     padding: 20,
