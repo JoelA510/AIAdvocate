@@ -72,6 +72,7 @@
     "@testing-library/react-native": "13.3.3",
     "@types/crypto-js": "^4.2.2",
     "@types/jest": "^30.0.0",
+    "@types/node": "^24.7.2",
     "@types/react": "~19.0.10",
     "babel-plugin-module-resolver": "^5.0.2",
     "dotenv-flow": "^4.1.0",

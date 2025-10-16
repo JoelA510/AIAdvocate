@@ -1,7 +1,7 @@
 // mobile-app/app/_layout.tsx
-// Root layout sets up providers and the navigation stack.  The global
-// header/banner is intentionally omitted here so the splash screen can
-// animate without a second banner underneath.
+// Root layout wires providers, error handling, and global chrome (header/footer)
+// around the Expo Router stack. The splash screen short-circuits before the
+// header/footer render so the branded intro remains clean.
 
 import "react-native-reanimated";
 import React, { useEffect, useState } from "react";
@@ -11,7 +11,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { Provider as PaperProvider } from "react-native-paper";
+import { useTheme } from "react-native-paper";
 import Toast from "react-native-toast-message";
 import i18next from "i18next";
 
@@ -22,9 +22,11 @@ import { initConfig } from "../src/lib/config";
 import { LanguageProvider } from "../src/providers/LanguageProvider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { LightTheme, DarkTheme } from "../constants/paper-theme";
 import { Colors } from "../constants/Colors";
 import { RouterErrorBoundary } from "../components/RouterErrorBoundary";
+import AppThemeProvider from "@/providers/AppThemeProvider";
+import HeaderBanner from "@/components/HeaderBanner";
+import FooterNav from "@/components/FooterNav";
 const queryClient = new QueryClient();
 
 const BANNER = require("../assets/images/header-banner.png");
@@ -88,33 +90,52 @@ export default function RootLayout() {
       </View>
     );
   }
-  // Theme overrides for MD3.
-  const theme = colorScheme === "dark" ? DarkTheme : LightTheme;
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <PaperProvider theme={theme}>
+        <AppThemeProvider>
           <QueryClientProvider client={queryClient}>
             <LanguageProvider>
               <AuthProvider>
-                <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-                <RouterErrorBoundary>
-                  <Stack>
-                    <Stack.Screen name="index" options={{ headerShown: false }} />
-                    <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
-                    <Stack.Screen name="legislator/[id]" options={{ headerShown: false }} />
-                    <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                    <Stack.Screen name="language" options={{ headerShown: false }} />
-                  </Stack>
-                </RouterErrorBoundary>
-                <Toast />
+                <AppScaffold />
               </AuthProvider>
             </LanguageProvider>
           </QueryClientProvider>
-        </PaperProvider>
+        </AppThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
+  );
+}
+
+function AppScaffold() {
+  const theme = useTheme();
+
+  return (
+    <>
+      <StatusBar style={theme.dark ? "light" : "dark"} />
+      <RouterErrorBoundary>
+        <View style={[styles.scaffold, { backgroundColor: theme.colors.background }]}>
+          <HeaderBanner />
+          <View style={styles.mainContent}>
+            <AppStack />
+          </View>
+          <FooterNav />
+        </View>
+      </RouterErrorBoundary>
+      <Toast />
+    </>
+  );
+}
+
+function AppStack() {
+  return (
+    <Stack>
+      <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="bill/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="legislator/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="language" options={{ headerShown: false }} />
+    </Stack>
   );
 }
 
@@ -148,5 +169,11 @@ const styles = StyleSheet.create({
   },
   fallbackLogo: {
     alignSelf: "center",
+  },
+  scaffold: {
+    flex: 1,
+  },
+  mainContent: {
+    flex: 1,
   },
 });

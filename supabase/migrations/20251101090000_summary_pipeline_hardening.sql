@@ -120,6 +120,78 @@ $$;
 REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.guard_bill_summaries()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  trimmed TEXT;
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.summary_simple IS NOT NULL AND NEW.summary_simple IS DISTINCT FROM OLD.summary_simple THEN
+      RAISE EXCEPTION 'summary_simple overwrite blocked';
+    END IF;
+    IF OLD.summary_medium IS NOT NULL AND NEW.summary_medium IS DISTINCT FROM OLD.summary_medium THEN
+      RAISE EXCEPTION 'summary_medium overwrite blocked';
+    END IF;
+    IF OLD.summary_complex IS NOT NULL AND NEW.summary_complex IS DISTINCT FROM OLD.summary_complex THEN
+      RAISE EXCEPTION 'summary_complex overwrite blocked';
+    END IF;
+
+    IF OLD.summary_simple IS NULL AND NEW.summary_simple IS NOT NULL THEN
+      trimmed := trim(NEW.summary_simple);
+      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
+        RAISE EXCEPTION 'invalid summary_simple';
+      END IF;
+    END IF;
+
+    IF OLD.summary_medium IS NULL AND NEW.summary_medium IS NOT NULL THEN
+      trimmed := trim(NEW.summary_medium);
+      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
+        RAISE EXCEPTION 'invalid summary_medium';
+      END IF;
+    END IF;
+
+    IF OLD.summary_complex IS NULL AND NEW.summary_complex IS NOT NULL THEN
+      trimmed := trim(NEW.summary_complex);
+      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
+        RAISE EXCEPTION 'invalid summary_complex';
+      END IF;
+    END IF;
+  ELSE
+    IF NEW.summary_simple IS NOT NULL THEN
+      trimmed := trim(NEW.summary_simple);
+      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
+        RAISE EXCEPTION 'invalid summary_simple';
+      END IF;
+    END IF;
+
+    IF NEW.summary_medium IS NOT NULL THEN
+      trimmed := trim(NEW.summary_medium);
+      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
+        RAISE EXCEPTION 'invalid summary_medium';
+      END IF;
+    END IF;
+
+    IF NEW.summary_complex IS NOT NULL THEN
+      trimmed := trim(NEW.summary_complex);
+      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
+        RAISE EXCEPTION 'invalid summary_complex';
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_bill_summaries ON public.bills;
+CREATE TRIGGER trg_guard_bill_summaries
+BEFORE INSERT OR UPDATE ON public.bills
+FOR EACH ROW EXECUTE FUNCTION public.guard_bill_summaries();
+
 DROP FUNCTION IF EXISTS public.lease_next_bill();
 CREATE OR REPLACE FUNCTION public.lease_next_bill(p_owner text, p_ttl_seconds int DEFAULT 900)
 RETURNS BIGINT

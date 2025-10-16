@@ -22,8 +22,6 @@ import { useTranslation } from "react-i18next";
 import Toast from "react-native-toast-message";
 
 import { IconSymbol } from "../../components/ui/IconSymbol";
-import HeaderBanner from "../../components/ui/HeaderBanner";
-
 import { trackEvent } from "../../src/lib/analytics";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { supabase } from "../../src/lib/supabase";
@@ -180,7 +178,6 @@ export default function BillDetailsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      <HeaderBanner forceShow />
       <ScrollView
         style={[styles.scrollView]}
         contentContainerStyle={{ paddingBottom: insets.bottom }}
