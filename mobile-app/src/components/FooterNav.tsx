@@ -33,7 +33,7 @@ const NAV_ITEMS = [
   },
   {
     key: "index",
-    route: "/(tabs)",
+    route: "/(tabs)/index",
     icon: "file-document",
     labelKey: "tabs.bills",
     fallback: "Bills",
