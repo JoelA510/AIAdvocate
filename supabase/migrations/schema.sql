@@ -145,41 +145,40 @@ CREATE TABLE IF NOT EXISTS public.cron_job_errors (
 );
 
 CREATE OR REPLACE FUNCTION public.invoke_edge_function(endpoint TEXT, job_name TEXT DEFAULT 'daily-bill-sync')
-RETURNS VOID AS $$
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
 DECLARE
-  request_id BIGINT;
+  status_code INT;
+  anon_key TEXT;
 BEGIN
-  BEGIN
-    SELECT net.http_post(
-      url := 'https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1/' || endpoint,
-      headers := '{"Content-Type": "application/json"}'
-    )
-    INTO request_id;
-  EXCEPTION
-    WHEN OTHERS THEN
-      INSERT INTO public.cron_job_errors (job_name, error_message)
-      VALUES (
-        job_name,
-        'Invoke Error: Edge Function ' || endpoint || ' failed with ' || SQLERRM
-      );
-      RETURN;
-  END;
+  anon_key := vault.get_secret('supabase_anon_key');
 
-  IF request_id IS NULL THEN
-    INSERT INTO public.cron_job_errors (job_name, error_message)
-    VALUES (
-      job_name,
-      'Invoke Error: Edge Function ' || endpoint || ' returned null request id'
-    );
+  SELECT status INTO status_code
+  FROM net.http_post(
+    url := 'https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1/' || endpoint,
+    headers := '{"Content-Type": "application/json", "apikey": "' || anon_key || '"}'
+  );
+
+  IF status_code != 200 THEN
+    INSERT INTO public.cron_job_errors(job_name, error_message)
+    VALUES (job_name, 'Invoke Error: ' || endpoint || ' returned status ' || status_code);
   END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+    INSERT INTO public.cron_job_errors(job_name, error_message)
+    VALUES (job_name, 'Invoke Error: ' || endpoint || ' failed: ' || SQLERRM);
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
-CREATE OR REPLACE FUNCTION public.invoke_sync_updated_bills() RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION public.invoke_sync_updated_bills() RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER
+AS $$
 BEGIN
   PERFORM public.invoke_edge_function('sync-updated-bills', 'daily-bill-sync');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 CREATE OR REPLACE FUNCTION public.upsert_bill_and_translation(bill JSONB, tr JSONB)
 RETURNS VOID
@@ -300,6 +299,11 @@ AS $$
 DECLARE
   trimmed TEXT;
 BEGIN
+  -- sanitize placeholder first
+  IF NEW.summary_simple IS NOT NULL AND NEW.summary_simple ~* '^Placeholder for[[:space:]]' THEN
+    NEW.summary_simple := NULL;
+  END IF;
+
   IF TG_OP = 'UPDATE' THEN
     IF OLD.summary_simple IS NOT NULL AND NEW.summary_simple IS DISTINCT FROM OLD.summary_simple THEN
       RAISE EXCEPTION 'summary_simple overwrite blocked';
@@ -358,10 +362,41 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_strip_placeholder_simple ON public.bills;
 DROP TRIGGER IF EXISTS trg_guard_bill_summaries ON public.bills;
 CREATE TRIGGER trg_guard_bill_summaries
 BEFORE INSERT OR UPDATE ON public.bills
 FOR EACH ROW EXECUTE FUNCTION public.guard_bill_summaries();
+
+DO $$
+DECLARE
+  constraint_exists BOOLEAN;
+  constraint_validated BOOLEAN;
+BEGIN
+  SELECT TRUE, convalidated
+  INTO constraint_exists, constraint_validated
+  FROM pg_constraint
+  WHERE conrelid = 'public.bills'::regclass
+    AND conname = 'bills_summary_simple_no_placeholder';
+
+  IF NOT FOUND THEN
+    constraint_exists := FALSE;
+    constraint_validated := FALSE;
+  END IF;
+
+  IF NOT constraint_exists THEN
+    EXECUTE $$ALTER TABLE public.bills
+      ADD CONSTRAINT bills_summary_simple_no_placeholder
+      CHECK (summary_simple IS NULL OR summary_simple !~* '^Placeholder for[[:space:]]')
+      NOT VALID$$;
+  END IF;
+
+  IF NOT constraint_validated THEN
+    EXECUTE $$ALTER TABLE public.bills
+      VALIDATE CONSTRAINT bills_summary_simple_no_placeholder$$;
+  END IF;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION public.lease_next_bill(p_owner text, p_ttl_seconds int DEFAULT 900)
 RETURNS BIGINT
@@ -439,7 +474,7 @@ CREATE INDEX IF NOT EXISTS idx_bills_embed ON public.bills
 CREATE INDEX IF NOT EXISTS bills_summary_ok_idx
   ON public.bills ((summary_ok IS DISTINCT FROM TRUE));
 CREATE INDEX IF NOT EXISTS idx_cron_job_errors_occurred_at ON public.cron_job_errors(occurred_at);
-CREATE INDEX IF NOT EXISTS idx_location_lookup_cache_expires_at ON public.location_lookup_cache(expires_at);
+CREATE INDEX IF NOT EXISTS location_lookup_cache_expires_idx ON public.location_lookup_cache (expires_at);
 
 -- ---------- FULL-TEXT SEARCH (ranked) ----------
 ALTER TABLE public.bills
