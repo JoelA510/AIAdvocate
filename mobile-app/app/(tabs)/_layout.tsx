@@ -10,7 +10,7 @@ const TabsLayout: React.FC = () => {
 
   return (
     <Tabs
-      initialRouteName="active"
+      initialRouteName="index"
       screenOptions={{
         headerShown: false,
         tabBarStyle: { display: "none", backgroundColor: colors.surface },
