@@ -3,10 +3,10 @@ import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
+import { useLocalSearchParams, useRouter, usePathname } from "expo-router";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 
-import BillComponent from "../../src/components/Bill";
+import BillComponent, { type Bill } from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
 import { ThemedView } from "../../components/ThemedView";
@@ -17,9 +17,10 @@ const SESSION_FILTER_ENABLED = false; // Set to true once the 2027-2028 cycle sh
 const SESSION_ALL = "all";
 const MAX_Q_LEN = 200;
 
-const normalizeQuery = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
+const normalizeQuery = (value: string): string =>
+  value.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
 
-function extractQueryFromParam(value: string | string[] | undefined) {
+function extractQueryFromParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) {
     const first = value.find((item) => typeof item === "string" && item.length > 0);
     return first ? first.slice(0, MAX_Q_LEN) : "";
@@ -27,14 +28,16 @@ function extractQueryFromParam(value: string | string[] | undefined) {
   return typeof value === "string" ? value.slice(0, MAX_Q_LEN) : "";
 }
 
-const extractSessionLabel = (stateLink: string | null | undefined): string | null => {
+const extractSessionLabel = (
+  stateLink: Bill["state_link"] | null | undefined,
+): string | null => {
   if (!stateLink) return null;
   const match = stateLink.match(/bill_id=(\d{4})(\d{4})/);
   if (!match) return null;
   return `${match[1]}-${match[2]}`;
 };
 
-const buildOrIlikeFilter = (fields: string[], raw: string) => {
+const buildOrIlikeFilter = (fields: string[], raw: string): string => {
   const escaped = raw
     .replace(/\\/g, "\\\\")
     .replace(/%/g, "\\%")
@@ -46,8 +49,8 @@ const buildOrIlikeFilter = (fields: string[], raw: string) => {
   return fields.map((field) => `${field}.ilike.${pattern}`).join(",");
 };
 
-const sortBills = (items: any[] | null | undefined) => {
-  const toRank = (value: any) => {
+const sortBills = (items: Bill[] | null | undefined): Bill[] => {
+  const toRank = (value: Bill["rank"]): number | null => {
     if (typeof value === "number") return Number.isFinite(value) ? value : null;
     if (typeof value === "string" && value.trim() !== "") {
       const parsed = Number(value);
@@ -55,7 +58,7 @@ const sortBills = (items: any[] | null | undefined) => {
     }
     return null;
   };
-  const toTime = (value: any) => {
+  const toTime = (value: string | null | undefined): number => {
     if (!value) return 0;
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 0 : date.getTime();
@@ -84,6 +87,7 @@ const sortBills = (items: any[] | null | undefined) => {
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
+  const pathname = usePathname();
   const { q: rawQueryParam } = useLocalSearchParams<{ q?: string | string[] }>();
   const [searchQuery, setSearchQuery] = useState<string>(() =>
     extractQueryFromParam(rawQueryParam),
@@ -95,7 +99,7 @@ export default function BillsHomeScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
-  const listRef = useRef<FlatList<any>>(null);
+  const listRef = useRef<FlatList<Bill>>(null);
   const [, startTransition] = useTransition();
 
   useEffect(() => {
@@ -108,30 +112,25 @@ export default function BillsHomeScreen() {
       const next = text.slice(0, MAX_Q_LEN);
       setSearchQuery(next);
       startTransition(() => {
-        router.replace({ params: { q: next || undefined } });
+        router.replace({ pathname, params: { q: next || undefined } });
       });
     },
-    [router, startTransition],
+    [pathname, router, startTransition],
   );
 
   const handleClearQuery = useCallback(() => {
     setSearchQuery("");
     startTransition(() => {
-      router.replace({ params: { q: undefined } });
+      router.replace({ pathname, params: { q: undefined } });
     });
-  }, [router, startTransition]);
+  }, [pathname, router, startTransition]);
 
-  const {
-    data: fetchedBills = [],
-    isLoading,
-    isFetching,
-    error,
-  } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery<Bill[], Error, Bill[]>({
     queryKey: ["bills", { q: normalizedQuery }],
-    queryFn: async () => {
+    queryFn: async (): Promise<Bill[]> => {
       const query = normalizedQuery;
       const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
-      let data: any[] = [];
+      let data: Bill[] = [];
 
       if (!query) {
         const { data: d, error: e } = await supabase
@@ -183,15 +182,23 @@ export default function BillsHomeScreen() {
 
       return data ?? [];
     },
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
     staleTime: 15_000,
   });
 
-  const sortedBills = useMemo(() => sortBills(fetchedBills), [fetchedBills]);
+  const fetchedBills: Bill[] = data ?? [];
+
+  useEffect(() => {
+    if (error) {
+      console.warn("Bills query failed:", error);
+    }
+  }, [error]);
+
+  const sortedBills = useMemo<Bill[]>(() => sortBills(fetchedBills), [fetchedBills]);
 
   useEffect(() => {
     const sessionSet = new Set<string>();
-    (sortedBills ?? []).forEach((item) => {
+    sortedBills.forEach((item) => {
       const session = extractSessionLabel(item?.state_link);
       if (session) sessionSet.add(session);
     });
@@ -227,8 +234,9 @@ export default function BillsHomeScreen() {
         if (!alive) return;
 
         setTranslations(map);
-      } catch {
+      } catch (err) {
         if (!alive) return;
+        console.warn("Failed to fetch translations:", err);
       }
     })();
 
@@ -237,7 +245,7 @@ export default function BillsHomeScreen() {
     };
   }, [i18n.language, idsKey, ids]);
 
-  const translatedBills = useMemo(() => {
+  const translatedBills = useMemo<Bill[]>(() => {
     if (i18n.language === "en") return sortedBills;
     if (!Object.keys(translations).length) return sortedBills;
 
@@ -256,7 +264,7 @@ export default function BillsHomeScreen() {
     });
   }, [i18n.language, sortedBills, translations]);
 
-  const filteredBills = useMemo(() => {
+  const filteredBills = useMemo<Bill[]>(() => {
     if (sessionFilter === SESSION_ALL) return translatedBills;
     return translatedBills.filter(
       (item) => extractSessionLabel(item?.state_link) === sessionFilter,
@@ -339,7 +347,6 @@ export default function BillsHomeScreen() {
     return (
       <FlatList
         ref={listRef}
-        key={`${normalizedQuery || "all"}-${sessionFilter}`}
         data={filteredBills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
