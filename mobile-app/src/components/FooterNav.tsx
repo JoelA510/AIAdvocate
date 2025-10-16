@@ -10,13 +10,13 @@ type NavKey = "active" | "saved" | "index" | "lnf" | "advocacy";
 
 type NavItemConfig = {
   key: NavKey;
-  route: string;
+  route: Href;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>["name"];
   labelKey: string;
   fallback: string;
 };
 
-const NAV_ITEMS: NavItemConfig[] = [
+const NAV_ITEMS = [
   {
     key: "active",
     route: "/(tabs)/active",
@@ -33,7 +33,7 @@ const NAV_ITEMS: NavItemConfig[] = [
   },
   {
     key: "index",
-    route: "/(tabs)/index",
+    route: "/(tabs)",
     icon: "file-document",
     labelKey: "tabs.bills",
     fallback: "Bills",
@@ -52,7 +52,7 @@ const NAV_ITEMS: NavItemConfig[] = [
     labelKey: "tabs.advocacy",
     fallback: "Advocacy",
   },
-];
+] as const satisfies readonly NavItemConfig[];
 
 const KNOWN_KEYS = NAV_ITEMS.reduce<Record<string, true>>((acc, item) => {
   acc[item.key] = true;
@@ -81,7 +81,8 @@ export default function FooterNav() {
 
   const activeKey = useMemo<NavKey>(() => {
     if (segments[0] === "(tabs)") {
-      const candidate = (segments[1] ?? "index") as NavKey;
+      const segmentList = segments as string[];
+      const candidate = (segmentList[1] ?? "index") as NavKey;
       if (KNOWN_KEYS[candidate]) return candidate;
       return "index";
     }
@@ -133,7 +134,7 @@ export default function FooterNav() {
             style={[styles.item, isActive && styles.itemActive]}
             onPress={() => {
               if (isActive) return;
-              router.replace(item.route as Href);
+              router.replace(item.route);
             }}
             accessibilityRole="tab"
             accessibilityState={{ selected: isActive }}
