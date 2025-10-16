@@ -33,7 +33,7 @@ const NAV_ITEMS = [
   },
   {
     key: "index",
-    route: "/",
+    route: "/(tabs)",
     icon: "file-document",
     labelKey: "tabs.bills",
     fallback: "Bills",
@@ -81,7 +81,7 @@ export default function FooterNav() {
 
   const activeKey = useMemo<NavKey>(() => {
     if (segments[0] === "(tabs)") {
-      const segmentList = [...segments];
+      const segmentList = segments as string[];
       const candidate = (segmentList[1] ?? "index") as NavKey;
       if (KNOWN_KEYS[candidate]) return candidate;
       return "index";

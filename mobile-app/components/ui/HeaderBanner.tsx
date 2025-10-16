@@ -9,6 +9,7 @@ import { useAppTheme } from "@/providers/AppThemeProvider";
 const BANNER = require("../../assets/images/header-banner.png");
 const HEADER_HEIGHT = 50;
 const COLLAPSED_ROUTES = new Set<string>(["/splash"]);
+const TABS_HOME_ROUTE: Href = "/(tabs)";
 
 type Props = { forceShow?: boolean };
 
@@ -109,7 +110,7 @@ export default function HeaderBanner({ forceShow }: Props) {
             </Menu>
           </View>
           <TouchableOpacity
-            onPress={() => router.replace("/" as Href)}
+            onPress={() => router.replace(TABS_HOME_ROUTE)}
             style={styles.bannerTouchable}
             accessibilityRole="button"
             accessibilityLabel="AI Advocate home"
