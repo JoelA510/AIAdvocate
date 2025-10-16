@@ -7,7 +7,7 @@ import {
   ColorSchemeName,
   useColorScheme,
 } from "react-native";
-import { useRouter, usePathname } from "expo-router";
+import { useRouter, usePathname, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 
 import { Colors } from "../constants/Colors";
@@ -101,7 +101,7 @@ export function RouterErrorBoundary({ children, onError }: RouterErrorBoundaryPr
   const handleRetry = React.useCallback(() => {
     const targetPath = pathname || "/";
     try {
-      router.replace(targetPath);
+      router.replace(targetPath as Href);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn(`RouterErrorBoundary failed to replace ${pathname ? "path" : "root path"}`, e);

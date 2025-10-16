@@ -3,34 +3,32 @@ import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { useLocalSearchParams, useRouter, usePathname } from "expo-router";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useLocalSearchParams, useRouter, usePathname, type Href } from "expo-router";
+import { keepPreviousData, useQuery, type UseQueryOptions } from "@tanstack/react-query";
 
-import BillComponent, { type Bill } from "../../src/components/Bill";
-import BillSkeleton from "../../src/components/BillSkeleton";
-import EmptyState from "../../src/components/EmptyState";
+import BillComponent, { type Bill } from "@/components/Bill";
+import BillSkeleton from "@/components/BillSkeleton";
+import EmptyState from "@/components/EmptyState";
+import { fetchTranslationsForBills } from "@/lib/translation";
+import { supabase } from "@/lib/supabase";
 import { ThemedView } from "../../components/ThemedView";
-import { supabase } from "../../src/lib/supabase";
-import { fetchTranslationsForBills } from "../../src/lib/translation";
 
-const SESSION_FILTER_ENABLED = false; // Set to true once the 2027-2028 cycle should be exposed to users.
+const SESSION_FILTER_ENABLED = false; // Flip once the next legislative cycle should be exposed to users.
 const SESSION_ALL = "all";
 const MAX_Q_LEN = 200;
 
 const normalizeQuery = (value: string): string =>
   value.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
 
-function extractQueryFromParam(value: string | string[] | undefined): string {
+const extractQueryFromParam = (value: string | string[] | undefined): string => {
   if (Array.isArray(value)) {
     const first = value.find((item) => typeof item === "string" && item.length > 0);
     return first ? first.slice(0, MAX_Q_LEN) : "";
   }
   return typeof value === "string" ? value.slice(0, MAX_Q_LEN) : "";
-}
+};
 
-const extractSessionLabel = (
-  stateLink: Bill["state_link"] | null | undefined,
-): string | null => {
+const extractSessionLabel = (stateLink: Bill["state_link"] | null | undefined): string | null => {
   if (!stateLink) return null;
   const match = stateLink.match(/bill_id=(\d{4})(\d{4})/);
   if (!match) return null;
@@ -58,6 +56,7 @@ const sortBills = (items: Bill[] | null | undefined): Bill[] => {
     }
     return null;
   };
+
   const toTime = (value: string | null | undefined): number => {
     if (!value) return 0;
     const date = new Date(value);
@@ -84,6 +83,26 @@ const sortBills = (items: Bill[] | null | undefined): Bill[] => {
   });
 };
 
+type BillsQueryKey = readonly ["bills", { readonly q: string }];
+type BillsQueryOptions = UseQueryOptions<Bill[], Error, Bill[], BillsQueryKey> & {
+  onError: (err: Error) => void;
+};
+type TranslationPatch = Partial<
+  Pick<
+    Bill,
+    | "title"
+    | "description"
+    | "summary_simple"
+    | "summary_medium"
+    | "summary_complex"
+    | "original_text"
+  >
+> & {
+  summary_simple_es?: string | null;
+  summary_medium_es?: string | null;
+  summary_complex_es?: string | null;
+};
+
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
@@ -95,7 +114,7 @@ export default function BillsHomeScreen() {
   const normalizedQuery = useMemo(() => normalizeQuery(searchQuery), [searchQuery]);
   const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
-  const [translations, setTranslations] = useState<Record<number, any>>({});
+  const [translations, setTranslations] = useState<Record<number, TranslationPatch>>({});
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
@@ -103,8 +122,8 @@ export default function BillsHomeScreen() {
   const [, startTransition] = useTransition();
 
   useEffect(() => {
-    const nextQuery = extractQueryFromParam(rawQueryParam);
-    setSearchQuery((prev) => (prev === nextQuery ? prev : nextQuery));
+    const next = extractQueryFromParam(rawQueryParam);
+    setSearchQuery((prev) => (prev === next ? prev : next));
   }, [rawQueryParam]);
 
   const handleSearchChange = useCallback(
@@ -112,7 +131,10 @@ export default function BillsHomeScreen() {
       const next = text.slice(0, MAX_Q_LEN);
       setSearchQuery(next);
       startTransition(() => {
-        router.replace({ pathname, params: { q: next || undefined } });
+        router.replace({
+          pathname,
+          params: { q: next ? normalizeQuery(next) : undefined },
+        } as Href);
       });
     },
     [pathname, router, startTransition],
@@ -121,48 +143,62 @@ export default function BillsHomeScreen() {
   const handleClearQuery = useCallback(() => {
     setSearchQuery("");
     startTransition(() => {
-      router.replace({ pathname, params: { q: undefined } });
+      router.replace({ pathname, params: { q: undefined } } as Href);
     });
   }, [pathname, router, startTransition]);
 
-  const { data, isLoading, isFetching, error } = useQuery<Bill[], Error, Bill[]>({
-    queryKey: ["bills", { q: normalizedQuery }],
-    queryFn: async (): Promise<Bill[]> => {
-      const query = normalizedQuery;
-      const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
-      let data: Bill[] = [];
+  useEffect(() => {
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [normalizedQuery, sessionFilter]);
 
-      if (!query) {
-        const { data: d, error: e } = await supabase
-          .from("bills")
-          .select("*")
-          .order("is_curated", { ascending: false })
-          .order("status_date", { ascending: false })
-          .order("id", { ascending: false });
-        if (e) throw e;
-        data = d ?? [];
-      } else if (billNumberRegex.test(query)) {
-        const processed = query.replace(/\s/g, "");
-        const { data: d, error: e } = await supabase
-          .from("bills")
-          .select("*")
-          .ilike("bill_number", `%${processed}%`)
-          .order("is_curated", { ascending: false })
-          .order("status_date", { ascending: false })
-          .order("id", { ascending: false });
-        if (e) throw e;
-        data = d ?? [];
-      } else {
-        const { data: d, error: e } = await supabase.rpc("search_bills", {
+  const queryKey = useMemo<BillsQueryKey>(
+    () => ["bills", { q: normalizedQuery }] as const,
+    [normalizedQuery],
+  );
+
+  const queryOptions = useMemo<BillsQueryOptions>(
+    () => ({
+      queryKey,
+      queryFn: async (): Promise<Bill[]> => {
+        const query = normalizedQuery;
+        const billNumberRegex = /^[A-Za-z]{2,3}\s*\d+$/;
+
+        if (!query) {
+          const { data: rows, error: queryError } = await supabase
+            .from("bills")
+            .select("*")
+            .order("is_curated", { ascending: false })
+            .order("status_date", { ascending: false })
+            .order("id", { ascending: false });
+          if (queryError) throw queryError;
+          return rows ?? [];
+        }
+
+        if (billNumberRegex.test(query)) {
+          const processed = query.replace(/\s/g, "");
+          const { data: rows, error: queryError } = await supabase
+            .from("bills")
+            .select("*")
+            .ilike("bill_number", `%${processed}%`)
+            .order("is_curated", { ascending: false })
+            .order("status_date", { ascending: false })
+            .order("id", { ascending: false });
+          if (queryError) throw queryError;
+          return rows ?? [];
+        }
+
+        const { data: rpcData, error: rpcError } = await supabase.rpc("search_bills", {
           p_query: query,
         });
-        if (!e) {
-          data = d ?? [];
-        } else if (
-          e.code === "42883" ||
-          /function public\.search_bills/i.test(e.message ?? "") ||
-          /schema cache/i.test(e.message ?? "") ||
-          /column .*search/i.test(e.message ?? "")
+        if (!rpcError) {
+          return (rpcData ?? []) as Bill[];
+        }
+
+        if (
+          rpcError.code === "42883" ||
+          /function public\.search_bills/i.test(rpcError.message ?? "") ||
+          /schema cache/i.test(rpcError.message ?? "") ||
+          /column .*search/i.test(rpcError.message ?? "")
         ) {
           const orFilter = buildOrIlikeFilter(["bill_number", "title", "description"], query);
           const { data: fallbackData, error: fallbackError } = await supabase
@@ -174,31 +210,28 @@ export default function BillsHomeScreen() {
             .order("created_at", { ascending: false })
             .order("id", { ascending: false });
           if (fallbackError) throw fallbackError;
-          data = fallbackData ?? [];
-        } else {
-          throw e;
+          return fallbackData ?? [];
         }
-      }
 
-      return data ?? [];
-    },
-    placeholderData: keepPreviousData,
-    staleTime: 15_000,
-  });
+        throw rpcError;
+      },
+      placeholderData: keepPreviousData,
+      staleTime: 15_000,
+      onError: (err: Error) => console.warn("Bills query failed:", err),
+    }),
+    [normalizedQuery, queryKey],
+  );
 
-  const fetchedBills: Bill[] = data ?? [];
+  const { data, isPending, isFetching, isError, error } = useQuery(queryOptions);
 
-  useEffect(() => {
-    if (error) {
-      console.warn("Bills query failed:", error);
-    }
-  }, [error]);
-
-  const sortedBills = useMemo<Bill[]>(() => sortBills(fetchedBills), [fetchedBills]);
+  const fetchedBills = useMemo<Bill[]>(() => (Array.isArray(data) ? data : []), [data]);
+  const isInitialLoading = isPending && fetchedBills.length === 0;
+  const isRefreshing = isFetching && !isInitialLoading;
+  const errorMessage = isError ? (error instanceof Error ? error.message : String(error)) : null;
 
   useEffect(() => {
     const sessionSet = new Set<string>();
-    sortedBills.forEach((item) => {
+    fetchedBills.forEach((item) => {
       const session = extractSessionLabel(item?.state_link);
       if (session) sessionSet.add(session);
     });
@@ -212,9 +245,17 @@ export default function BillsHomeScreen() {
       }
       return nextSessions;
     });
-  }, [sortedBills]);
+  }, [fetchedBills]);
 
-  const ids = useMemo(() => sortedBills.map((b) => b.id), [sortedBills]);
+  const filteredBills = useMemo(() => {
+    if (sessionFilter === SESSION_ALL) {
+      return fetchedBills;
+    }
+    return fetchedBills.filter((item) => extractSessionLabel(item?.state_link) === sessionFilter);
+  }, [fetchedBills, sessionFilter]);
+
+  const sortedBills = useMemo(() => sortBills(filteredBills), [filteredBills]);
+  const ids = useMemo(() => sortedBills.map((bill) => bill.id), [sortedBills]);
   const idsKey = useMemo(() => ids.join(","), [ids]);
 
   useEffect(() => {
@@ -232,11 +273,31 @@ export default function BillsHomeScreen() {
       try {
         const map = await fetchTranslationsForBills(ids, i18n.language);
         if (!alive) return;
-
-        setTranslations(map);
-      } catch (err) {
-        if (!alive) return;
-        console.warn("Failed to fetch translations:", err);
+        if (!map || !Object.keys(map).length) {
+          setTranslations({});
+          return;
+        }
+        const next: Record<number, TranslationPatch> = {};
+        Object.entries(map).forEach(([key, value]) => {
+          const id = Number(key);
+          if (Number.isNaN(id) || !value) return;
+          next[id] = {
+            title: value.title ?? undefined,
+            description: value.description ?? null,
+            summary_simple: value.summary_simple ?? null,
+            summary_medium: value.summary_medium ?? null,
+            summary_complex: value.summary_complex ?? null,
+            original_text: value.original_text ?? null,
+            summary_simple_es: value.summary_simple ?? null,
+            summary_medium_es: value.summary_medium ?? null,
+            summary_complex_es: value.summary_complex ?? null,
+          };
+        });
+        setTranslations(next);
+      } catch {
+        if (alive) {
+          setTranslations({});
+        }
       }
     })();
 
@@ -245,48 +306,13 @@ export default function BillsHomeScreen() {
     };
   }, [i18n.language, idsKey, ids]);
 
-  const translatedBills = useMemo<Bill[]>(() => {
-    if (i18n.language === "en") return sortedBills;
-    if (!Object.keys(translations).length) return sortedBills;
-
-    return sortedBills.map((bill) => {
-      const tr = translations[bill.id];
-      if (!tr) return bill;
-      return {
-        ...bill,
-        title: tr.title ?? bill.title,
-        description: tr.description ?? bill.description,
-        summary_simple_es: tr.summary_simple ?? (bill as any).summary_simple_es,
-        summary_medium_es: tr.summary_medium ?? (bill as any).summary_medium_es,
-        summary_complex_es: tr.summary_complex ?? (bill as any).summary_complex_es,
-        original_text_es: tr.original_text ?? (bill as any).original_text_es,
-      };
-    });
-  }, [i18n.language, sortedBills, translations]);
-
-  const filteredBills = useMemo<Bill[]>(() => {
-    if (sessionFilter === SESSION_ALL) return translatedBills;
-    return translatedBills.filter(
-      (item) => extractSessionLabel(item?.state_link) === sessionFilter,
-    );
-  }, [sessionFilter, translatedBills]);
-
-  const queryError = useMemo(() => {
-    if (!error) return null;
-    if (error instanceof Error) return error.message;
-    return (error as any)?.message ?? String(error);
-  }, [error]);
-
-  const isInitialLoading = isLoading && fetchedBills.length === 0;
-  const isRefreshing = isFetching && !isInitialLoading;
-
   useEffect(() => {
     if (sessionFilter !== SESSION_ALL && !availableSessions.includes(sessionFilter)) {
       setSessionFilter(SESSION_ALL);
     }
   }, [availableSessions, sessionFilter]);
 
-  const sessionOptions = useMemo(() => {
+  const sessionOptions = useMemo<string[]>(() => {
     const unique = new Set<string>([SESSION_ALL, ...availableSessions]);
     return Array.from(unique);
   }, [availableSessions]);
@@ -300,9 +326,27 @@ export default function BillsHomeScreen() {
     [sessionOptions, t],
   );
 
-  useEffect(() => {
-    listRef.current?.scrollToOffset({ offset: 0, animated: false });
-  }, [normalizedQuery, sessionFilter]);
+  const displayBills = useMemo<Bill[]>(() => {
+    if (!Object.keys(translations).length) {
+      return sortedBills;
+    }
+    return sortedBills.map((bill) => {
+      const tr = translations[bill.id];
+      if (!tr) return bill;
+      return {
+        ...bill,
+        title: tr.title ?? bill.title,
+        description: tr.description ?? bill.description,
+        summary_simple: tr.summary_simple ?? bill.summary_simple,
+        summary_medium: tr.summary_medium ?? bill.summary_medium,
+        summary_complex: tr.summary_complex ?? bill.summary_complex,
+        original_text: tr.original_text ?? bill.original_text,
+        summary_simple_es: tr.summary_simple_es ?? bill.summary_simple_es,
+        summary_medium_es: tr.summary_medium_es ?? bill.summary_medium_es,
+        summary_complex_es: tr.summary_complex_es ?? bill.summary_complex_es,
+      };
+    });
+  }, [sortedBills, translations]);
 
   const renderContent = () => {
     if (isInitialLoading) {
@@ -316,19 +360,19 @@ export default function BillsHomeScreen() {
         />
       );
     }
-    if (queryError) {
+    if (errorMessage) {
       return (
         <EmptyState
           icon="chevron.left.forwardslash.chevron.right"
           title={t("error.title", "An Error Occurred")}
           message={t(
             "home.error",
-            `We couldn't fetch the bills. Please try again later. \n(${queryError})`,
+            `We couldn't fetch the bills. Please try again later. \n(${errorMessage})`,
           )}
         />
       );
     }
-    if (filteredBills.length === 0) {
+    if (!isFetching && displayBills.length === 0) {
       return (
         <EmptyState
           icon="file-search-outline"
@@ -347,7 +391,7 @@ export default function BillsHomeScreen() {
     return (
       <FlatList
         ref={listRef}
-        data={filteredBills}
+        data={displayBills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
         contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}

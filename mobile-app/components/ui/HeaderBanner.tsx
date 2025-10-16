@@ -1,9 +1,10 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { StyleSheet, View, Image, TouchableOpacity } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { usePathname, useRouter, type Href } from "expo-router";
-import { useTheme, Text } from "react-native-paper";
+import { useTheme, Text, IconButton, Menu } from "react-native-paper";
 import { useTranslation } from "react-i18next";
+import { useAppTheme } from "@/providers/AppThemeProvider";
 
 const BANNER = require("../../assets/images/header-banner.png");
 const HEADER_HEIGHT = 50;
@@ -16,7 +17,9 @@ export default function HeaderBanner({ forceShow }: Props) {
   const router = useRouter();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { mode, setMode, resolvedScheme } = useAppTheme();
+  const [themeMenuVisible, setThemeMenuVisible] = useState(false);
 
   // Hide (collapse) on splash route unless forced
   const collapsed = useMemo(() => !forceShow && pathname === "/", [pathname, forceShow]);
@@ -24,6 +27,39 @@ export default function HeaderBanner({ forceShow }: Props) {
   const nextLang = i18n.language === "es" ? "en" : "es";
   const onToggleLang = () => {
     i18n.changeLanguage(nextLang).catch(() => {});
+  };
+
+  const themeIcon = resolvedScheme === "dark" ? "weather-night" : "white-balance-sunny";
+
+  const themeOptions = useMemo(
+    () =>
+      [
+        {
+          value: "system" as const,
+          label: t("theme.mode.system", { defaultValue: "System default" }),
+          icon: "theme-light-dark",
+        },
+        {
+          value: "light" as const,
+          label: t("theme.mode.light", { defaultValue: "Light" }),
+          icon: "white-balance-sunny",
+        },
+        {
+          value: "dark" as const,
+          label: t("theme.mode.dark", { defaultValue: "Dark" }),
+          icon: "weather-night",
+        },
+      ] satisfies {
+        value: "system" | "light" | "dark";
+        label: string;
+        icon: string;
+      }[],
+    [t],
+  );
+
+  const handleSelectTheme = (value: "system" | "light" | "dark") => {
+    setMode(value);
+    setThemeMenuVisible(false);
   };
 
   return (
@@ -39,6 +75,36 @@ export default function HeaderBanner({ forceShow }: Props) {
         },
       ]}
     >
+      {!collapsed && (
+        <View style={styles.left}>
+          <Menu
+            visible={themeMenuVisible}
+            onDismiss={() => setThemeMenuVisible(false)}
+            anchor={
+              <IconButton
+                icon={themeIcon}
+                size={22}
+                onPress={() => setThemeMenuVisible(true)}
+                accessibilityRole="button"
+                accessibilityLabel={t("theme.menuLabel", { defaultValue: "Change theme" })}
+                selected={mode !== "system"}
+                style={{ margin: 0 }}
+              />
+            }
+            anchorPosition="bottom"
+          >
+            {themeOptions.map((option) => (
+              <Menu.Item
+                key={option.value}
+                onPress={() => handleSelectTheme(option.value)}
+                title={option.label}
+                leadingIcon={option.icon}
+                trailingIcon={mode === option.value ? "check" : undefined}
+              />
+            ))}
+          </Menu>
+        </View>
+      )}
       {!collapsed && (
         <TouchableOpacity
           onPress={() => router.navigate("/" as Href)}
@@ -87,10 +153,15 @@ const styles = StyleSheet.create({
   bannerTouchable: {
     width: "100%",
   },
+  left: {
+    position: "absolute",
+    left: 4,
+    bottom: 4,
+  },
   right: {
     position: "absolute",
     right: 12,
-    bottom: 8,
+    bottom: 4,
     height: 34,
     justifyContent: "center",
     alignItems: "center",

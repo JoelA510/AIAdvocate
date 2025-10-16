@@ -70,6 +70,18 @@ const MIN_SUMMARY_LENGTHS = {
 };
 const asciiGuard = /[^ -~\n]/;
 
+const invalidSummaryPrefix = /^error[:\s]/i;
+const invalidSummaryPlaceholder = /placeholder/i;
+
+const isValidSummary = (value?: string | null): boolean => {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (trimmed.length < 40) return false;
+  if (invalidSummaryPrefix.test(trimmed)) return false;
+  if (invalidSummaryPlaceholder.test(trimmed)) return false;
+  return true;
+};
+
 console.log("🚀 Initializing sync-updated-bills v3.0 (Bilingual summaries + batching)");
 
 const normalizeNewlines = (s: string) => s.replace(/\r\n?/g, "\n");
@@ -397,7 +409,7 @@ serve(async (req) => {
 
       const { data: existingBillMeta, error: existingBillError } = await supabaseAdmin
         .from("bills")
-        .select("summary_hash, embedding")
+        .select("summary_hash, embedding, summary_simple, summary_medium, summary_complex, summary_len_simple")
         .eq("id", billId)
         .maybeSingle();
       if (existingBillError) throw existingBillError;
@@ -499,13 +511,46 @@ serve(async (req) => {
         throw new Error("Spanish summaries contain empty values after trim");
       }
 
-      const summaryHash = await sha256(asciiEnglish.complex);
-      const summaryLenSimple = asciiEnglish.simple.length;
+      const { data: existingSpanish, error: existingSpanishError } = await supabaseAdmin
+        .from("bill_translations")
+        .select("summary_simple, summary_medium, summary_complex")
+        .eq("bill_id", billData.bill_id)
+        .eq("language_code", "es")
+        .maybeSingle();
+      if (existingSpanishError) throw existingSpanishError;
 
+      const existingSimple = existingBillMeta?.summary_simple ?? null;
+      const existingMedium = existingBillMeta?.summary_medium ?? null;
+      const existingComplex = existingBillMeta?.summary_complex ?? null;
       const existingSummaryHash = existingBillMeta?.summary_hash ?? null;
       const existingEmbeddingValue = existingBillMeta?.embedding ?? null;
-      const summaryHashUnchanged = existingSummaryHash !== null && existingSummaryHash === summaryHash;
+
+      const englishFinal = {
+        simple: existingSimple ?? asciiEnglish.simple,
+        medium: existingMedium ?? asciiEnglish.medium,
+        complex: existingComplex ?? asciiEnglish.complex,
+      };
+
+      if (existingSimple === null && !isValidSummary(englishFinal.simple)) {
+        throw new Error("Generated simple summary invalid or placeholder");
+      }
+      if (existingMedium === null && !isValidSummary(englishFinal.medium)) {
+        throw new Error("Generated medium summary invalid or placeholder");
+      }
+      if (existingComplex === null && !isValidSummary(englishFinal.complex)) {
+        throw new Error("Generated complex summary invalid or placeholder");
+      }
+
+      const englishAllValid =
+        isValidSummary(englishFinal.simple) &&
+        isValidSummary(englishFinal.medium) &&
+        isValidSummary(englishFinal.complex);
+
+      const summaryHash = await sha256(englishFinal.complex);
+      const summaryLenSimple = englishFinal.simple.length;
+
       const existingEmbeddingSerialized = reuseEmbedding(existingEmbeddingValue);
+      const summaryHashUnchanged = existingSummaryHash !== null && existingSummaryHash === summaryHash;
 
       let embeddingPayload: string | null = null;
 
@@ -528,7 +573,7 @@ serve(async (req) => {
         const textForEmbedding = [
           `Title: ${billData.title}`,
           billData.description ? `Description: ${billData.description}` : null,
-          `Expert Summary: ${asciiEnglish.complex}`,
+          `Expert Summary: ${englishFinal.complex}`,
         ]
           .filter((segment): segment is string => Boolean(segment))
           .join("\n\n");
@@ -538,6 +583,48 @@ serve(async (req) => {
         );
 
         embeddingPayload = `[${embedding.join(",")}]`;
+      }
+
+      const existingSpanishSimple = existingSpanish?.summary_simple ?? null;
+      const existingSpanishMedium = existingSpanish?.summary_medium ?? null;
+      const existingSpanishComplex = existingSpanish?.summary_complex ?? null;
+
+      const spanishFinal = {
+        simple: existingSpanishSimple ?? (isValidSummary(spanishTrimmed.simple) ? spanishTrimmed.simple : null),
+        medium: existingSpanishMedium ?? (isValidSummary(spanishTrimmed.medium) ? spanishTrimmed.medium : null),
+        complex: existingSpanishComplex ?? (isValidSummary(spanishTrimmed.complex) ? spanishTrimmed.complex : null),
+      };
+
+      const needsSpanishUpsert =
+        existingSpanishSimple === null || existingSpanishMedium === null || existingSpanishComplex === null;
+
+      const spanishComplete =
+        spanishFinal.simple !== null && spanishFinal.medium !== null && spanishFinal.complex !== null;
+
+      let spanishPayload: Record<string, unknown> | null = null;
+      if (needsSpanishUpsert) {
+        if (spanishComplete) {
+          spanishPayload = {
+            bill_id: billData.bill_id,
+            language_code: "es",
+            summary_simple: spanishFinal.simple!,
+            summary_medium: spanishFinal.medium!,
+            summary_complex: spanishFinal.complex!,
+            updated_at: new Date().toISOString(),
+          };
+        } else {
+          console.warn("Skipping Spanish translation update due to invalid summaries", {
+            bill_id: billData.bill_id,
+            bill_number: billData.bill_number,
+          });
+        }
+      }
+
+      if (!englishAllValid) {
+        console.warn("English summaries flagged as invalid after guard", {
+          bill_id: billData.bill_id,
+          bill_number: billData.bill_number,
+        });
       }
 
       const statusText = billData.status_text ?? null;
@@ -558,9 +645,9 @@ serve(async (req) => {
         change_hash: billData.change_hash,
         original_text: originalTextRaw,
         original_text_formatted: originalTextFormatted,
-        summary_simple: asciiEnglish.simple,
-        summary_medium: asciiEnglish.medium,
-        summary_complex: asciiEnglish.complex,
+        summary_simple: englishFinal.simple,
+        summary_medium: englishFinal.medium,
+        summary_complex: englishFinal.complex,
         summary_ok: true,
         summary_len_simple: summaryLenSimple,
         summary_hash: summaryHash,
@@ -572,15 +659,6 @@ serve(async (req) => {
       if (embeddingPayload !== null) {
         billPayload.embedding = embeddingPayload;
       }
-
-      const spanishPayload = {
-        bill_id: billData.bill_id,
-        language_code: "es",
-        summary_simple: spanishTrimmed.simple,
-        summary_medium: spanishTrimmed.medium,
-        summary_complex: spanishTrimmed.complex,
-        updated_at: new Date().toISOString(),
-      };
 
       const { error: rpcError } = await supabaseAdmin.rpc(
         "upsert_bill_and_translation",
