@@ -9,7 +9,7 @@ import { useAppTheme } from "@/providers/AppThemeProvider";
 const BANNER = require("../../assets/images/header-banner.png");
 const HEADER_HEIGHT = 50;
 const COLLAPSED_ROUTES = new Set<string>(["/splash"]);
-const TABS_HOME_ROUTE: Href = "/(tabs)";
+const TABS_HOME_ROUTE: Href = "/(tabs)/index";
 
 type Props = { forceShow?: boolean };
 

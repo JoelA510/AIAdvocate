@@ -3,7 +3,7 @@
 // email template fill when a bill prop is provided.
 
 import React, { useState } from "react";
-import { View, StyleSheet, Linking, Platform } from "react-native";
+import { View, StyleSheet, Linking, Platform, Keyboard } from "react-native";
 import {
   Text,
   TextInput,
@@ -59,6 +59,7 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
       setErr(t("findYourRep.error.empty", "Please enter an address or ZIP code."));
       return;
     }
+    Keyboard.dismiss();
     setLoading(true);
     try {
       const res = await findYourRep(value);
