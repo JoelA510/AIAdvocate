@@ -9,7 +9,7 @@ module.exports = function (api) {
         "module-resolver",
         {
           root: ["./"],
-          alias: { "@": "./src", "~": "./" },
+          alias: { "@": "./src", "@/src": "./src", "~": "./" },
           extensions: [".tsx", ".ts", ".jsx", ".js", ".json"],
         },
       ],

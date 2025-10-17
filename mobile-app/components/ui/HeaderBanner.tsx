@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from "react";
 import { StyleSheet, View, Image, TouchableOpacity } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { usePathname, useRouter, type Href } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { useTheme, Text, IconButton, Menu } from "react-native-paper";
 import { useTranslation } from "react-i18next";
 import { useAppTheme } from "@/providers/AppThemeProvider";
-import { PATHS } from "@/lib/paths";
+import { PATHS } from "@/src/lib/paths";
 
 const BANNER = require("../../assets/images/header-banner.png");
 const HEADER_HEIGHT = 50;
@@ -71,8 +71,10 @@ export default function HeaderBanner({ forceShow }: Props) {
       style={[
         styles.wrap,
         {
-          paddingTop: insets.top,
-          height: collapsed ? insets.top : insets.top + HEADER_HEIGHT,
+          paddingTop: insets.top + 12,
+          paddingBottom: 12,
+          paddingHorizontal: 16,
+          height: insets.top + 12 + (collapsed ? 0 : HEADER_HEIGHT),
           backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
           borderBottomColor: colors.outlineVariant ?? theme.colors.outline,
           shadowColor: colors.shadow ?? "#000",
@@ -110,17 +112,13 @@ export default function HeaderBanner({ forceShow }: Props) {
             </Menu>
           </View>
           <TouchableOpacity
-            onPress={() => router.replace(PATHS.HOME as Href)}
+            onPress={() => router.replace(PATHS.HOME)}
             style={styles.bannerTouchable}
             accessibilityRole="button"
             accessibilityLabel="AI Advocate home"
             activeOpacity={0.85}
           >
-            <Image
-              source={BANNER}
-              resizeMode="contain"
-              style={[styles.banner, { tintColor: undefined }]}
-            />
+            <Image source={BANNER} resizeMode="contain" style={styles.banner} />
           </TouchableOpacity>
           <View style={styles.sideRight}>
             <TouchableOpacity
