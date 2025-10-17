@@ -5,11 +5,11 @@ import { usePathname, useRouter, type Href } from "expo-router";
 import { useTheme, Text, IconButton, Menu } from "react-native-paper";
 import { useTranslation } from "react-i18next";
 import { useAppTheme } from "@/providers/AppThemeProvider";
+import { PATHS } from "@/lib/paths";
 
 const BANNER = require("../../assets/images/header-banner.png");
 const HEADER_HEIGHT = 50;
 const COLLAPSED_ROUTES = new Set<string>(["/splash"]);
-const TABS_HOME_ROUTE: Href = "/(tabs)/index";
 
 type Props = { forceShow?: boolean };
 
@@ -110,7 +110,7 @@ export default function HeaderBanner({ forceShow }: Props) {
             </Menu>
           </View>
           <TouchableOpacity
-            onPress={() => router.replace(TABS_HOME_ROUTE)}
+            onPress={() => router.replace(PATHS.HOME as Href)}
             style={styles.bannerTouchable}
             accessibilityRole="button"
             accessibilityLabel="AI Advocate home"

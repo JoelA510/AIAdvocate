@@ -32,6 +32,9 @@ type Person = {
   party?: string | null;
   offices?: { email?: string | null }[] | null;
   openstates_url?: string | null;
+  _approximate?: boolean;
+  _approx_source?: string | null;
+  _approx_zip?: string | null;
 };
 
 type PersonWithMatch = Person & {
@@ -52,9 +55,11 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
   const [results, setResults] = useState<PersonWithMatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   const onSearch = async () => {
     setErr(null);
+    setInfo(null);
     if (!value.trim()) {
       setErr(t("findYourRep.error.empty", "Please enter an address or ZIP code."));
       return;
@@ -66,11 +71,28 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
       const people: Person[] = Array.isArray(res) ? (res as Person[]) : [];
       if (!people.length) {
         setErr(t("findYourRep.error.none", "No representatives found for that location."));
+        setInfo(null);
       }
       const enriched = await attachSupabaseMatches(people || []);
+      if (people.length) {
+        const approxZip = people.find((p) => p._approximate);
+        if (approxZip) {
+          const zipHuman = approxZip._approx_zip ?? value.trim();
+          setInfo(
+            t(
+              "findYourRep.approxNotice",
+              "Approximate match for ZIP {{zip}}. Refine with a street address for precision.",
+              { zip: zipHuman },
+            ),
+          );
+        } else {
+          setInfo(null);
+        }
+      }
       setResults(enriched);
     } catch (e: any) {
       setErr(e?.message ?? t("findYourRep.error.generic", "Failed to look up representatives."));
+      setInfo(null);
     } finally {
       setLoading(false);
     }
@@ -160,6 +182,12 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
         <>
           <View style={{ height: 12 }} />
           <Text style={{ color: theme.colors.error }}>{err}</Text>
+        </>
+      )}
+      {!!info && !loading && !err && (
+        <>
+          <View style={{ height: 12 }} />
+          <Text style={{ color: theme.colors.tertiary, opacity: 0.8 }}>{info}</Text>
         </>
       )}
       <Divider style={{ marginVertical: 16 }} />

@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTranslation } from "react-i18next";
 import { usePathname, useRouter, useSegments, type Href } from "expo-router";
+import { PATHS } from "@/lib/paths";
 
 type NavKey = "active" | "saved" | "index" | "lnf" | "advocacy";
 
@@ -33,7 +34,7 @@ const NAV_ITEMS = [
   },
   {
     key: "index",
-    route: "/(tabs)/index",
+    route: PATHS.HOME as Href,
     icon: "file-document",
     labelKey: "tabs.bills",
     fallback: "Bills",

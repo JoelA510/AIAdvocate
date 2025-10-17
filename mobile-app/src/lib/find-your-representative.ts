@@ -3,6 +3,8 @@
 import { supabase } from "./supabase";
 import { getConfig } from "./config";
 import { safeFetch } from "./safeFetch";
+import { geocodeZip, ZipGeocodeRateLimitError } from "./geocode";
+import { isUsZip, normalizeZip } from "./location";
 
 type LocationIQMatch = { lat: string; lon: string };
 
@@ -22,6 +24,7 @@ type FunctionResponse =
  * Fetch nearby state legislators for a user-supplied address.
  * Prefers the Supabase Edge function (which applies caching) and falls back to the
  * client-side fetch pipeline if the function is unavailable.
+ * Adds a ZIP-only fallback that approximates representation using the ZIP centroid.
  */
 export async function findYourRep(address: string): Promise<any[]> {
   const trimmed = address.trim();
@@ -29,33 +32,86 @@ export async function findYourRep(address: string): Promise<any[]> {
     throw new Error("Please enter a location.");
   }
 
+  const needsZipFallback = isUsZip(trimmed);
+
+  let primaryResults: any[] | null = null;
   try {
-    const { data, error } = await supabase.functions.invoke<FunctionResponse>("find-your-rep", {
-      body: { query: trimmed },
-    });
-
-    if (error) {
-      throw new Error(error.message ?? "find-your-rep function returned an error.");
-    }
-
-    if (Array.isArray(data)) return data;
-
-    if (data?.error) {
-      throw new Error(data.error);
-    }
-
-    if (Array.isArray(data?.results)) {
-      return data.results;
-    }
-
-    throw new Error("Unexpected response from find-your-rep function.");
+    primaryResults = await invokeEdgeFunction(trimmed);
   } catch (fnError) {
     console.warn(
       "Supabase find-your-rep function unavailable. Falling back to direct lookup.",
       fnError,
     );
-    return fallbackLookup(trimmed);
   }
+
+  if (primaryResults !== null) {
+    if (primaryResults.length > 0) {
+      return primaryResults;
+    }
+
+    if (needsZipFallback) {
+      const approx = await attemptZipFallback(trimmed);
+      if (approx.length > 0) {
+        return approx;
+      }
+    }
+
+    return primaryResults;
+  }
+
+  try {
+    const fallbackResults = await fallbackLookup(trimmed);
+    if (fallbackResults.length > 0) {
+      return fallbackResults;
+    }
+
+    if (needsZipFallback) {
+      const approx = await attemptZipFallback(trimmed);
+      if (approx.length > 0) {
+        return approx;
+      }
+    }
+
+    return fallbackResults;
+  } catch (fallbackError) {
+    if (needsZipFallback) {
+      try {
+        const approx = await attemptZipFallback(trimmed);
+        if (approx.length > 0) {
+          return approx;
+        }
+      } catch (zipError) {
+        if (zipError instanceof ZipGeocodeRateLimitError) {
+          throw zipError;
+        }
+        console.error("ZIP fallback failed", zipError);
+      }
+    }
+
+    throw fallbackError;
+  }
+}
+
+async function invokeEdgeFunction(query: string): Promise<any[]> {
+  const { data, error } = await supabase.functions.invoke<FunctionResponse>("find-your-rep", {
+    body: { query },
+  });
+
+  if (error) {
+    throw new Error(error.message ?? "find-your-rep function returned an error.");
+  }
+
+  if (Array.isArray(data)) return data;
+
+  if (data?.error) {
+    throw new Error(data.error);
+  }
+
+  if (Array.isArray(data?.results)) {
+    return data.results;
+  }
+
+  throw new Error("Unexpected response from find-your-rep function.");
 }
 
 async function fallbackLookup(query: string): Promise<any[]> {
@@ -81,15 +137,34 @@ async function fallbackLookup(query: string): Promise<any[]> {
   }
 
   const { lat, lon } = matches[0];
+  return fetchOpenStatesPeople(lat, lon, openstatesApiKey);
+}
 
+export async function findYourRepByCoords(lat: number, lon: number): Promise<any[]> {
+  const { openstatesApiKey } = getConfig();
+
+  if (!openstatesApiKey) {
+    throw new Error(
+      "Missing EXPO_PUBLIC_OPENSTATES_API_KEY. Check mobile-app/.env and restart `expo start`.",
+    );
+  }
+
+  return fetchOpenStatesPeople(lat, lon, openstatesApiKey);
+}
+
+async function fetchOpenStatesPeople(
+  lat: string | number,
+  lon: string | number,
+  apiKey: string,
+): Promise<any[]> {
   const peopleUrl = `https://v3.openstates.org/people.geo?lat=${encodeURIComponent(
-    lat,
-  )}&lng=${encodeURIComponent(lon)}`;
+    String(lat),
+  )}&lng=${encodeURIComponent(String(lon))}`;
 
   const peopleRes = await fetch(peopleUrl, {
     method: "GET",
     headers: {
-      "X-API-KEY": openstatesApiKey,
+      "X-API-KEY": apiKey,
       Accept: "application/json",
     },
   });
@@ -108,4 +183,31 @@ async function fallbackLookup(query: string): Promise<any[]> {
   }
 
   return Array.isArray(people.results) ? people.results : [];
+}
+
+async function attemptZipFallback(input: string): Promise<any[]> {
+  try {
+    const geo = await geocodeZip(input);
+    if (!geo) return [];
+
+    const byCoords = await findYourRepByCoords(geo.lat, geo.lon);
+    if (!Array.isArray(byCoords) || byCoords.length === 0) {
+      return [];
+    }
+
+    const normalized = normalizeZip(input);
+    return byCoords.map((person) => ({
+      ...person,
+      _approximate: true,
+      _approx_source: "zip-centroid",
+      _approx_zip: normalized,
+    }));
+  } catch (error) {
+    if (error instanceof ZipGeocodeRateLimitError) {
+      throw error;
+    }
+
+    console.error("attemptZipFallback failed", error);
+    return [];
+  }
 }
