@@ -1,5 +1,8 @@
 {
   "installCommand": "yarn install --frozen-lockfile",
   "buildCommand": "npx expo export -p web",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "redirects": [
+    { "source": "/(tabs)/index", "destination": "/", "permanent": true }
+  ]
 }
