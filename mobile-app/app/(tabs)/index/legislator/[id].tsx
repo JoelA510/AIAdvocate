@@ -1,1 +1,1 @@
-export { default } from "../../../../legislator/[id]";
+export { default } from "../../../legislator/[id]";
