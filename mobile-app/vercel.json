@@ -3,6 +3,8 @@
   "buildCommand": "npx expo export -p web",
   "outputDirectory": "dist",
   "redirects": [
-    { "source": "/(tabs)/index", "destination": "/", "permanent": true }
+    { "source": "/(tabs)/index", "destination": "/", "permanent": true },
+    { "source": "/(tabs)/index/", "destination": "/", "permanent": true },
+    { "source": "/(tabs)/index/:rest*", "destination": "/", "permanent": true }
   ]
 }
