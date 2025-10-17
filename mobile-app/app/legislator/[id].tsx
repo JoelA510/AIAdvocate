@@ -54,10 +54,13 @@ export default function LegislatorScreen() {
     id?: string | string[];
     payload?: string | string[];
     billId?: string | string[];
+    originTab?: string | string[];
   }>();
   const idParam = Array.isArray(params.id) ? params.id[0] : params.id;
   const payloadParam = Array.isArray(params.payload) ? params.payload[0] : params.payload;
   const billIdParam = Array.isArray(params.billId) ? params.billId[0] : params.billId;
+  const originTabParam = Array.isArray(params.originTab) ? params.originTab[0] : params.originTab;
+  const originTab: "bills" | "advocacy" = originTabParam === "bills" ? "bills" : "advocacy";
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
@@ -75,9 +78,10 @@ export default function LegislatorScreen() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.push("/(tabs)/advocacy");
+      const fallbackRoute = originTab === "bills" ? "/(tabs)/index" : "/(tabs)/advocacy";
+      router.push(fallbackRoute);
     }
-  }, [router]);
+  }, [originTab, router]);
 
   const fallbackProfile = useMemo<Legislator | null>(() => {
     if (!payloadParam) return null;

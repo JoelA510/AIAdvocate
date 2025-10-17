@@ -2,7 +2,7 @@
 // Provides address/ZIP lookup for representatives.  Includes optional
 // email template fill when a bill prop is provided.
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { View, StyleSheet, Linking, Platform, Keyboard } from "react-native";
 import {
   Text,
@@ -14,10 +14,11 @@ import {
   Divider,
 } from "react-native-paper";
 import { useTranslation } from "react-i18next";
-import { useRouter } from "expo-router";
+import { useRouter, useSegments } from "expo-router";
 import { findYourRep } from "@/lib/find-your-representative";
 import { supabase } from "@/lib/supabase";
 import { createLegislatorLookupKey } from "@/lib/legislatorLookup";
+import { PATHS } from "@/lib/paths";
 import type { Bill } from "./Bill";
 
 type Person = {
@@ -50,12 +51,34 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
   const { t } = useTranslation();
   const theme = useTheme();
   const router = useRouter();
+  const segments = useSegments();
 
   const [value, setValue] = useState("");
   const [results, setResults] = useState<PersonWithMatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  const originTab = useMemo<"bills" | "advocacy">(() => {
+    const segmentList = Array.isArray(segments) ? (segments as string[]) : [];
+    const primary = segmentList[0];
+    const tabKey = segmentList[1];
+
+    if (primary === "(tabs)") {
+      if (tabKey === "index") return "bills";
+      if (tabKey === "advocacy") return "advocacy";
+    }
+    if (primary === "bill" || primary === "legislator") {
+      return "bills";
+    }
+    if (primary === "advocacy") {
+      return "advocacy";
+    }
+    if (bill) {
+      return "bills";
+    }
+    return "advocacy";
+  }, [bill, segments]);
 
   const onSearch = async () => {
     setErr(null);
@@ -74,22 +97,18 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
         setInfo(null);
       }
       const enriched = await attachSupabaseMatches(people || []);
-      if (people.length) {
-        const approxZip = people.find((p) => p._approximate);
-        if (approxZip) {
-          const zipHuman = approxZip._approx_zip ?? value.trim();
-          setInfo(
-            t(
+      setResults(enriched);
+
+      const approxZip = enriched.find((p: any) => p?._approximate);
+      setInfo(
+        approxZip
+          ? t(
               "findYourRep.approxNotice",
               "Approximate match for ZIP {{zip}}. Refine with a street address for precision.",
-              { zip: zipHuman },
-            ),
-          );
-        } else {
-          setInfo(null);
-        }
-      }
-      setResults(enriched);
+              { zip: (approxZip as any)?._approx_zip ?? value.trim() },
+            )
+          : null,
+      );
     } catch (e: any) {
       setErr(e?.message ?? t("findYourRep.error.generic", "Failed to look up representatives."));
       setInfo(null);
@@ -254,16 +273,17 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
                   mode="text"
                   disabled={!hasMatch && !p.id}
                   onPress={() => {
-                    const params = hasMatch
+                    const baseParams = hasMatch
                       ? { id: String(p.supabaseId), payload: fallbackPayload }
                       : typeof p.id === "string" || typeof p.id === "number"
                         ? { id: "lookup", payload: fallbackPayload }
                         : null;
-                    if (params) {
-                      if (bill?.id) {
-                        (params as Record<string, string>).billId = String(bill.id);
-                      }
-                      router.push({ pathname: "/legislator/[id]", params });
+                    if (baseParams) {
+                      const nextParams = {
+                        ...baseParams,
+                        ...(bill?.id ? { billId: String(bill.id) } : {}),
+                      };
+                      router.push(PATHS.repProfileIn(originTab, nextParams));
                     }
                   }}
                 >
