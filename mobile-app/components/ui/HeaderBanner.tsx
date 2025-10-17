@@ -9,6 +9,7 @@ import { PATHS } from "@/lib/paths";
 
 const BANNER = require("../../assets/images/header-banner.png");
 const HEADER_HEIGHT = 50;
+const EXTRA_PAD = 12;
 const COLLAPSED_ROUTES = new Set<string>(["/splash"]);
 
 type Props = { forceShow?: boolean };
@@ -66,7 +67,6 @@ export default function HeaderBanner({ forceShow }: Props) {
     setThemeMenuVisible(false);
   };
 
-  const EXTRA_PAD = 12;
   const topPad = insets.top + EXTRA_PAD;
   const bottomPad = collapsed ? 0 : EXTRA_PAD;
   const contentHeight = collapsed ? 0 : HEADER_HEIGHT;
