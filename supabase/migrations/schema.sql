@@ -148,43 +148,30 @@ CREATE OR REPLACE FUNCTION public.invoke_edge_function(endpoint TEXT, job_name T
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
 AS $$
 DECLARE
   status_code INT;
-  anon_key    TEXT;
-  base_url    TEXT;
+  anon_key TEXT;
+  base_url TEXT;
 BEGIN
-  -- config: prefer Vault, then app_config; if missing, log and exit
-  base_url := COALESCE(
-    vault.get_secret('functions_base_url'),
-    (SELECT value FROM public.app_config WHERE key = 'functions_base_url' LIMIT 1)
-  );
-
-  IF base_url IS NULL THEN
-    INSERT INTO public.cron_job_errors(job_name, error_message)
-    VALUES (job_name, 'Invoke Error: missing functions_base_url');
-    RETURN;
-  END IF;
-
-  IF RIGHT(base_url, 1) <> '/' THEN
-    base_url := base_url || '/';
-  END IF;
-
   anon_key := vault.get_secret('supabase_anon_key');
-  IF anon_key IS NULL THEN
-    INSERT INTO public.cron_job_errors(job_name, error_message)
-    VALUES (job_name, 'Invoke Error: missing supabase_anon_key');
-    RETURN;
+
+  SELECT value INTO base_url
+  FROM public.app_config
+  WHERE key = 'functions_base_url'
+  LIMIT 1;
+
+  IF base_url IS NULL OR base_url = '' THEN
+    RAISE EXCEPTION 'functions_base_url not configured in public.app_config';
   END IF;
 
   SELECT status INTO status_code
   FROM net.http_post(
-    url     := base_url || endpoint,
-    headers := jsonb_build_object('Content-Type', 'application/json', 'apikey', anon_key)
+    url := base_url || '/' || endpoint,
+    headers := jsonb_build_object('Content-Type','application/json','apikey', anon_key)
   );
 
-  IF status_code != 200 THEN
+  IF status_code <> 200 THEN
     INSERT INTO public.cron_job_errors(job_name, error_message)
     VALUES (job_name, 'Invoke Error: ' || endpoint || ' returned status ' || status_code);
   END IF;
@@ -194,6 +181,9 @@ EXCEPTION
     VALUES (job_name, 'Invoke Error: ' || endpoint || ' failed: ' || SQLERRM);
 END;
 $$;
+
+REVOKE ALL ON FUNCTION public.invoke_edge_function(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.invoke_edge_function(text, text) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.invoke_sync_updated_bills() RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER
@@ -313,15 +303,18 @@ $$;
 REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
 
+-- Helper to validate one summary field
 CREATE OR REPLACE FUNCTION public.validate_bill_summary(summary_text TEXT, field_name TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
 AS $$
-DECLARE trimmed TEXT;
+DECLARE
+  trimmed TEXT;
 BEGIN
   IF summary_text IS NULL THEN
     RETURN;
   END IF;
+
   trimmed := trim(summary_text);
   IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
     RAISE EXCEPTION 'invalid %', field_name;
@@ -329,29 +322,40 @@ BEGIN
 END;
 $$;
 
+-- Single BEFORE trigger
 CREATE OR REPLACE FUNCTION public.guard_bill_summaries()
-RETURNS TRIGGER
+RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  -- sanitize placeholder first
+  -- sanitize placeholder
   IF NEW.summary_simple IS NOT NULL AND NEW.summary_simple ~* '^Placeholder for[[:space:]]' THEN
     NEW.summary_simple := NULL;
   END IF;
 
+  -- block overwrites
   IF TG_OP = 'UPDATE' THEN
-    IF OLD.summary_simple  IS NOT NULL AND NEW.summary_simple  IS DISTINCT FROM OLD.summary_simple  THEN RAISE EXCEPTION 'summary_simple overwrite blocked';  END IF;
-    IF OLD.summary_medium  IS NOT NULL AND NEW.summary_medium  IS DISTINCT FROM OLD.summary_medium  THEN RAISE EXCEPTION 'summary_medium overwrite blocked';  END IF;
-    IF OLD.summary_complex IS NOT NULL AND NEW.summary_complex IS DISTINCT FROM OLD.summary_complex THEN RAISE EXCEPTION 'summary_complex overwrite blocked'; END IF;
+    IF OLD.summary_simple IS NOT NULL AND NEW.summary_simple IS DISTINCT FROM OLD.summary_simple THEN
+      RAISE EXCEPTION 'summary_simple overwrite blocked';
+    END IF;
+    IF OLD.summary_medium IS NOT NULL AND NEW.summary_medium IS DISTINCT FROM OLD.summary_medium THEN
+      RAISE EXCEPTION 'summary_medium overwrite blocked';
+    END IF;
+    IF OLD.summary_complex IS NOT NULL AND NEW.summary_complex IS DISTINCT FROM OLD.summary_complex THEN
+      RAISE EXCEPTION 'summary_complex overwrite blocked';
+    END IF;
+  END IF;
 
-    IF OLD.summary_simple  IS NULL AND NEW.summary_simple  IS NOT NULL THEN PERFORM public.validate_bill_summary(NEW.summary_simple,  'summary_simple');  END IF;
-    IF OLD.summary_medium  IS NULL AND NEW.summary_medium  IS NOT NULL THEN PERFORM public.validate_bill_summary(NEW.summary_medium,  'summary_medium');  END IF;
-    IF OLD.summary_complex IS NULL AND NEW.summary_complex IS NOT NULL THEN PERFORM public.validate_bill_summary(NEW.summary_complex, 'summary_complex'); END IF;
-  ELSE
-    PERFORM public.validate_bill_summary(NEW.summary_simple,  'summary_simple');
-    PERFORM public.validate_bill_summary(NEW.summary_medium,  'summary_medium');
+  -- validate newly-set fields
+  IF (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.summary_simple IS NULL)) THEN
+    PERFORM public.validate_bill_summary(NEW.summary_simple, 'summary_simple');
+  END IF;
+  IF (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.summary_medium IS NULL)) THEN
+    PERFORM public.validate_bill_summary(NEW.summary_medium, 'summary_medium');
+  END IF;
+  IF (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.summary_complex IS NULL)) THEN
     PERFORM public.validate_bill_summary(NEW.summary_complex, 'summary_complex');
   END IF;
 
@@ -359,6 +363,7 @@ BEGIN
 END;
 $$;
 
+-- Trigger reset
 DROP TRIGGER IF EXISTS trg_strip_placeholder_simple ON public.bills;
 DROP TRIGGER IF EXISTS trg_guard_bill_summaries ON public.bills;
 CREATE TRIGGER trg_guard_bill_summaries
@@ -369,16 +374,14 @@ FOR EACH ROW EXECUTE FUNCTION public.guard_bill_summaries();
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
+    SELECT 1 FROM pg_constraint
     WHERE conrelid = 'public.bills'::regclass
       AND conname = 'bills_summary_simple_no_placeholder'
   ) THEN
-    EXECUTE
-      'ALTER TABLE public.bills
-         ADD CONSTRAINT bills_summary_simple_no_placeholder
-         CHECK (summary_simple IS NULL OR summary_simple !~* ''^Placeholder for[[:space:]]'')
-         NOT VALID';
+    ALTER TABLE public.bills
+      ADD CONSTRAINT bills_summary_simple_no_placeholder
+      CHECK (summary_simple IS NULL OR summary_simple !~* '^Placeholder for[[:space:]]')
+      NOT VALID;
   END IF;
 END;
 $$;
@@ -450,6 +453,10 @@ CREATE TABLE IF NOT EXISTS public.app_config (
   value TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+INSERT INTO public.app_config (key, value)
+VALUES ('functions_base_url', 'https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1')
+ON CONFLICT (key) DO NOTHING;
 
 -- ---------- INDEXES ----------
 CREATE INDEX IF NOT EXISTS idx_bills_change_hash ON public.bills(change_hash);
