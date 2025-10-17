@@ -3,17 +3,40 @@ create or replace function public.invoke_edge_function(endpoint text, job_name t
 returns void
 language plpgsql
 security definer
+set search_path = public
 as $$
 declare
   status_code int;
-  anon_key text;
+  anon_key    text;
+  base_url    text;
 begin
+  -- config: prefer Vault, then app_config; if missing, log and exit
+  base_url := coalesce(
+    vault.get_secret('functions_base_url'),
+    (select value from public.app_config where key = 'functions_base_url' limit 1)
+  );
+
+  if base_url is null then
+    insert into public.cron_job_errors(job_name, error_message)
+    values (job_name, 'Invoke Error: missing functions_base_url');
+    return;
+  end if;
+
+  if right(base_url, 1) <> '/' then
+    base_url := base_url || '/';
+  end if;
+
   anon_key := vault.get_secret('supabase_anon_key');
+  if anon_key is null then
+    insert into public.cron_job_errors(job_name, error_message)
+    values (job_name, 'Invoke Error: missing supabase_anon_key');
+    return;
+  end if;
 
   select status into status_code
   from net.http_post(
-    url := 'https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1/' || endpoint,
-    headers := '{"Content-Type": "application/json", "apikey": "' || anon_key || '"}'
+    url     := base_url || endpoint,
+    headers := jsonb_build_object('Content-Type','application/json','apikey',anon_key)
   );
 
   if status_code != 200 then

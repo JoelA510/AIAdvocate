@@ -218,23 +218,55 @@ CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXEC
 
 CREATE OR REPLACE FUNCTION public.cleanup_old_cron_job_errors() RETURNS VOID AS $$ BEGIN DELETE FROM public.cron_job_errors WHERE occurred_at < NOW() - INTERVAL '30 days'; END; $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION public.invoke_edge_function(endpoint TEXT, job_name TEXT DEFAULT 'daily-bill-sync')
-RETURNS VOID AS $$
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   status_code INT;
-  anon_key TEXT;
+  anon_key    TEXT;
+  base_url    TEXT;
 BEGIN
+  -- config: prefer Vault, then app_config; if missing, log and exit
+  base_url := COALESCE(
+    vault.get_secret('functions_base_url'),
+    (SELECT value FROM public.app_config WHERE key = 'functions_base_url' LIMIT 1)
+  );
+
+  IF base_url IS NULL THEN
+    INSERT INTO public.cron_job_errors(job_name, error_message)
+    VALUES (job_name, 'Invoke Error: missing functions_base_url');
+    RETURN;
+  END IF;
+
+  IF RIGHT(base_url, 1) <> '/' THEN
+    base_url := base_url || '/';
+  END IF;
+
   anon_key := vault.get_secret('supabase_anon_key');
+  IF anon_key IS NULL THEN
+    INSERT INTO public.cron_job_errors(job_name, error_message)
+    VALUES (job_name, 'Invoke Error: missing supabase_anon_key');
+    RETURN;
+  END IF;
+
   SELECT status INTO status_code
   FROM net.http_post(
-    url := 'https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1/' || endpoint,
-    headers := '{"Content-Type": "application/json", "apikey": "' || anon_key || '"}'
+    url     := base_url || endpoint,
+    headers := jsonb_build_object('Content-Type', 'application/json', 'apikey', anon_key)
   );
+
   IF status_code != 200 THEN
-    INSERT INTO public.cron_job_errors (job_name, error_message)
-    VALUES (job_name, 'Invoke Error: Edge Function ' || endpoint || ' returned status ' || status_code);
+    INSERT INTO public.cron_job_errors(job_name, error_message)
+    VALUES (job_name, 'Invoke Error: ' || endpoint || ' returned status ' || status_code);
   END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+    INSERT INTO public.cron_job_errors(job_name, error_message)
+    VALUES (job_name, 'Invoke Error: ' || endpoint || ' failed: ' || SQLERRM);
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 CREATE OR REPLACE FUNCTION public.invoke_sync_updated_bills() RETURNS VOID AS $$
 BEGIN
@@ -352,77 +384,75 @@ $$;
 REVOKE ALL ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.upsert_bill_and_translation(jsonb, jsonb) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.validate_bill_summary(summary_text TEXT, field_name TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE trimmed TEXT;
+BEGIN
+  IF summary_text IS NULL THEN
+    RETURN;
+  END IF;
+  trimmed := trim(summary_text);
+  IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
+    RAISE EXCEPTION 'invalid %', field_name;
+  END IF;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.guard_bill_summaries()
-RETURNS trigger
+RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE
-  trimmed TEXT;
 BEGIN
+  -- sanitize placeholder first
+  IF NEW.summary_simple IS NOT NULL AND NEW.summary_simple ~* '^Placeholder for[[:space:]]' THEN
+    NEW.summary_simple := NULL;
+  END IF;
+
   IF TG_OP = 'UPDATE' THEN
-    IF OLD.summary_simple IS NOT NULL AND NEW.summary_simple IS DISTINCT FROM OLD.summary_simple THEN
-      RAISE EXCEPTION 'summary_simple overwrite blocked';
-    END IF;
-    IF OLD.summary_medium IS NOT NULL AND NEW.summary_medium IS DISTINCT FROM OLD.summary_medium THEN
-      RAISE EXCEPTION 'summary_medium overwrite blocked';
-    END IF;
-    IF OLD.summary_complex IS NOT NULL AND NEW.summary_complex IS DISTINCT FROM OLD.summary_complex THEN
-      RAISE EXCEPTION 'summary_complex overwrite blocked';
-    END IF;
+    IF OLD.summary_simple  IS NOT NULL AND NEW.summary_simple  IS DISTINCT FROM OLD.summary_simple  THEN RAISE EXCEPTION 'summary_simple overwrite blocked';  END IF;
+    IF OLD.summary_medium  IS NOT NULL AND NEW.summary_medium  IS DISTINCT FROM OLD.summary_medium  THEN RAISE EXCEPTION 'summary_medium overwrite blocked';  END IF;
+    IF OLD.summary_complex IS NOT NULL AND NEW.summary_complex IS DISTINCT FROM OLD.summary_complex THEN RAISE EXCEPTION 'summary_complex overwrite blocked'; END IF;
 
-    IF OLD.summary_simple IS NULL AND NEW.summary_simple IS NOT NULL THEN
-      trimmed := trim(NEW.summary_simple);
-      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
-        RAISE EXCEPTION 'invalid summary_simple';
-      END IF;
-    END IF;
-
-    IF OLD.summary_medium IS NULL AND NEW.summary_medium IS NOT NULL THEN
-      trimmed := trim(NEW.summary_medium);
-      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
-        RAISE EXCEPTION 'invalid summary_medium';
-      END IF;
-    END IF;
-
-    IF OLD.summary_complex IS NULL AND NEW.summary_complex IS NOT NULL THEN
-      trimmed := trim(NEW.summary_complex);
-      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
-        RAISE EXCEPTION 'invalid summary_complex';
-      END IF;
-    END IF;
+    IF OLD.summary_simple  IS NULL AND NEW.summary_simple  IS NOT NULL THEN PERFORM public.validate_bill_summary(NEW.summary_simple,  'summary_simple');  END IF;
+    IF OLD.summary_medium  IS NULL AND NEW.summary_medium  IS NOT NULL THEN PERFORM public.validate_bill_summary(NEW.summary_medium,  'summary_medium');  END IF;
+    IF OLD.summary_complex IS NULL AND NEW.summary_complex IS NOT NULL THEN PERFORM public.validate_bill_summary(NEW.summary_complex, 'summary_complex'); END IF;
   ELSE
-    IF NEW.summary_simple IS NOT NULL THEN
-      trimmed := trim(NEW.summary_simple);
-      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
-        RAISE EXCEPTION 'invalid summary_simple';
-      END IF;
-    END IF;
-
-    IF NEW.summary_medium IS NOT NULL THEN
-      trimmed := trim(NEW.summary_medium);
-      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
-        RAISE EXCEPTION 'invalid summary_medium';
-      END IF;
-    END IF;
-
-    IF NEW.summary_complex IS NOT NULL THEN
-      trimmed := trim(NEW.summary_complex);
-      IF length(trimmed) < 40 OR trimmed ~* '^(error[:\s]|placeholder)' OR trimmed ~* 'placeholder' THEN
-        RAISE EXCEPTION 'invalid summary_complex';
-      END IF;
-    END IF;
+    PERFORM public.validate_bill_summary(NEW.summary_simple,  'summary_simple');
+    PERFORM public.validate_bill_summary(NEW.summary_medium,  'summary_medium');
+    PERFORM public.validate_bill_summary(NEW.summary_complex, 'summary_complex');
   END IF;
 
   RETURN NEW;
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_strip_placeholder_simple ON public.bills;
 DROP TRIGGER IF EXISTS trg_guard_bill_summaries ON public.bills;
 CREATE TRIGGER trg_guard_bill_summaries
 BEFORE INSERT OR UPDATE ON public.bills
 FOR EACH ROW EXECUTE FUNCTION public.guard_bill_summaries();
+
+-- defense-in-depth constraint (lazy backfill)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'public.bills'::regclass
+      AND conname = 'bills_summary_simple_no_placeholder'
+  ) THEN
+    EXECUTE
+      'ALTER TABLE public.bills
+         ADD CONSTRAINT bills_summary_simple_no_placeholder
+         CHECK (summary_simple IS NULL OR summary_simple !~* ''^Placeholder for[[:space:]]'')
+         NOT VALID';
+  END IF;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION public.lease_next_bill(p_owner text, p_ttl_seconds int DEFAULT 900)
 RETURNS BIGINT
