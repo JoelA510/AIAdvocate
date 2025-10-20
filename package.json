@@ -1,5 +1,11 @@
 {
   "private": true,
   "name": "ai-advocate",
-  "workspaces": ["mobile-app"]
+  "workspaces": [
+    "mobile-app"
+  ],
+  "dependencies": {
+    "pg": "^8.16.3",
+    "postgresql": "^0.0.1"
+  }
 }
