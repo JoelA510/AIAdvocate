@@ -9,7 +9,7 @@ import { PATHS } from "@/lib/paths";
 
 const BANNER = require("../../assets/images/header-banner.png");
 const HEADER_HEIGHT = 50;
-const EXTRA_PAD = 12;
+const EXTRA_PAD = 24;
 const COLLAPSED_ROUTES = new Set<string>(["/splash"]);
 
 type Props = { forceShow?: boolean };
