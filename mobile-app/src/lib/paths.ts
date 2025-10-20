@@ -11,7 +11,7 @@ type RepProfileParams = {
 };
 
 const REP_PROFILE_ROUTES: Record<RepProfileOrigin, string> = {
-  bills: "/(tabs)/index/legislator/[id]",
+  bills: "/legislator/[id]",
   advocacy: "/(tabs)/advocacy/legislator/[id]",
 };
 
