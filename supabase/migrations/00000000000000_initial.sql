@@ -755,9 +755,6 @@ END $$;
 
 REVOKE ALL ON public.job_state FROM PUBLIC;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.job_state TO service_role;
-REVOKE ALL ON public.v_rep_vote_history FROM PUBLIC;
-GRANT SELECT ON public.v_rep_vote_history TO authenticated;
-GRANT SELECT ON public.v_rep_vote_history TO service_role;
 
 -- ---------- RPCs ----------
 -- Toggle Bookmark + Subscription
@@ -832,6 +829,10 @@ JOIN public.bills b ON b.id = ve.bill_id
 JOIN public.legislators l ON l.id = vr.legislator_id
 CROSS JOIN access
 WHERE access.allowed;
+
+REVOKE ALL ON public.v_rep_vote_history FROM PUBLIC;
+GRANT SELECT ON public.v_rep_vote_history TO authenticated;
+GRANT SELECT ON public.v_rep_vote_history TO service_role;
 
 CREATE OR REPLACE FUNCTION public.search_bills(p_query TEXT)
 RETURNS TABLE (
