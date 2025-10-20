@@ -15,6 +15,7 @@ export type AppConfig = {
   locationIqApiKey: string;
   recaptchaSiteKey?: string;
   firebaseWebConfigJson?: string;
+  lnfUrl?: string;
 };
 
 type PublicEnvPayload = Partial<AppConfig> & {
@@ -71,6 +72,7 @@ function buildConfigFromPublicEnv(): AppConfig {
     locationIqApiKey: String(source.locationIqApiKey).trim(),
     recaptchaSiteKey: source.recaptchaSiteKey?.trim(),
     firebaseWebConfigJson: source.firebaseWebConfigJson?.trim(),
+    lnfUrl: source.lnfUrl?.trim(),
   };
 }
 
