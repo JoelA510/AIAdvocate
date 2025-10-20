@@ -5,7 +5,7 @@ describe("PATHS.repProfileIn", () => {
     const href = PATHS.repProfileIn("bills", { id: "123" });
 
     expect(href).toEqual({
-      pathname: "/(tabs)/index/legislator/[id]",
+      pathname: "/legislator/[id]",
       params: { id: "123", originTab: "bills" },
     });
   });
