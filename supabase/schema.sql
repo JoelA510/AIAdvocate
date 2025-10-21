@@ -659,24 +659,24 @@ REVOKE ALL ON TABLE public.app_admins FROM authenticated;
 -- Public readable tables
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bills' AND policyname='Public can view bills') THEN
-    CREATE POLICY "Public can view bills" ON public.bills FOR SELECT USING (true);
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bills' AND policyname='read bills public') THEN
+    CREATE POLICY "read bills public" ON public.bills FOR SELECT TO anon, authenticated USING (true);
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='legislators' AND policyname='Public can view legislators') THEN
-    CREATE POLICY "Public can view legislators" ON public.legislators FOR SELECT USING (true);
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='legislators' AND policyname='read legislators public') THEN
+    CREATE POLICY "read legislators public" ON public.legislators FOR SELECT TO anon, authenticated USING (true);
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='votes' AND policyname='Public can view votes') THEN
     CREATE POLICY "Public can view votes" ON public.votes FOR SELECT USING (true);
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_events' AND policyname='Public can view vote events') THEN
-    CREATE POLICY "Public can view vote events" ON public.vote_events FOR SELECT USING (true);
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_events' AND policyname='read vote_events public') THEN
+    CREATE POLICY "read vote_events public" ON public.vote_events FOR SELECT TO anon, authenticated USING (true);
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_records' AND policyname='Public can view vote records') THEN
-    CREATE POLICY "Public can view vote records" ON public.vote_records FOR SELECT USING (true);
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_records' AND policyname='read vote_records public') THEN
+    CREATE POLICY "read vote_records public" ON public.vote_records FOR SELECT TO anon, authenticated USING (true);
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='bill_translations' AND policyname='Public can view translations') THEN
@@ -756,8 +756,8 @@ END $$;
 REVOKE ALL ON public.job_state FROM PUBLIC;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.job_state TO service_role;
 REVOKE ALL ON public.v_rep_vote_history FROM PUBLIC;
+GRANT SELECT ON public.v_rep_vote_history TO anon;
 GRANT SELECT ON public.v_rep_vote_history TO authenticated;
-GRANT SELECT ON public.v_rep_vote_history TO service_role;
 
 -- ---------- RPCs ----------
 -- Toggle Bookmark + Subscription
@@ -803,15 +803,8 @@ $$;
 COMMENT ON FUNCTION public.get_related_bills(BIGINT)
 IS 'Returns top 5 semantically similar bills using vector embeddings.';
 
-CREATE OR REPLACE VIEW public.v_rep_vote_history AS
-WITH access AS (
-  SELECT
-    CASE
-      WHEN auth.role() = 'service_role' THEN TRUE
-      WHEN auth.uid() IS NOT NULL THEN TRUE
-      ELSE FALSE
-    END AS allowed
-)
+CREATE OR REPLACE VIEW public.v_rep_vote_history
+WITH (security_invoker = true) AS
 SELECT
   l.id AS legislator_id,
   l.name AS legislator_name,
@@ -828,10 +821,8 @@ SELECT
   vr.choice AS vote_choice
 FROM public.vote_records vr
 JOIN public.vote_events ve ON ve.id = vr.vote_event_id
-JOIN public.bills b ON b.id = ve.bill_id
-JOIN public.legislators l ON l.id = vr.legislator_id
-CROSS JOIN access
-WHERE access.allowed;
+JOIN public.bills b        ON b.id = ve.bill_id
+JOIN public.legislators l  ON l.id = vr.legislator_id;
 
 CREATE OR REPLACE FUNCTION public.search_bills(p_query TEXT)
 RETURNS TABLE (
