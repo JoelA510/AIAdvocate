@@ -9,6 +9,8 @@ CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS http;
 CREATE EXTENSION IF NOT EXISTS supabase_vault;
 
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
 -- ---------- TYPES ----------
 DO $$
 BEGIN
@@ -725,21 +727,31 @@ BEGIN
     DROP POLICY "Service role can manage translations" ON public.bill_translations;
   END IF;
   CREATE POLICY "Service role can manage translations" ON public.bill_translations
-    FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
 
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to insert events') THEN
     CREATE POLICY "Allow service role to insert events" ON public.events
-      FOR INSERT WITH CHECK (auth.role() = 'service_role');
+      FOR INSERT TO service_role WITH CHECK (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to update events') THEN
+    CREATE POLICY "Allow service role to update events" ON public.events
+      FOR UPDATE TO service_role USING (true) WITH CHECK (true);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to delete events') THEN
+    CREATE POLICY "Allow service role to delete events" ON public.events
+      FOR DELETE TO service_role USING (true);
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_events' AND policyname='Service role manages vote events') THEN
     CREATE POLICY "Service role manages vote events" ON public.vote_events
-      FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+      FOR ALL TO service_role USING (true) WITH CHECK (true);
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_records' AND policyname='Service role manages vote records') THEN
     CREATE POLICY "Service role manages vote records" ON public.vote_records
-      FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+      FOR ALL TO service_role USING (true) WITH CHECK (true);
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='job_state' AND policyname='job_state_service_role') THEN
@@ -749,15 +761,15 @@ BEGIN
   CREATE POLICY job_state_service_role
     ON public.job_state
     FOR ALL
-    USING (auth.role() = 'service_role')
-    WITH CHECK (auth.role() = 'service_role');
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
 END $$;
 
 REVOKE ALL ON public.job_state FROM PUBLIC;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.job_state TO service_role;
 REVOKE ALL ON public.v_rep_vote_history FROM PUBLIC;
-GRANT SELECT ON public.v_rep_vote_history TO anon;
-GRANT SELECT ON public.v_rep_vote_history TO authenticated;
+GRANT SELECT ON public.v_rep_vote_history TO anon, authenticated;
 
 -- ---------- RPCs ----------
 -- Toggle Bookmark + Subscription
