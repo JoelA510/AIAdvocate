@@ -727,11 +727,6 @@ BEGIN
   CREATE POLICY "Service role can manage translations" ON public.bill_translations
     FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
 
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to insert events') THEN
-    CREATE POLICY "Allow service role to insert events" ON public.events
-      FOR INSERT WITH CHECK (auth.role() = 'service_role');
-  END IF;
-
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_events' AND policyname='Service role manages vote events') THEN
     CREATE POLICY "Service role manages vote events" ON public.vote_events
       FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
