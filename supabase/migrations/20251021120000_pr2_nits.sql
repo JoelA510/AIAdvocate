@@ -14,28 +14,18 @@ TO service_role
 USING (true)
 WITH CHECK (true);
 
--- events
+-- Normalize service_role access to events with a single FOR ALL policy
 DROP POLICY IF EXISTS "Allow service role to insert events" ON public.events;
-CREATE POLICY "Allow service role to insert events"
-ON public.events
-FOR INSERT
-TO service_role
-WITH CHECK (true);
-
 DROP POLICY IF EXISTS "Allow service role to update events" ON public.events;
-CREATE POLICY "Allow service role to update events"
+DROP POLICY IF EXISTS "Allow service role to delete events" ON public.events;
+DROP POLICY IF EXISTS "Service role can manage events" ON public.events;
+
+CREATE POLICY "Service role can manage events"
 ON public.events
-FOR UPDATE
+FOR ALL
 TO service_role
 USING (true)
 WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow service role to delete events" ON public.events;
-CREATE POLICY "Allow service role to delete events"
-ON public.events
-FOR DELETE
-TO service_role
-USING (true);
 
 -- vote_events
 DROP POLICY IF EXISTS "Service role manages vote events" ON public.vote_events;
