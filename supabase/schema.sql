@@ -729,21 +729,6 @@ BEGIN
   CREATE POLICY "Service role can manage translations" ON public.bill_translations
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to insert events') THEN
-    CREATE POLICY "Allow service role to insert events" ON public.events
-      FOR INSERT TO service_role WITH CHECK (true);
-  END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to update events') THEN
-    CREATE POLICY "Allow service role to update events" ON public.events
-      FOR UPDATE TO service_role USING (true) WITH CHECK (true);
-  END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='events' AND policyname='Allow service role to delete events') THEN
-    CREATE POLICY "Allow service role to delete events" ON public.events
-      FOR DELETE TO service_role USING (true);
-  END IF;
-
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vote_events' AND policyname='Service role manages vote events') THEN
     CREATE POLICY "Service role manages vote events" ON public.vote_events
       FOR ALL TO service_role USING (true) WITH CHECK (true);
