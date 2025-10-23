@@ -568,6 +568,24 @@ BEGIN
   END IF;
 END $$;
 
+-- Normalize service_role access to events with a single FOR ALL policy (schema snapshot)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname='public'
+      AND tablename='events'
+      AND policyname='Service role can manage events'
+  ) THEN
+    CREATE POLICY "Service role can manage events"
+    ON public.events
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+  END IF;
+END $$;
+
 -- Service role write policies (WITH CHECK for RLS writes)
 DO $$
 BEGIN
