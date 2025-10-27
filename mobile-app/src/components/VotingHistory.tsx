@@ -1,8 +1,8 @@
 // mobile-app/src/components/VotingHistory.tsx
 // Displays a legislator's voting history with simple filtering controls.
 
-import React, { useEffect, useMemo, useState } from "react";
-import { View, StyleSheet, ScrollView } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { View, StyleSheet } from "react-native";
 import { ActivityIndicator, Button, Card, Chip, Menu, Text, useTheme } from "react-native-paper";
 import { useTranslation } from "react-i18next";
 
@@ -106,6 +106,17 @@ export default function VotingHistory({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const rowsChangeRef = useRef<((rows: VoteHistoryRow[]) => void) | null>(null);
+  const billContextChangeRef = useRef<((context: BillContext | null) => void) | null>(null);
+
+  useEffect(() => {
+    rowsChangeRef.current = onRowsChange ?? null;
+  }, [onRowsChange]);
+
+  useEffect(() => {
+    billContextChangeRef.current = onBillContextChange ?? null;
+  }, [onBillContextChange]);
+
   useEffect(() => {
     if (initialMode !== filterMode) {
       setFilterMode(initialMode);
@@ -198,8 +209,10 @@ export default function VotingHistory({
   }, [filterMode, selectedBillId, billOptions]);
 
   useEffect(() => {
-    onRowsChange?.(filteredRows);
+    rowsChangeRef.current?.(filteredRows);
+  }, [filteredRows]);
 
+  useEffect(() => {
     if (filterMode === "specific" && selectedBillId) {
       const option =
         billOptions.find((item) => item.bill_id === selectedBillId) ??
@@ -211,18 +224,18 @@ export default function VotingHistory({
             }
           : null);
       if (option) {
-        onBillContextChange?.({
+        billContextChangeRef.current?.({
           billId: option.bill_id,
           billNumber: option.bill_number ?? null,
           billTitle: option.bill_title ?? null,
         });
       } else {
-        onBillContextChange?.(null);
+        billContextChangeRef.current?.(null);
       }
     } else {
-      onBillContextChange?.(null);
+      billContextChangeRef.current?.(null);
     }
-  }, [filteredRows, filterMode, selectedBillId, billOptions, onRowsChange, onBillContextChange]);
+  }, [filteredRows, filterMode, selectedBillId, billOptions]);
 
   const renderRow = (row: VoteHistoryRow) => {
     const dateDisplay = row.vote_date
@@ -366,7 +379,7 @@ export default function VotingHistory({
           </Card.Content>
         </Card>
       ) : (
-        <ScrollView style={{ maxHeight: 360 }}>{filteredRows.map(renderRow)}</ScrollView>
+        <View style={styles.list}>{filteredRows.map(renderRow)}</View>
       )}
     </View>
   );
@@ -390,6 +403,9 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     alignItems: "center",
     justifyContent: "center",
+  },
+  list: {
+    gap: 12,
   },
   card: {
     marginBottom: 12,
