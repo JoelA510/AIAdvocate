@@ -1,231 +1,266 @@
 # AI Advocate
 
-AI Advocate is Love Never Fails' mobile and web companion for survivors, allies, and advocates who want a clear picture of the policy landscape. The app curates survivor-focused legislation, rewrites complex bill text in plain language, and pairs it with one-tap outreach tools so users can take action with confidence.
+AI Advocate is Love Never Fails’ companion application for survivors, allies, and advocates who need a precise view of the policy landscape. The Expo client (web + iOS + Android) surfaces curated California legislation, rewrites dense bill text in plain language, pairs every item with outreach tooling, and now highlights real vote history for each representative the moment it becomes available.
 
-> **Status**: Production-ready. Android/iOS store builds and the responsive web client share a single Expo codebase. Supabase edge functions keep legislation, summaries, legislators, and translations in sync automatically.
+> **Status**: Production (v1.0). Store builds and the responsive web client share one codebase. Supabase manages authentication, data pipelines, translations, vote ingestion, and scheduling.
 
 ---
 
-## Feature Tour
+## Table of Contents
 
-| Feature | What users see | How it works |
+1. [Highlights](#highlights)
+2. [Architecture](#architecture)
+3. [Edge Functions & Automations](#edge-functions--automations)
+4. [Data Model Overview](#data-model-overview)
+5. [Local Development](#local-development)
+6. [Testing & Quality Gates](#testing--quality-gates)
+7. [Operations & Runbooks](#operations--runbooks)
+8. [Release Process](#release-process)
+9. [Repository Layout](#repository-layout)
+10. [Security & Privacy](#security--privacy)
+11. [Support](#support)
+
+---
+
+## Highlights
+
+| Experience | What users see | Under the hood |
 | --- | --- | --- |
-| **Active Bills feed** | A prioritized list of open California bills with search, bill-number regex matching, session filter toggle, and curated pins | Supabase `bills` view + Postgres websearch; sorts by curation → rank → recency; session labels are parsed from `state_link` and cached client-side |
-| **AI bilingual summaries** | Simple / Medium / Complex write-ups in English and Spanish on every bill card and detail page | `sync-updated-bills` edge function cleans LegiScan text, prompts OpenAI gpt-4o-mini for both languages in one call, stores results + embeddings, and upserts them atomically |
-| **Bookmarks & reactions** | “Saved” tab with sentiment buttons that stay in sync across devices | `bookmarks` and `reactions` tables with RPC helpers; client subscribes to realtime channels for instant UI updates |
-| **Advocacy hub** | “Find Your Representatives” workflow with optional bill context and ready-to-send email content | Edge function caches ZIP/city lookups in `location_lookup_cache`; OpenStates API is reconciled against the Supabase `legislators` table for app-specific metadata |
-| **Voting history & outreach** | Legislator vote timelines with filters plus copy-ready outreach template | `v_rep_vote_history` view + `votes-backfill`/`votes-daily` edge functions normalize OpenStates vote events into `vote_events`/`vote_records` for the UI |
-| **Love Never Fails home tab** | Embedded brand storytelling, giving/volunteer CTAs, and external site deep links | WebView on native, card-based CTA on web to respect CSP restrictions |
-| **Global theming & fonts** | Brand-consistent palette and typography (SF Pro on iOS, Roboto on Android, Helvetica on web) | Centralized MD3 Paper theme (`constants/paper-theme.ts`) driven by the Love Never Fails color palette; typography resolves per platform |
-| **Language & accessibility** | On-demand locale switching, text-to-speech prompts, and responsive layout | i18next + React Native Paper tokens; translations cached in `bill_translations`; TTS uses Expo Speech on supported platforms |
-| **Smart notifications** | (Planned) digest and follow-up alerts for saved bills | Bookmarks table and Supabase cron jobs already emit structured events; Expo push tokens stored in `user_push_tokens` |
+| **Active Bills feed** | Prioritised list of California survivor-focused legislation with search, session toggle, and curated pins | Supabase `bills` view + Postgres websearch. Ranks by curation → score → recency. Session tags parsed from `state_link` and cached client-side. |
+| **AI-powered summaries** | Simple / Medium / Complex write-ups in English & Spanish on every card and detail page | `sync-updated-bills` cleans LegiScan text, prompts OpenAI `gpt-4o-mini` once for both languages, stores summaries + `text-embedding-3-small` vectors. |
+| **Representative lookup with context** | Address-based finder that lists state legislators only and shows their freshest vote on the active bill | `find-your-rep` edge function caches OpenStates lookups. The app cross-references `legislators` + `v_rep_vote_history`, falling back to chamber-aware “not eligible yet” messaging when an assembly vote is still pending. |
+| **Legislator vote history** | Timeline of votes with filters on profile screens plus outreach templates | `v_rep_vote_history` invoker-secured view joins `vote_records`, `vote_events`, `bills`, and `legislators`. `votes-backfill` hydrates historic rolls; `votes-daily` watches for updates. |
+| **Bookmarks & reactions** | “Saved” tab, emoji reactions, and toast feedback that stay in sync across devices | RPC helpers (`toggle_bookmark_and_subscription`, `handle_reaction`) wrap row-level security, with realtime channels broadcasting optimistic updates. |
+| **Love Never Fails hub** | Brand-first landing tab with storytelling, give/volunteer CTAs, and external deep links | Native platforms use a WebView; the web client renders card CTAs to respect CSP rules. |
+| **Accessibility & localisation** | Locale switcher, reader-friendly typography, and TTS prompts | i18next + React Native Paper tokens drive the theme. Translations live in `bill_translations`; Expo Speech powers narration on supported devices. |
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
-Expo Router (iOS/Android/Web)
-    │  React Query • React Native Paper • i18next
-    ▼
-Supabase REST / RPC (PostgREST + Row Level Security)
-    │
-    ├─ Edge Functions (Deno):
-    │     • bulk-import-dataset  • sync-updated-bills
-    │     • votes-backfill • votes-daily
-    │     • translate-bill(s)
-    │     • find-your-rep • invoke_full_legislative_refresh helpers
-    │
-    └─ PostgreSQL + Extensions:
-          • pgvector • pg_cron • realtime • vault
+Expo Router (iOS / Android / Web)
+    ├─ React Query & TanStack • React Native Paper • i18next
+    └─ Custom hooks for auth, localisation, analytics
+▼
+Supabase (PostgREST • Edge Functions • Realtime • pgvector)
+    ├─ REST + RPC surface secured by row-level security
+    ├─ Edge Functions (Deno, TypeScript)
+    └─ PostgreSQL with pg_cron, vault, and verification scripts
 ```
 
-* **Client** – Expo Router controls navigation, bottom tabs, and screen layouts. React Query handles caching; Paper MD3 theming consumes Love Never Fails brand colors. Language and accessibility hooks mirror the current locale across tabs.
-* **API surface** – Public access is limited to read-only tables via RLS. Mutations flow through RPC helpers (`toggle_bookmark_and_subscription`, `handle_reaction`, etc.). Auth uses anonymous Supabase sessions; no personally identifiable info is stored.
-* **Automation** – Nightly cron kicks `invoke_full_legislative_refresh`, which pulls new LegiScan datasets, refreshes summaries, updates legislators/votes, and regenerates embeddings. Location lookups are cached with TTL + cleanup job to stay inside API quotas.
+* **Client** – Expo Router manages navigation, deep links, and tab layouts. React Query caches Supabase responses. Paper’s Material 3 theming is centralised in `mobile-app/constants/paper-theme.ts` so the brand palette stays consistent.
+* **API** – Public clients read via the PostgREST API with `anon` or `authenticated` roles. All writes go through RPC helpers or edge functions, keeping RLS intact.
+* **Automation** – Cron triggers in Supabase orchestrate bill ingestion, summary generation, vote syncing, and email scheduling. Verification SQL scripts (e.g., `supabase/verification/20251021_vote_history.sql`) guard against regressions before deploys.
 
 ---
 
-## Data Pipelines in Detail
+## Edge Functions & Automations
 
-1. **Bill ingestion** (`bulk-import-dataset`)  
-   *Downloads the active CA dataset ZIP, filters for survivor-centric keywords, preserves existing summaries, and stages new rows with placeholder flags.*
+| Function / Task | Purpose | Trigger | Notes |
+| --- | --- | --- | --- |
+| `bulk-import-dataset` | Pulls the latest CA legislative dataset, filters to survivor-centric bills, and stages rows for review. | Manual / cron | Use before `sync-updated-bills` when new sessions drop. |
+| `sync-updated-bills` | Sanitises bill text, generates bilingual summaries, stores embeddings, and flags completion. | Nightly cron + manual | Idempotent; respects `job_state` checkpoints. |
+| `votes-backfill` | Hydrates historical vote events and member records from OpenStates. | Manual | Accepts `force=true` query param to reprocess populated bills. |
+| `votes-daily` | Incremental poller that syncs new vote events since the last run. | Scheduled via `supabase functions schedule create votes-daily ...` | Updates `job_state` (`votes-daily:last-run`). |
+| `find-your-rep` | Cached address → legislators lookup with OpenStates + LocationIQ. | Client invoked | Added provider ID matching so state reps surface even when names vary. |
+| `translate-bill` / `translate-bills` | On-demand translation helpers that reuse cached content when available. | Client invoked | Works alongside the nightly summary job. |
+| `summarize-simple` / `summarize-simple-backfill` | Legacy summarisation utilities retained for specialised queues. | Manual | Useful for targeted re-summarisation. |
+| `send-push-notifications` | Service-role only function for Expo push fan-out. | Cron / manual | Requires vault-managed Expo credentials. |
+| `verify-app-check` | App Check handshake for the client. | Client invoked | JWT disabled per mobile requirements. |
+| `ingest-and-summarize` | Local mock harness demonstrating ingestion without external APIs. | Manual | Safe sandbox for new contributors. |
 
-2. **Summaries & embeddings** (`sync-updated-bills`)  
-   *Processes pending bills in batches, sanitizes text, prompts OpenAI gpt-4o-mini for English + Spanish tiered summaries, stores both languages, and generates text-embedding-3-small vectors for similarity search.*
-
-3. **Translations on demand** (`translate-bill` / `translate-bills`)  
-   *Edge functions expose RPCs the app calls when a new locale is requested; cached results come from `bill_translations` before hitting OpenAI again.*
-
-4. **Legislator roster & vote history** (`votes-backfill`, `votes-daily`)  
-   *Backfills OpenStates vote events for every tracked bill, upserts normalized data into `legislators`, `vote_events`, and `vote_records`, and uses the `job_state` checkpoint table so the nightly incremental sync (02:15 America/Los_Angeles) resumes safely. The pipeline now relies solely on OpenStates APIs; the legacy LegiScan sync has been removed.* Deploy with `supabase functions deploy votes-backfill` / `votes-daily`, then schedule the cron job via `supabase functions schedule create votes-daily "15 2 * * *" --timezone "America/Los_Angeles"`.
-
-5. **Location caching** (`find-your-rep`)  
-   *Accepts ZIP/city input, uses LocationIQ + OpenStates, upserts results into `location_lookup_cache`, and increments hit counts. Short queries return cached coordinates instantly.*
-
-6. **Cron health** (`cleanup-location-cache`, `cleanup-old-cron-job-errors`)  
-   *Keeps cache tables lean and logs only actionable failures. Each job writes to `cron_job_errors` for observability.*
-
-### Vote history operations
-
-1. **Secrets**  
-   Configure Supabase Edge Function secrets before deploying:  
-   `supabase functions secrets set SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… OPENSTATES_API_KEY=…`. Mirror these three values in Vercel (or any external scheduler) when invoking `votes-backfill`/`votes-daily`. Never expose the service-role key to client code.
-2. **Deployment & scheduling**  
-   ```bash
-   supabase functions deploy votes-backfill
-   supabase functions deploy votes-daily
-   supabase functions invoke votes-backfill --no-verify-jwt --body '{"force":true}'
-   supabase functions schedule create votes-daily "15 2 * * *" --timezone "America/Los_Angeles"
-   ```
-3. **Acceptance checks**  
-   ```sql
-   -- Bills missing OpenStates IDs
-   select count(*) as bills_missing_os_id from bills where openstates_bill_id is null;
-
-   -- Vote events and records exist
-   select count(*) as vote_events_ct from vote_events;
-   select count(*) as vote_records_ct from vote_records;
-   select date_trunc('day', date) d, count(*)
-   from vote_events group by 1 order by 1 desc limit 7;
-   select count(*) as view_rows from v_rep_vote_history;
-
-   -- Integrity checks
-   select count(*) as orphans from vote_records r
-     left join vote_events e on e.id = r.vote_event_id
-     where e.id is null;
-   with d as (
-     select vote_event_id, person_openstates_id, count(*) c
-     from vote_records group by 1,2 having count(*)>1
-   ) select count(*) from d;
-
-   -- Simple summaries restored
-   select count(*) as simple_en_null from bills where simple_summary_en is null;
-   select count(*) as simple_es_null from bills where simple_summary_es is null;
-   ```
-4. **Observability**  
-   Both vote functions emit JSON logs that include `processedBills`, `voteEventsUpserted`, `voteRecordsUpserted`, and `errors`. Configure Supabase alerts for (a) any function execution error and (b) log entries where `processedBills=0` so failures surface quickly.
-5. **Rollback**  
-   If a backfill must be reverted, delete rows created after the start timestamp:
-   ```sql
-   delete from vote_records where updated_at >= :backfill_start;
-   delete from vote_events  where updated_at >= :backfill_start;
-   ```
-   Fix the upstream issue and rerun the backfill command above.
+> **Cron topology**: Supabase’s pg_cron schedules call `votes-daily` and `sync-updated-bills`. The production environment also runs a nightly `invoke_full_legislative_refresh` workflow (see `supabase/scripts/`) to chain dataset pull → summaries → vote sync.
 
 ---
 
-## Tech Stack Notes
+## Data Model Overview
 
-- **Navigation & layout**: File-system routing under `mobile-app/app/` with nested tab + stack navigators. `_layout.tsx` wraps providers, splash handling, and status bar configuration.
-- **Brand theming**: `constants/Colors.ts` defines the palette; `constants/paper-theme.ts` produces Light/Dark variants with MD3 elevation tokens. `ThemedText` and `ThemedView` ensure typography and surfaces stay in sync with the active theme.
-- **State & data**: React Query + Supabase client for network state; minimal Redux usage. `safeFetch` wrapper gives deterministic retries for critical fetches.
-- **Internationalization**: English and Spanish translations live in `src/locales/`. i18next scanner config extracts new keys. Spanish summaries prefer pre-generated translations, then fall back to English.
-- **Testing & QA**: Jest unit tests for bill utilities, linting via ESLint/Prettier, and TypeScript `--noEmit` for strong typing. Expo E2E smoke tests run manually pre-release.
-- **Build & deploy**: EAS profiles (`eas.json`) define production, preview, and simulator builds. OTA updates available via `eas update`; native store submissions use the `production` profile (`npm run eas-build-ios/android`).
+Key tables & views:
+
+- `bills`, `bill_translations`, `bill_embeddings` – curated legislation, multilingual summaries, and semantic search vectors.
+- `legislators` – unified roster keyed by OpenStates provider IDs with lookup keys for fuzzy matching.
+- `vote_events`, `vote_records` – normalised roll call data. Policies ensure service-role write access while `anon`/`authenticated` stay read-only.
+- `v_rep_vote_history` – invoker-secured view feeding representative profile screens and the lookup tool.
+- `job_state` – generic checkpoint table used by every long-running function.
+- `location_lookup_cache` – throttling layer for address → representative resolution.
+- `bookmarks`, `reactions`, `user_push_tokens` – user-generated signals powering engagement features.
+
+Recent migrations (2024-09 through 2025-10) align RLS policies with Supabase guidance, ensure `v_rep_vote_history` grants, and harden audit coverage. Run `supabase/verification/20251021_vote_history.sql` after each deploy to confirm security posture and data availability.
 
 ---
 
 ## Local Development
 
-1. **Prerequisites**
-   - Node.js 20+, Yarn 1.22+, Watchman (macOS), Supabase CLI (latest), Git, and optionally ngrok for webhooks.
-   - Install the Expo CLI globally (`npm install -g expo-cli`) or rely on `npx` commands.
+### 1. Prerequisites
 
-2. **Clone & install**
-   ```bash
-   git clone https://github.com/JoelA510/AIAdvocate.git
-   cd AIAdvocate
-   cd mobile-app
-   yarn install
-   ```
+- Node.js 20+, Yarn 1.22+, Git, Supabase CLI ≥ 2.48 (upgrade regularly), and Watchman (macOS).
+- Expo tooling (`npm install -g eas-cli` optionally) and either Android Studio, Xcode, or a web browser for the Expo target.
+- Access to required secrets: OpenStates, LocationIQ, LegiScan, OpenAI, Supabase keys.
 
-3. **Environment variables**
-   - `mobile-app/.env`: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_OPENSTATES_API_KEY`, `EXPO_PUBLIC_LOCATIONIQ_API_KEY`, optional `EXPO_PUBLIC_LNF_URL`.
-  - `supabase/.env`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LEGISCAN_API_KEY`, `OPENSTATES_API_KEY`, `OpenAI_GPT_Key`, and any auxiliary secrets.
+### 2. Clone & install
 
-4. **Database & functions**
-   ```bash
-   cd ../supabase
-  supabase start           # launches local Postgres + studio
-  supabase db push         # applies migrations & policies
-  supabase functions serve sync-updated-bills
-  supabase functions serve votes-backfill
-  supabase functions serve votes-daily
-  supabase functions serve find-your-rep
-   ```
+```bash
+git clone https://github.com/JoelA510/AIAdvocate.git
+cd AIAdvocate
 
-5. **Run the client**
-   ```bash
-   cd ../mobile-app
-   yarn expo start
-   ```
-   Choose web, iOS simulator, or Android emulator from the Expo dev tools.
+# Mobile app dependencies
+cd mobile-app
+yarn install
+```
 
-6. **Execute pipelines locally (optional)**
-   ```bash
-   # Pull & summarize new bills
-   supabase functions serve bulk-import-dataset
-   supabase functions serve sync-updated-bills
+### 3. Configure environment variables
 
-   # Refresh legislator roster and vote history
-   supabase functions serve votes-backfill
-   supabase functions serve votes-daily
-   ```
+- `mobile-app/.env`
+  - `EXPO_PUBLIC_SUPABASE_URL`
+  - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+  - `EXPO_PUBLIC_OPENSTATES_API_KEY`
+  - `EXPO_PUBLIC_LOCATIONIQ_API_KEY`
+  - Optional extras: `EXPO_PUBLIC_LNF_URL`, `EXPO_PUBLIC_RECAPTCHA_SITE_KEY`, Firebase config.
+- `supabase/.env`
+  - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+  - `LEGISCAN_API_KEY`, `OPENSTATES_API_KEY`, `OpenAI_GPT_Key`
+  - `DB_URL` (percent-encode the password when using `--db-url`)
+  - Any downstream service secrets (Expo push, Gemini, etc.).
+
+Never commit `.env` files; rely on Supabase Vault or CI secrets.
+
+### 4. Start Supabase locally
+
+```bash
+cd ../supabase
+supabase start              # launches local Postgres + Studio
+supabase db push            # applies migrations, policies, seed data
+
+# Optional: run edge functions locally
+supabase functions serve sync-updated-bills
+supabase functions serve votes-backfill
+supabase functions serve votes-daily
+supabase functions serve find-your-rep
+```
+
+### 5. Run the Expo client
+
+```bash
+cd ../mobile-app
+yarn expo start
+```
+
+Choose web, iOS simulator, or Android emulator from the Expo dev tools. The app auto-loads translations and Supabase config on boot; run `expo-doctor` if dependencies drift.
+
+### 6. Optional pipelines locally
+
+```bash
+# Pull & summarise new bills
+supabase functions serve bulk-import-dataset
+supabase functions serve sync-updated-bills
+
+# Refresh legislators & vote records
+supabase functions serve votes-backfill
+supabase functions serve votes-daily
+```
 
 ---
 
-## Release Checklist
+## Testing & Quality Gates
 
-1. Bump version metadata in `app.json` (`version`, `buildNumber`, `android.versionCode`).
-2. Audit `CHANGELOG` and update the Love Never Fails release log.
-3. Run the full QA suite:
-   ```bash
-   yarn lint
-   yarn test
-   yarn tsc --noEmit
-   ```
-4. Ensure Supabase migrations are up to date (`supabase db push`).
-5. Trigger EAS builds:
-   ```bash
-   eas build --platform android --profile production
-   eas build --platform ios --profile production
-   ```
-6. Upload artifacts to the Play Console/App Store Connect and submit for review.
+| Command | Purpose |
+| --- | --- |
+| `yarn lint` | ESLint + custom rules for the Expo client. |
+| `yarn test` | Jest unit tests for shared utilities/components. |
+| `yarn tsc --noEmit` | TypeScript project-wide type check. |
+| `npx supabase gen types typescript --local` | (Optional) Regenerate database types for client consumption. |
+| `supabase db verify` | Run verification scripts (requires CLI ≥ 2.50). |
+
+Add tests for new pipelines wherever possible. For data migrations, pair them with verification SQL under `supabase/verification/`.
 
 ---
 
-## Repository Guide
+## Operations & Runbooks
+
+### Backfill vote history
+
+```bash
+supabase functions deploy votes-backfill
+supabase functions deploy votes-daily
+
+# Trigger a controlled run (service-role token required)
+python scripts/backfill-votes.mjs           # or call the HTTPS endpoint
+```
+
+Passing `force=true` in the query string reprocesses bills even if votes already exist.
+
+### Daily vote sync health check
+
+1. Inspect `job_state` → `votes-daily:last-run` timestamp.
+2. Review logs in the Supabase dashboard for `votes-daily`.
+3. Run the verification SQL to ensure `v_rep_vote_history` returns rows.
+
+### Manual summary refresh
+
+```bash
+supabase functions invoke sync-updated-bills --no-verify-jwt --body '{"force":true}'
+```
+
+Ensure OpenAI quotas are available before running large batches.
+
+### Representative lookup cache purge
+
+Clear stale entries with a simple SQL job:
+
+```sql
+DELETE FROM location_lookup_cache WHERE updated_at < now() - interval '30 days';
+```
+
+Schedule through pg_cron if needed.
+
+---
+
+## Release Process
+
+1. **Versioning** – bump `app.json` (`version`, `buildNumber`, `android.versionCode`) and update any in-app version banners.
+2. **Changelog** – summarise user-facing changes and note database migrations applied.
+3. **Quality gates** – run the commands listed in [Testing & Quality Gates](#testing--quality-gates).
+4. **Supabase schema** – `supabase db push --include-all` to ensure the remote project matches migrations. Run verification scripts.
+5. **Edge functions** – `supabase functions deploy <name>` for any touched functions, then smoke test via HTTPS.
+6. **EAS builds** – `eas build --platform android --profile production` and `eas build --platform ios --profile production`. Attach release notes.
+7. **Launch checklist** – confirm `votes-daily` schedule is active, check monitoring dashboards, and communicate release highlights to Love Never Fails stakeholders.
+
+---
+
+## Repository Layout
 
 ```
 AIAdvocate/
 ├── mobile-app/               # Expo project
 │   ├── app/                  # Router-based screens and layouts
-│   ├── components/           # Shared UI primitives (ThemedText, Bill, HeaderBanner, etc.)
-│   ├── constants/            # Brand colors and MD3 theme definitions
-│   ├── hooks/                # Platform-aware utilities (color scheme, dimensions)
-│   ├── src/lib/              # Supabase client, translations, analytics, find-your-rep helpers
-│   ├── src/providers/        # Auth, i18n, and language context providers
-│   ├── types/                # Type augmentation (MD3 color tokens)
-│   └── assets/               # Images and fonts (platform-native fonts referenced by name)
+│   ├── components/           # Shared UI primitives (Bill, VotingHistory, etc.)
+│   ├── constants/            # Brand palette and Paper theme definitions
+│   ├── hooks/                # Platform-aware utilities (color scheme, viewport)
+│   ├── src/lib/              # Supabase client, lookup helpers, analytics
+│   ├── src/providers/        # Auth, i18n, language contexts
+│   ├── types/                # Type augmentation (MD3, navigation)
+│   └── assets/               # Images, fonts, icons
 └── supabase/
-    ├── migrations/           # SQL schema, policies, Edge function helpers
-    ├── functions/            # Deno edge functions (bill ingestion, summaries, location cache)
-    ├── config.*              # Supabase project configuration
-    └── scripts/              # Developer helper scripts (legislator sync, cron tooling)
+    ├── migrations/           # SQL schema, policy, and view migrations
+    ├── verification/         # Post-deploy validation queries
+    ├── functions/            # Deno edge functions (bill ingestion, votes, lookup)
+    ├── scripts/              # Developer tooling (cron orchestration, diagnostics)
+    └── config.*              # Supabase project configuration
 ```
 
 ---
 
-## Security & Privacy Considerations
+## Security & Privacy
 
-- No survivor-identifying data is stored. Anonymous auth tokens are tied to Supabase session IDs only.
-- API keys are fetched from Edge Vault or environment variables; never hardcode secrets in the client.
-- Edge functions redact external API responses before logging; only aggregate diagnostics reach `cron_job_errors`.
-- RLS denies write access to public tables for `anon`/`authenticated`; mutations go through vetted RPCs.
+- No survivor-identifying information is collected. Anonymous auth tokens map only to Supabase session IDs.
+- Secrets live in environment variables or Supabase Vault; never hardcode keys in the client.
+- Edge functions redact third-party API payloads before logging. Only aggregate diagnostics flow into `cron_job_errors`.
+- Row-level security denies writes from `anon`/`authenticated` roles; mutations must go through RPCs/edge functions with explicit policies.
 
 ---
 
 ## Support
 
-Questions, bug reports, or feature ideas? Reach out to Love Never Fails or open an issue in this repository. Together we can keep survivors informed, empowered, and safe.
+Questions, bug reports, or feature requests? Reach out to Love Never Fails or open a GitHub issue. Every improvement helps survivors stay informed, empowered, and safe.
+
