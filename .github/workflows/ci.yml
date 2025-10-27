@@ -15,30 +15,43 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Set up Node.js environment (v20)
-      - name: Setup Node.js
+      # Step 2: Set up Node.js with Yarn caching for the Expo app
+      - name: Setup Node.js (Yarn cache)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # Use yarn's cache for faster dependency installation
           cache: 'yarn'
-          cache-dependency-path: 'mobile-app/yarn.lock'
+          cache-dependency-path: mobile-app/yarn.lock
 
-      # Step 3: Install dependencies
-      # We specify the working-directory to ensure yarn runs inside the mobile-app folder.
-      - name: Install dependencies
+      # Step 3: Install dependencies for the Expo app
+      - name: Install mobile app dependencies
         run: yarn install --frozen-lockfile
         working-directory: ./mobile-app
 
-      # Step 4: Run the Jest tests
-      # The --ci flag optimizes Jest for CI environments.
-      # The --runInBand flag runs tests serially, which can prevent memory issues in CI.
-      - name: Run tests
+      # Step 4: Run the Jest tests for the Expo app
+      - name: Run mobile app tests
         run: yarn test --ci --runInBand
         working-directory: ./mobile-app
-        
-      # Step 5: Run the linter
-      # This checks for code style and formatting issues.
-      - name: Run linter
+
+      # Step 5: Run the linter for the Expo app
+      - name: Lint mobile app
         run: yarn lint
         working-directory: ./mobile-app
+
+      # Step 6: Set up Node.js with npm caching for the PlanterPlan Alpha client
+      - name: Setup Node.js (npm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: PlanterPlan-Alpha/package-lock.json
+
+      # Step 7: Install dependencies for the PlanterPlan Alpha web client
+      - name: Install PlanterPlan Alpha dependencies
+        run: npm ci
+        working-directory: ./PlanterPlan-Alpha
+
+      # Step 8: Run ESLint for PlanterPlan Alpha
+      - name: Lint PlanterPlan Alpha
+        run: npm run lint
+        working-directory: ./PlanterPlan-Alpha
