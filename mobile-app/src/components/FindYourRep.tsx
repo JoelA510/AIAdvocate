@@ -33,6 +33,11 @@ type Person = {
   party?: string | null;
   offices?: { email?: string | null }[] | null;
   openstates_url?: string | null;
+  jurisdiction?: {
+    id?: string | null;
+    name?: string | null;
+    classification?: string | null;
+  } | null;
   _approximate?: boolean;
   _approx_source?: string | null;
   _approx_zip?: string | null;
@@ -193,8 +198,8 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
 
     const enriched = lookupEntries.map(({ lookup, person, providerId }) => {
       const supabaseId =
-        (providerId ? providerMatches.get(providerId) ?? null : null) ??
-        (lookup ? lookupMatches.get(lookup) ?? null : null);
+        (providerId ? (providerMatches.get(providerId) ?? null) : null) ??
+        (lookup ? (lookupMatches.get(lookup) ?? null) : null);
       return {
         ...person,
         lookupKey: lookup,
