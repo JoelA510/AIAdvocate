@@ -1,0 +1,30 @@
+{
+  "name": "planterplan-alpha",
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"No build pipeline configured yet\"",
+    "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
+    "format": "prettier --check \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
+    "format:write": "prettier --write \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
+    "test": "echo \"No automated tests yet\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.76.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-config-react-app": "^7.0.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "prettier": "^3.6.2"
+  }
+}
