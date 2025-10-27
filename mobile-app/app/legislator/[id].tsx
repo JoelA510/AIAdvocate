@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView, Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { Card, Text, Button, ActivityIndicator } from "react-native-paper";
+import { Card, Text, Button, ActivityIndicator, useTheme } from "react-native-paper";
 import { supabase } from "../../src/lib/supabase";
 import { PATHS } from "../../src/lib/paths";
 import EmptyState from "../../src/components/EmptyState";
@@ -65,6 +65,7 @@ export default function LegislatorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
+  const theme = useTheme();
 
   const [leg, setLeg] = useState<Legislator | null>(null);
   const [loading, setLoading] = useState(true);
@@ -289,7 +290,16 @@ export default function LegislatorScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
+      <View
+        style={[
+          styles.center,
+          {
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+            backgroundColor: theme.colors.background,
+          },
+        ]}
+      >
         <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
         <Button
           onPress={handleGoBack}
@@ -307,7 +317,16 @@ export default function LegislatorScreen() {
 
   if (error) {
     return (
-      <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+      <View
+        style={[
+          styles.errorContainer,
+          {
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+            backgroundColor: theme.colors.background,
+          },
+        ]}
+      >
         <Stack.Screen options={{ title: t("legislator.votingRecord", "Voting Record") }} />
         <Button
           onPress={handleGoBack}
@@ -328,11 +347,23 @@ export default function LegislatorScreen() {
   }
 
   return (
-    <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+    <View
+      style={[
+        styles.screen,
+        {
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+          backgroundColor: theme.colors.background,
+        },
+      ]}
+    >
       <Stack.Screen
         options={{ title: leg?.name || t("legislator.votingRecord", "Voting Record") }}
       />
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
+      <ScrollView
+        style={[styles.scroll, { backgroundColor: theme.colors.background }]}
+        contentContainerStyle={{ padding: 16 }}
+      >
         <Button
           onPress={handleGoBack}
           icon={() => <IconSymbol name="chevron.left" size={24} />}
@@ -431,4 +462,7 @@ export default function LegislatorScreen() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  errorContainer: { flex: 1 },
+  screen: { flex: 1 },
+  scroll: { flex: 1 },
 });
