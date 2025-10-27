@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { Card, Text, Button, ActivityIndicator } from "react-native-paper";
 import { supabase } from "../../src/lib/supabase";
+import { PATHS } from "../../src/lib/paths";
 import EmptyState from "../../src/components/EmptyState";
 import { IconSymbol } from "../../components/ui/IconSymbol";
 import VotingHistory, {
@@ -78,7 +79,7 @@ export default function LegislatorScreen() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      const fallbackRoute = originTab === "bills" ? "/(tabs)/index" : "/(tabs)/advocacy";
+      const fallbackRoute = originTab === "bills" ? PATHS.HOME : PATHS.ADVOCACY;
       router.push(fallbackRoute);
     }
   }, [originTab, router]);
