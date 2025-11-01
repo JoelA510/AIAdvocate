@@ -2,7 +2,8 @@
   "private": true,
   "name": "ai-advocate",
   "workspaces": [
-    "mobile-app"
+    "mobile-app",
+    "services/ingestion"
   ],
   "dependencies": {
     "pg": "^8.16.3",

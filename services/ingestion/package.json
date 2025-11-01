@@ -1,0 +1,23 @@
+{
+  "name": "@ai-advocate/ingestion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "lint": "eslint src --ext .js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "mammoth": "^1.7.1",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "eslint": "^9.13.0"
+  }
+}
