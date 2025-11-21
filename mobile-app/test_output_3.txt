@@ -1,0 +1,15 @@
+yarn run v1.22.22
+$ jest BillComponent
+ΓùÅ Multiple configurations found:
+
+    * C:/Users/joel.abraham/AI Advocate/AIAdvocate/mobile-app/jest.config.js
+    * `jest` key in C:/Users/joel.abraham/AI Advocate/AIAdvocate/mobile-app/package.json
+
+  Implicit config resolution does not allow multiple configuration files.
+  Either remove unused config files or select one explicitly with `--config`.
+
+  Configuration Documentation:
+  https://jestjs.io/docs/configuration
+
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
