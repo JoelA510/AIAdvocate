@@ -42,48 +42,30 @@
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "deploymentTarget": "15.1"
+        },
+        "android": {
+          "minSdkVersion": 24
         }
-      ],
-      "@react-native-firebase/app",
-      "@react-native-firebase/auth",
-      "@react-native-firebase/app-check",
-      [
-        "sentry-expo",
-        {
-          "organization": "your-org-slug",
-          "project": "ai-advocate"
-        }
-      ],
-      [
-        "expo-build-properties",
-        {
-          "ios": {
-            "useFrameworks": "static",
-            "deploymentTarget": "15.1"
-          },
-          "android": {
-            "minSdkVersion": 24
-          }
-        }
-      ],
-      "expo-secure-store",
-      "expo-localization"
-    ],
-    "experiments": {
-      "typedRoutes": true
-    },
-    "extra": {
-      "router": {
-        "origin": false
-      },
-      "eas": {
-        "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c"
       }
+    ],
+    "expo-secure-store",
+    "expo-localization"
+  ],
+  "experiments": {
+    "typedRoutes": true
+  },
+  "extra": {
+    "router": {
+      "origin": false
     },
-    "updates": {
-      "url": "https://u.expo.dev/2815e517-2761-4f1b-a1d9-57dc978c3b0c"
-    },
-    "runtimeVersion": "1.0.0"
-  }
+    "eas": {
+      "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c"
+    }
+  },
+  "updates": {
+    "url": "https://u.expo.dev/2815e517-2761-4f1b-a1d9-57dc978c3b0c"
+  },
+  "runtimeVersion": "1.0.0"
+}
 }
