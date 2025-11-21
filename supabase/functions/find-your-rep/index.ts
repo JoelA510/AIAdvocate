@@ -170,7 +170,22 @@ serve(async (req) => {
     }
 
     const { lat, lon } = await fetchGeocode(sanitized, locationIqKey);
-    const representatives = await fetchRepresentatives(lat, lon, openStatesKey);
+    const allRepresentatives = await fetchRepresentatives(lat, lon, openStatesKey);
+
+    // Filter for state-level representatives only (CA Assembly/Senate)
+    // OpenStates returns Federal and State. We want to prioritize/restrict to State.
+    const representatives = allRepresentatives.filter((rep: any) => {
+      const classification = rep?.jurisdiction?.classification?.toLowerCase();
+      return classification === "state";
+    });
+
+    // Mark as approximate if it was a ZIP search
+    if (cacheType === "zip") {
+      representatives.forEach((rep: any) => {
+        rep._approximate = true;
+        rep._approx_zip = sanitized;
+      });
+    }
 
     if (cacheable && lookupKey && cacheType) {
       const expiresAt = new Date(Date.now() + CACHE_TTL_MS).toISOString();

@@ -121,27 +121,49 @@ export default function BillsHomeScreen() {
   const listRef = useRef<FlatList<Bill>>(null);
   const [, startTransition] = useTransition();
 
+  // Debounce the URL update to avoid focus loss and re-renders while typing
   useEffect(() => {
-    const next = extractQueryFromParam(rawQueryParam);
-    setSearchQuery((prev) => (prev === next ? prev : next));
+    const timer = setTimeout(() => {
+      if (searchQuery !== extractQueryFromParam(rawQueryParam)) {
+        startTransition(() => {
+          router.replace({
+            pathname,
+            params: { q: searchQuery || undefined },
+          } as Href);
+        });
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery, pathname, router, rawQueryParam]);
+
+  // Sync from URL only if significantly different (e.g. back button)
+  // and not just a normalized version of what we already have.
+  useEffect(() => {
+    const paramQ = extractQueryFromParam(rawQueryParam);
+    if (paramQ !== searchQuery) {
+      // Avoid overwriting user input with normalized version if they are effectively the same
+      // But if the user navigates back, we want to update.
+      // Simple heuristic: if the param is a prefix of the current query, don't update (user is typing)
+      // But here we rely on the debounce above to prevent the URL from updating prematurely.
+      // So if we receive a new param, it's likely from navigation.
+      // However, the debounce updates the URL to `searchQuery`.
+      // So `paramQ` will eventually become `searchQuery`.
+      // The issue is if `paramQ` is normalized (trimmed) and `searchQuery` has a space.
+      // We changed the router.replace to use `searchQuery` (raw), so the URL should preserve spaces.
+      setSearchQuery(paramQ);
+    }
   }, [rawQueryParam]);
 
   const handleSearchChange = useCallback(
     (text: string) => {
-      const next = text.slice(0, MAX_Q_LEN);
-      setSearchQuery(next);
-      startTransition(() => {
-        router.replace({
-          pathname,
-          params: { q: next ? normalizeQuery(next) : undefined },
-        } as Href);
-      });
+      setSearchQuery(text);
     },
-    [pathname, router, startTransition],
+    [],
   );
 
   const handleClearQuery = useCallback(() => {
     setSearchQuery("");
+    // Immediate clear for X button
     startTransition(() => {
       router.replace({ pathname, params: { q: undefined } } as Href);
     });
@@ -380,9 +402,9 @@ export default function BillsHomeScreen() {
           message={
             normalizedQuery
               ? t(
-                  "home.emptyWithQuery",
-                  `We couldn't find any bills matching "${normalizedQuery}". Try another search.`,
-                )
+                "home.emptyWithQuery",
+                `We couldn't find any bills matching "${normalizedQuery}". Try another search.`,
+              )
               : t("home.emptyNoQuery", "There are no bills to display at the moment.")
           }
         />
