@@ -21,6 +21,7 @@ import { AuthProvider } from "../src/providers/AuthProvider";
 import { initConfig } from "../src/lib/config";
 import { LanguageProvider } from "../src/providers/LanguageProvider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { initSentry } from "../src/lib/sentry";
 
 import { Colors } from "../constants/Colors";
 import { RouterErrorBoundary } from "../components/RouterErrorBoundary";
@@ -32,8 +33,11 @@ const queryClient = new QueryClient();
 const BANNER = require("../assets/images/header-banner.png");
 const LOGO_ASPECT_RATIO = 1500 / 257;
 
+// Initialize Sentry for error tracking
+initSentry();
+
 // Prevent splash auto-hide until assets/config load.
-SplashScreen.preventAutoHideAsync().catch(() => {});
+SplashScreen.preventAutoHideAsync().catch(() => { });
 
 export default function RootLayout() {
   const [configError, setConfigError] = useState<string | null>(null);
@@ -49,16 +53,16 @@ export default function RootLayout() {
     try {
       initConfig();
       setIsReady(true);
-      SplashScreen.hideAsync().catch(() => {});
+      SplashScreen.hideAsync().catch(() => { });
     } catch (e: any) {
       setConfigError(e?.message ?? "Unknown configuration error");
-      SplashScreen.hideAsync().catch(() => {});
+      SplashScreen.hideAsync().catch(() => { });
     }
   }, []);
 
   useEffect(() => {
     if (configError) {
-      SplashScreen.hideAsync().catch(() => {});
+      SplashScreen.hideAsync().catch(() => { });
     }
   }, [configError]);
 
