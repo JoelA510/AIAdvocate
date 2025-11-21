@@ -42,8 +42,30 @@ export default function SummarySlider({ bill, onSummaryChange }: Props) {
       original: bill.original_text,
     };
 
-    const text = textByLevel[lvl] ?? null;
-    return text || t("summary.empty", "No content available for this level.");
+    // If content exists for the requested level, return it.
+    if (textByLevel[lvl]) return textByLevel[lvl];
+
+    // Fallback logic
+    const fallbacks: Record<Level, Level[]> = {
+      simple: ["medium", "complex", "original"],
+      medium: ["simple", "complex", "original"],
+      complex: ["medium", "simple", "original"],
+      original: ["complex", "medium", "simple"],
+    };
+
+    for (const fallbackLevel of fallbacks[lvl]) {
+      const fallbackText = textByLevel[fallbackLevel];
+      if (fallbackText) {
+        const fallbackLabel = LABELS[fallbackLevel];
+        return t("summary.fallback", "({{label}} summary used; {{target}} is not available.)\n\n{{text}}", {
+          label: fallbackLabel,
+          target: LABELS[lvl],
+          text: fallbackText,
+        });
+      }
+    }
+
+    return t("summary.empty", "No content available for this level.");
   };
 
   useEffect(() => {

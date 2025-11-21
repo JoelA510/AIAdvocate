@@ -39,7 +39,13 @@ export type Bill = {
   original_text_es?: string | null;
   change_hash: string;
   created_at: string;
-  panel_review: any;
+  panel_review: {
+    pros?: string[];
+    cons?: string[];
+    notes?: string;
+    recommendation?: string;
+    comment?: string;
+  } | null;
 };
 
 type BillHistoryEntry = {
@@ -388,9 +394,9 @@ export default function BillComponent({ bill }: { bill: Bill }) {
                   status: statusText,
                   dateSuffix: statusDateFormatted
                     ? t("bill.meta.statusDateSuffix", {
-                        defaultValue: " ({{date}})",
-                        date: statusDateFormatted,
-                      })
+                      defaultValue: " ({{date}})",
+                      date: statusDateFormatted,
+                    })
                     : "",
                 })}
               </Text>

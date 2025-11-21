@@ -65,7 +65,7 @@ export default function BillDetailsScreen() {
         if (!isMounted) return;
         setBill(data as Bill);
         if (data && session?.user?.id) {
-          trackEvent("bill_view", session.user.id, { bill_id: (data as any).id }).catch(() => {});
+          trackEvent("bill_view", session.user.id, { bill_id: (data as any).id }).catch(() => { });
         }
       } catch (err: any) {
         if (isMounted) setError(err.message);
@@ -133,7 +133,7 @@ export default function BillDetailsScreen() {
       } else {
         await RNShare.share({ message: `${text} ${url}`.trim() });
       }
-    } catch {}
+    } catch { }
   };
 
   const handleGoBack = () => {
@@ -223,12 +223,52 @@ export default function BillDetailsScreen() {
             <Card style={styles.reviewCard} mode="outlined">
               <Card.Title title={t("bill.panel.title", "Survivor Panel Review")} />
               <Card.Content>
-                <Text variant="labelLarge" style={styles.reviewRecommendation}>
-                  {t("bill.panel.recommendation", "Recommendation: {{r}}", {
-                    r: (bill as any).panel_review?.recommendation,
-                  })}
-                </Text>
-                <Text variant="bodyMedium">{(bill as any).panel_review?.comment}</Text>
+                {/* Legacy Support */}
+                {bill.panel_review.recommendation && (
+                  <Text variant="labelLarge" style={styles.reviewRecommendation}>
+                    {t("bill.panel.recommendation", "Recommendation: {{r}}", {
+                      r: bill.panel_review.recommendation,
+                    })}
+                  </Text>
+                )}
+                {bill.panel_review.comment && (
+                  <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                    {bill.panel_review.comment}
+                  </Text>
+                )}
+
+                {/* New Fields */}
+                {bill.panel_review.notes ? (
+                  <Text variant="bodyMedium" style={{ marginBottom: 12 }}>
+                    {bill.panel_review.notes}
+                  </Text>
+                ) : null}
+
+                {bill.panel_review.pros && bill.panel_review.pros.length > 0 && (
+                  <View style={{ marginBottom: 8 }}>
+                    <Text variant="labelMedium" style={{ color: "green", fontWeight: "bold" }}>
+                      Pros:
+                    </Text>
+                    {bill.panel_review.pros.map((pro, i) => (
+                      <Text key={i} variant="bodySmall">
+                        • {pro}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+
+                {bill.panel_review.cons && bill.panel_review.cons.length > 0 && (
+                  <View>
+                    <Text variant="labelMedium" style={{ color: "red", fontWeight: "bold" }}>
+                      Cons:
+                    </Text>
+                    {bill.panel_review.cons.map((con, i) => (
+                      <Text key={i} variant="bodySmall">
+                        • {con}
+                      </Text>
+                    ))}
+                  </View>
+                )}
               </Card.Content>
             </Card>
           )}
@@ -236,7 +276,7 @@ export default function BillDetailsScreen() {
           <Divider style={styles.divider} />
           <FindYourRep bill={bill} />
           <Divider style={styles.divider} />
-          <SummarySlider bill={{ ...bill, ...display }} onSummaryChange={() => {}} />
+          <SummarySlider bill={{ ...bill, ...display }} onSummaryChange={() => { }} />
           <Divider style={styles.divider} />
           <RelatedBills billId={(bill as any).id} />
         </View>
