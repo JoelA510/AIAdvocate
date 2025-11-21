@@ -48,7 +48,7 @@ if (!i18n.isInitialized) {
       if (__DEV__) console.warn(`[i18n] missing key: ${key}`);
     },
     // Faster startup on RN
-    initImmediate: false,
+    init Immediate: false,
   });
 
   // Live pseudo-locale for spotting misses: generates accented placeholders
