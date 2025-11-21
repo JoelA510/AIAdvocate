@@ -1,14 +1,17 @@
-export const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// supabase/functions/_shared/cors.ts
 
-// // This is a simple CORS preflight handler.
-// export function handleCors(req: Request): Response {
-//  if (req.method === 'OPTIONS') {
-//    return new Response('ok', { headers: corsHeaders })
-//  }
-//  
-//  // If it's not an OPTIONS request, just return an empty response.
-//  return new Response(null, { headers: corsHeaders })
-// }
+/**
+ * CORS Configuration
+ * 
+ * Supports both:
+ * - Mobile apps (iOS/Android): Requires wildcard due to varying app schemes
+ * - Web app: https://www.ai-advocate.org
+ * 
+ * Note: We use wildcard (*) because React Native mobile apps use custom schemes
+ * that change per build/environment. For web-only APIs, restrict to specific domain.
+ */
+export const corsHeaders = {
+  "Access-Control-Allow-Origin": "*", // Required for mobile apps
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+};

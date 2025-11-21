@@ -4,15 +4,14 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Toast from "react-native-toast-message";
-// NEW: Import our push notification registration function
 import { registerForPushNotificationsAsync } from "../lib/push";
+import { captureException } from "../lib/sentry";
 
 type AuthContextType = {
   session: Session | null;
   loading: boolean;
 };
 
-// Use the slightly cleaner context creation from the proposed version
 const AuthContext = createContext<AuthContextType>({
   session: null,
   loading: true,
@@ -24,31 +23,49 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     const fetchSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      setSession(session);
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
 
-      // If there's no session, we need to sign in anonymously.
-      if (!session) {
-        try {
-          // Re-instating the robust error handling from your original file
+        if (error) throw error;
+
+        setSession(session);
+
+        // If there's no session, we need to sign in anonymously.
+        if (!session) {
           const { error: signInError } = await supabase.auth.signInAnonymously();
           if (signInError) throw signInError;
           // The onAuthStateChange listener will pick up the new session.
-        } catch (error: any) {
-          console.error("Auto sign-in failed:", error);
-          Toast.show({ type: "error", text1: "Authentication Failed", text2: error.message });
         }
+      } catch (error: any) {
+        // Send to Sentry for monitoring
+        captureException(error, { context: "auth_initialization" });
+
+        // In development, log full error
+        if (__DEV__) {
+          console.error("Auto sign-in failed:", error);
+        } else {
+          // In production, only log sanitized message
+          console.error("Authentication failed");
+        }
+
+        Toast.show({
+          type: "error",
+          text1: "Authentication Failed",
+          text2: __DEV__ ? error.message : "Please try again",
+        });
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchSession();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setLoading(false); // Also set loading to false when the session changes
+      setLoading(false);
     });
 
     return () => {
@@ -56,18 +73,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, []);
 
-  // NEW: Effect to register for push notifications once the session is loaded
+  // Effect to register for push notifications once the session is loaded
   useEffect(() => {
     if (session?.user?.id) {
-      // We have a user, let's register their device for notifications
-      registerForPushNotificationsAsync(session.user.id);
+      registerForPushNotificationsAsync(session.user.id).catch((error: any) => {
+        // Send to Sentry
+        captureException(error, { context: "push_notification_registration" });
+
+        if (__DEV__) {
+          console.warn("Failed to register for push notifications:", error);
+        }
+      });
     }
-  }, [session]); // This effect runs whenever the session changes
+  }, [session]);
 
   return <AuthContext.Provider value={{ session, loading }}>{children}</AuthContext.Provider>;
 };
 
-// Use the slightly cleaner useAuth hook from the proposed version
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {

@@ -24,6 +24,7 @@
     "@react-native-firebase/app-check": "^22.4.0",
     "@react-native-firebase/auth": "^22.4.0",
     "@react-native-picker/picker": "^2.11.1",
+    "@sentry/react-native": "^7.6.0",
     "@supabase/supabase-js": "^2.44.4",
     "@tanstack/react-query": "^5.85.6",
     "expo": "53.0.22",
@@ -65,7 +66,8 @@
     "react-native-toast-message": "^2.2.0",
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "^0.20.0",
-    "react-native-webview": "13.13.5"
+    "react-native-webview": "13.13.5",
+    "sentry-expo": "^7.2.0"
   },
   "devDependencies": {
     "@babel/core": "^7.2.0",
