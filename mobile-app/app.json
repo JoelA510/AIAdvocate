@@ -41,31 +41,26 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "resizeMode": "contain",
-          "deploymentTarget": "15.1"
-        },
-        "android": {
-          "minSdkVersion": 24
+          "resizeMode": "contain"
         }
-      }
+      ],
+      "expo-secure-store",
+      "expo-localization"
     ],
-    "expo-secure-store",
-    "expo-localization"
-  ],
-  "experiments": {
-    "typedRoutes": true
-  },
-  "extra": {
-    "router": {
-      "origin": false
+    "experiments": {
+      "typedRoutes": true
     },
-    "eas": {
-      "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c"
-    }
-  },
-  "updates": {
-    "url": "https://u.expo.dev/2815e517-2761-4f1b-a1d9-57dc978c3b0c"
-  },
-  "runtimeVersion": "1.0.0"
-}
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "2815e517-2761-4f1b-a1d9-57dc978c3b0c"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/2815e517-2761-4f1b-a1d9-57dc978c3b0c"
+    },
+    "runtimeVersion": "1.0.0"
+  }
 }
