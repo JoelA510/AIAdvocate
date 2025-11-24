@@ -71,7 +71,11 @@ export default function AdminBillsScreen() {
   // Check if user is admin (simple client-side check, RLS enforces real security)
   useEffect(() => {
     const checkAdmin = async () => {
-      if (!session?.user) return;
+      if (!session?.user || !session.user.email) {
+        router.replace("/admin/login");
+        return;
+      }
+
       const { data, error } = await supabase
         .from("app_admins")
         .select("user_id")
@@ -80,7 +84,7 @@ export default function AdminBillsScreen() {
 
       if (error || !data) {
         Alert.alert("Access Denied", "You do not have admin permissions.");
-        router.replace("/");
+        router.replace("/admin/login");
       }
     };
     checkAdmin();

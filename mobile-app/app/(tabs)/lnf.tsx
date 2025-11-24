@@ -89,7 +89,7 @@ const styles = StyleSheet.create({
   adminButtonContainer: {
     position: 'absolute',
     bottom: 16,
-    right: 16,
+    right: 24,
     opacity: 0.7,
   },
   adminButton: {
