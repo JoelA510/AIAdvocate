@@ -165,6 +165,18 @@ export default function AdminBillsScreen() {
 
       if (error) throw error;
 
+      // Verify save by reading back
+      const { data: verifyData, error: verifyError } = await supabase
+        .from("bills")
+        .select("panel_review")
+        .eq("id", selectedBill.id)
+        .single();
+
+      if (verifyError || !verifyData) {
+        console.error("Verification failed:", verifyError);
+        throw new Error("Save verified failed - data may not have persisted");
+      }
+
       Toast.show({ type: "success", text1: "Saved successfully" });
 
       // Log the action
@@ -180,6 +192,7 @@ export default function AdminBillsScreen() {
       setSelectedBill({ ...selectedBill, panel_review: updatedReview });
 
     } catch (err: any) {
+      console.error("Save error:", err);
       Toast.show({ type: "error", text1: "Save failed", text2: err.message });
     } finally {
       setSaving(false);
@@ -292,18 +305,30 @@ export default function AdminBillsScreen() {
   }
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
+            borderColor: colors.outlineVariant ?? theme.colors.outline,
+            shadowColor: colors.shadow ?? "#000",
+            marginBottom: 0, // Override default margin for detail view
+          },
+        ]}
+      >
+        <View style={styles.headerTopRow}>
+          <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>Back</Button>
+          <Text variant="titleMedium" style={{ fontWeight: '600' }}>{selectedBill.bill_number}</Text>
+          <Button mode="contained" onPress={handleSave} loading={saving}>Save</Button>
+        </View>
+      </View>
+
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.detailHeader}>
-          <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>Back</Button>
-          <Text variant="headlineSmall" style={{ flex: 1, textAlign: "center" }}>{selectedBill.bill_number}</Text>
-          <Button mode="contained" onPress={handleSave} loading={saving}>Save</Button>
-        </View>
-
         <View style={styles.section}>
           <Text variant="titleMedium">Survivor Panel Notes</Text>
           <TextInput
@@ -313,7 +338,7 @@ export default function AdminBillsScreen() {
             numberOfLines={4}
             value={notes}
             onChangeText={setNotes}
-            style={{ marginBottom: 16 }}
+            style={{ marginBottom: 16, backgroundColor: theme.colors.surface }}
           />
 
           <Text variant="titleSmall" style={{ marginTop: 8 }}>Pros</Text>
@@ -323,7 +348,7 @@ export default function AdminBillsScreen() {
                 mode="outlined"
                 value={pro}
                 onChangeText={(text) => updatePro(text, index)}
-                style={{ flex: 1 }}
+                style={{ flex: 1, backgroundColor: theme.colors.surface }}
                 dense
               />
               <IconButton icon="delete" onPress={() => removePro(index)} />
@@ -338,7 +363,7 @@ export default function AdminBillsScreen() {
                 mode="outlined"
                 value={con}
                 onChangeText={(text) => updateCon(text, index)}
-                style={{ flex: 1 }}
+                style={{ flex: 1, backgroundColor: theme.colors.surface }}
                 dense
               />
               <IconButton icon="delete" onPress={() => removeCon(index)} />
