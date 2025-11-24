@@ -58,7 +58,8 @@ export default function AdminBillsScreen() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [bills, setBills] = useState<AdminBill[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [selectedBill, setSelectedBill] = useState<AdminBill | null>(null);
   const [translations, setTranslations] = useState<Translation[]>([]);
 
@@ -90,23 +91,38 @@ export default function AdminBillsScreen() {
     checkAdmin();
   }, [session, router]);
 
-  const searchBills = useCallback(async () => {
-    if (!searchQuery.trim()) return;
+  // Load all bills on mount
+  useEffect(() => {
+    loadBills();
+  }, []);
+
+  const loadBills = async (query?: string) => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let queryBuilder = supabase
         .from("bills")
-        .select("id, bill_number, title, panel_review")
-        .ilike("bill_number", `%${searchQuery}%`)
-        .limit(20);
+        .select("id, bill_number, title, panel_review, created_at")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (query?.trim()) {
+        queryBuilder = queryBuilder.ilike("bill_number", `%${query}%`);
+      }
+
+      const { data, error } = await queryBuilder;
 
       if (error) throw error;
       setBills(data || []);
     } catch (err: any) {
-      Toast.show({ type: "error", text1: "Search failed", text2: err.message });
+      Toast.show({ type: "error", text1: "Failed to load bills", text2: err.message });
     } finally {
       setLoading(false);
+      setInitialLoad(false);
     }
+  };
+
+  const searchBills = useCallback(async () => {
+    await loadBills(searchQuery);
   }, [searchQuery]);
 
   const fetchTranslations = async (billId: number) => {
@@ -212,7 +228,7 @@ export default function AdminBillsScreen() {
 
   if (!selectedBill) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
         <View style={styles.header}>
           <Text variant="headlineMedium">Admin: Bills</Text>
         </View>
@@ -248,7 +264,7 @@ export default function AdminBillsScreen() {
   }
 
   return (
-    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={{ paddingBottom: 40 }}>
+    <ScrollView style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]} contentContainerStyle={{ paddingBottom: 40 }}>
       <View style={styles.header}>
         <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>Back</Button>
         <Text variant="headlineSmall" style={{ flex: 1, textAlign: "center" }}>{selectedBill.bill_number}</Text>
@@ -324,7 +340,7 @@ export default function AdminBillsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", padding: 16, justifyContent: "space-between" },
   searchContainer: { padding: 16 },
   card: { marginBottom: 8 },
