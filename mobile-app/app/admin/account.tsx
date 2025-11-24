@@ -149,6 +149,7 @@ export default function AdminAccountScreen() {
         try {
             const { data, error } = await supabase.auth.mfa.enroll({
                 factorType: 'totp',
+                issuer: 'AIAdvocate',
                 friendlyName: session!.user.email,
             });
 
@@ -354,7 +355,13 @@ export default function AdminAccountScreen() {
                                 right={() => (
                                     <Switch
                                         value={mfaEnabled}
-                                        onValueChange={mfaEnabled ? handleDisableMFA : handleEnrollMFA}
+                                        onValueChange={(enabled) => {
+                                            if (enabled) {
+                                                handleEnrollMFA();
+                                            } else {
+                                                handleDisableMFA();
+                                            }
+                                        }}
                                     />
                                 )}
                             />
