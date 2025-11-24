@@ -7,6 +7,7 @@ import {
     Card,
     useTheme,
     List,
+    Switch,
     ActivityIndicator,
 } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { supabase } from '../../src/lib/supabase';
 import { useAuth } from '../../src/providers/AuthProvider';
 import Toast from 'react-native-toast-message';
+import QRCode from 'react-native-qrcode-svg';
 
 export default function AdminAccountScreen() {
     const theme = useTheme();
@@ -26,14 +28,21 @@ export default function AdminAccountScreen() {
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [changingPassword, setChangingPassword] = useState(false);
+
+    // MFA state
+    const [mfaEnabled, setMfaEnabled] = useState(false);
+    const [enrolling, setEnrolling] = useState(false);
+    const [qrCodeUri, setQrCodeUri] = useState('');
+    const [verificationCode, setVerificationCode] = useState('');
+    const [factorId, setFactorId] = useState('');
     const [loading, setLoading] = useState(true);
 
-    // Check admin status on mount
+    // Check admin status and MFA status on mount
     useEffect(() => {
-        checkAdmin();
+        checkAdminAndMFA();
     }, [session]);
 
-    const checkAdmin = async () => {
+    const checkAdminAndMFA = async () => {
         if (!session?.user || !session.user.email) {
             router.replace('/admin/login');
             return;
@@ -50,6 +59,13 @@ export default function AdminAccountScreen() {
             Alert.alert('Access Denied', 'You do not have admin permissions.');
             router.replace('/admin/login');
             return;
+        }
+
+        // Check MFA status
+        const { data, error } = await supabase.auth.mfa.listFactors();
+        if (!error && data?.all) {
+            const totpFactor = data.all.find((f: any) => f.factor_type === 'totp' && f.status === 'verified');
+            setMfaEnabled(!!totpFactor);
         }
 
         setLoading(false);
@@ -126,6 +142,122 @@ export default function AdminAccountScreen() {
         } finally {
             setChangingPassword(false);
         }
+    };
+
+    const handleEnrollMFA = async () => {
+        setEnrolling(true);
+        try {
+            const { data, error } = await supabase.auth.mfa.enroll({
+                factorType: 'totp',
+                friendlyName: session!.user.email,
+            });
+
+            if (error) throw error;
+
+            // The QR code URI is in data.totp.qr_code
+            setQrCodeUri(data.totp.uri);
+            setFactorId(data.id);
+
+            Toast.show({
+                type: 'info',
+                text1: 'Scan QR Code',
+                text2: 'Use an authenticator app to scan this code',
+            });
+        } catch (err: any) {
+            Toast.show({
+                type: 'error',
+                text1: 'MFA enrollment failed',
+                text2: err.message,
+            });
+            setEnrolling(false);
+        }
+    };
+
+    const handleVerifyMFA = async () => {
+        if (!verificationCode || verificationCode.length !== 6) {
+            Toast.show({
+                type: 'error',
+                text1: 'Invalid code',
+                text2: 'Please enter the 6-digit code from your authenticator app',
+            });
+            return;
+        }
+
+        try {
+            const challenge = await supabase.auth.mfa.challenge({ factorId });
+            if (challenge.error) throw challenge.error;
+
+            const verify = await supabase.auth.mfa.verify({
+                factorId,
+                challengeId: challenge.data.id,
+                code: verificationCode,
+            });
+
+            if (verify.error) throw verify.error;
+
+            Toast.show({
+                type: 'success',
+                text1: 'MFA enabled',
+                text2: 'Two-factor authentication is now active',
+            });
+
+            setMfaEnabled(true);
+            setEnrolling(false);
+            setQrCodeUri('');
+            setVerificationCode('');
+            setFactorId('');
+        } catch (err: any) {
+            Toast.show({
+                type: 'error',
+                text1: 'Verification failed',
+                text2: 'Invalid code. Please try again.',
+            });
+        }
+    };
+
+    const handleDisableMFA = () => {
+        Alert.alert(
+            'Disable MFA',
+            'Are you sure you want to disable two-factor authentication? This will make your account less secure.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Disable',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            const { data, error: listError } = await supabase.auth.mfa.listFactors();
+
+                            if (listError) throw listError;
+
+                            const totpFactor = data?.all?.find((f: any) => f.factor_type === 'totp' && f.status === 'verified');
+
+                            if (totpFactor) {
+                                const { error } = await supabase.auth.mfa.unenroll({
+                                    factorId: totpFactor.id,
+                                });
+
+                                if (error) throw error;
+
+                                Toast.show({
+                                    type: 'success',
+                                    text1: 'MFA disabled',
+                                    text2: 'Two-factor authentication has been disabled',
+                                });
+
+                                setMfaEnabled(false);
+                            }
+                        } catch (err: any) {
+                            Toast.show({
+                                type: 'error',
+                                text1: 'Failed to disable MFA',
+                                text2: err.message,
+                            });
+                        }
+                    },
+                },
+            ]
+        );
     };
 
     if (loading) {
@@ -209,16 +341,75 @@ export default function AdminAccountScreen() {
                 </Card.Content>
             </Card>
 
-            {/* Future MFA Section - Placeholder */}
+            {/* MFA Settings */}
             <Card style={styles.card}>
-                <Card.Title title="Two-Factor Authentication" subtitle="Coming soon" />
-                <Card.Content>
-                    <List.Item
-                        title="MFA Not Available"
-                        description="Two-factor authentication will be enabled in a future update"
-                        left={(props) => <List.Icon {...props} icon="shield-off" />}
-                        disabled
-                    />
+                <Card.Title title="Two-Factor Authentication (MFA)" subtitle="Add an extra layer of security" />
+                <Card.Content style={styles.section}>
+                    {!enrolling && !qrCodeUri && (
+                        <>
+                            <List.Item
+                                title={mfaEnabled ? 'MFA Enabled' : 'MFA Disabled'}
+                                description={mfaEnabled ? 'Your account is protected with 2FA' : 'Enable MFA for better security'}
+                                left={(props) => <List.Icon {...props} icon={mfaEnabled ? 'shield-check' : 'shield-off'} />}
+                                right={() => (
+                                    <Switch
+                                        value={mfaEnabled}
+                                        onValueChange={mfaEnabled ? handleDisableMFA : handleEnrollMFA}
+                                    />
+                                )}
+                            />
+                            {!mfaEnabled && (
+                                <Text variant="bodySmall" style={{ opacity: 0.7, marginTop: 8 }}>
+                                    MFA requires an authenticator app like Google Authenticator, Authy, or 1Password.
+                                </Text>
+                            )}
+                        </>
+                    )}
+
+                    {enrolling && qrCodeUri && (
+                        <View style={styles.mfaEnrollment}>
+                            <Text variant="titleMedium" style={{ marginBottom: 16 }}>
+                                Scan QR Code
+                            </Text>
+                            <View style={styles.qrCodeContainer}>
+                                <QRCode value={qrCodeUri} size={200} backgroundColor="white" />
+                            </View>
+                            <Text variant="bodySmall" style={{ textAlign: 'center', marginTop: 16, marginBottom: 16 }}>
+                                Scan this code with your authenticator app, then enter the 6-digit code below.
+                            </Text>
+                            <TextInput
+                                mode="outlined"
+                                label="Verification Code"
+                                value={verificationCode}
+                                onChangeText={setVerificationCode}
+                                keyboardType="number-pad"
+                                maxLength={6}
+                                style={styles.input}
+                            />
+                            <View style={styles.buttonRow}>
+                                <Button
+                                    mode="outlined"
+                                    onPress={() => {
+                                        setEnrolling(false);
+                                        setQrCodeUri('');
+                                        setVerificationCode('');
+                                        setFactorId('');
+                                    }}
+                                    style={{ flex: 1, marginRight: 8 }}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    mode="contained"
+                                    onPress={handleVerifyMFA}
+                                    disabled={verificationCode.length !== 6}
+                                    style={{ flex: 1, marginLeft: 8 }}
+                                >
+                                    Verify
+                                </Button>
+                            </View>
+                        </View>
+                    )}
                 </Card.Content>
             </Card>
         </ScrollView>
@@ -245,5 +436,19 @@ const styles = StyleSheet.create({
     },
     button: {
         marginTop: 8,
+    },
+    mfaEnrollment: {
+        alignItems: 'center',
+        padding: 16,
+    },
+    qrCodeContainer: {
+        padding: 16,
+        backgroundColor: 'white',
+        borderRadius: 8,
+    },
+    buttonRow: {
+        flexDirection: 'row',
+        marginTop: 16,
+        width: '100%',
     },
 });
