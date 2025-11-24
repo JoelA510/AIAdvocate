@@ -10,12 +10,14 @@ import {
   Switch,
   Divider,
   IconButton,
+  Searchbar,
 } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import Toast from "react-native-toast-message";
+import { ThemedView } from "../../components/ThemedView";
 
 // Helper function for audit logging
 const logAdminAction = async (userId: string, action: string, billId?: number, details?: any) => {
@@ -55,6 +57,7 @@ export default function AdminBillsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { session } = useAuth();
+  const colors = theme.colors as unknown as Record<string, string>;
 
   const [searchQuery, setSearchQuery] = useState("");
   const [bills, setBills] = useState<AdminBill[]>([]);
@@ -153,8 +156,6 @@ export default function AdminBillsScreen() {
         pros,
         cons,
         notes,
-        // Clear legacy fields if we are moving to new structure, or keep them synced?
-        // For now, let's just update the new structure.
       };
 
       const { error } = await supabase
@@ -228,127 +229,174 @@ export default function AdminBillsScreen() {
 
   if (!selectedBill) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
-        <View style={styles.header}>
-          <Text variant="headlineMedium">Admin: Bills</Text>
-          <IconButton
-            icon="account-cog"
-            onPress={() => router.push('/admin/account')}
-            mode="contained-tonal"
-          />
-        </View>
-        <View style={styles.searchContainer}>
-          <TextInput
-            key="search-input"
-            mode="outlined"
+      <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
+        <View
+          style={[
+            styles.header,
+            {
+              backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
+              borderColor: colors.outlineVariant ?? theme.colors.outline,
+              shadowColor: colors.shadow ?? "#000",
+            },
+          ]}
+        >
+          <View style={styles.headerTopRow}>
+            <Text variant="titleLarge" style={{ fontWeight: '600' }}>Admin View: Bills</Text>
+            <IconButton
+              icon="account-cog"
+              onPress={() => router.push('/admin/account')}
+              mode="contained-tonal"
+              size={24}
+            />
+          </View>
+          <Searchbar
             placeholder="Search Bill Number (e.g. AB 123)"
-            value={searchQuery}
             onChangeText={setSearchQuery}
-            right={<TextInput.Icon icon="magnify" onPress={searchBills} />}
+            value={searchQuery}
             onSubmitEditing={searchBills}
-            returnKeyType="search"
+            onIconPress={searchBills}
+            loading={loading}
+            style={[
+              styles.searchbar,
+              {
+                backgroundColor: colors.surfaceContainerLowest ?? theme.colors.surface,
+                borderColor: colors.outlineVariant ?? theme.colors.outline,
+              },
+            ]}
+            inputStyle={{ fontSize: 16 }}
+            iconColor={theme.colors.primary}
+            placeholderTextColor={theme.colors.onSurfaceVariant}
           />
         </View>
-        {loading ? (
-          <ActivityIndicator style={{ marginTop: 20 }} />
-        ) : (
-          <FlatList
-            key="bills-list"
-            data={bills}
-            keyExtractor={(item) => item.id.toString()}
-            renderItem={({ item }) => (
-              <Card style={styles.card} onPress={() => handleSelectBill(item)}>
-                <Card.Title title={item.bill_number} subtitle={item.title} />
-              </Card>
-            )}
-            contentContainerStyle={{ padding: 16 }}
-          />
-        )}
-      </View>
+
+        <View style={[styles.content, { paddingBottom: insets.bottom + 12 }]}>
+          {loading && initialLoad ? (
+            <ActivityIndicator style={{ marginTop: 20 }} size="large" />
+          ) : (
+            <FlatList
+              key="bills-list"
+              data={bills}
+              keyExtractor={(item) => item.id.toString()}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+              renderItem={({ item }) => (
+                <Card style={styles.card} onPress={() => handleSelectBill(item)}>
+                  <Card.Title title={item.bill_number} subtitle={item.title} />
+                </Card>
+              )}
+            />
+          )}
+        </View>
+      </ThemedView>
     );
   }
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]} contentContainerStyle={{ paddingBottom: 40 }}>
-      <View style={styles.header}>
-        <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>Back</Button>
-        <Text variant="headlineSmall" style={{ flex: 1, textAlign: "center" }}>{selectedBill.bill_number}</Text>
-        <Button mode="contained" onPress={handleSave} loading={saving}>Save</Button>
-      </View>
+    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.detailHeader}>
+          <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>Back</Button>
+          <Text variant="headlineSmall" style={{ flex: 1, textAlign: "center" }}>{selectedBill.bill_number}</Text>
+          <Button mode="contained" onPress={handleSave} loading={saving}>Save</Button>
+        </View>
 
-      <View style={styles.section}>
-        <Text variant="titleMedium">Survivor Panel Notes</Text>
-        <TextInput
-          mode="outlined"
-          label="General Notes / Summary"
-          multiline
-          numberOfLines={4}
-          value={notes}
-          onChangeText={setNotes}
-          style={{ marginBottom: 16 }}
-        />
+        <View style={styles.section}>
+          <Text variant="titleMedium">Survivor Panel Notes</Text>
+          <TextInput
+            mode="outlined"
+            label="General Notes / Summary"
+            multiline
+            numberOfLines={4}
+            value={notes}
+            onChangeText={setNotes}
+            style={{ marginBottom: 16 }}
+          />
 
-        <Text variant="titleSmall" style={{ marginTop: 8 }}>Pros</Text>
-        {pros.map((pro, index) => (
-          <View key={index} style={styles.row}>
-            <TextInput
-              mode="outlined"
-              value={pro}
-              onChangeText={(text) => updatePro(text, index)}
-              style={{ flex: 1 }}
-              dense
-            />
-            <IconButton icon="delete" onPress={() => removePro(index)} />
-          </View>
-        ))}
-        <Button onPress={addPro} icon="plus">Add Pro</Button>
-
-        <Text variant="titleSmall" style={{ marginTop: 16 }}>Cons</Text>
-        {cons.map((con, index) => (
-          <View key={index} style={styles.row}>
-            <TextInput
-              mode="outlined"
-              value={con}
-              onChangeText={(text) => updateCon(text, index)}
-              style={{ flex: 1 }}
-              dense
-            />
-            <IconButton icon="delete" onPress={() => removeCon(index)} />
-          </View>
-        ))}
-        <Button onPress={addCon} icon="plus">Add Con</Button>
-      </View>
-
-      <Divider style={{ marginVertical: 20 }} />
-
-      <View style={styles.section}>
-        <Text variant="titleMedium">Translations</Text>
-        {translations.length === 0 ? (
-          <Text>No translations found.</Text>
-        ) : (
-          translations.map((t) => (
-            <View key={t.language_code} style={[styles.row, { justifyContent: "space-between", paddingVertical: 8 }]}>
-              <Text style={{ textTransform: "uppercase" }}>{t.language_code}</Text>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Text style={{ marginRight: 8 }}>{t.human_verified ? "Verified" : "Unverified"}</Text>
-                <Switch
-                  value={t.human_verified}
-                  onValueChange={() => toggleVerified(t.language_code, t.human_verified)}
-                />
-              </View>
+          <Text variant="titleSmall" style={{ marginTop: 8 }}>Pros</Text>
+          {pros.map((pro, index) => (
+            <View key={index} style={styles.row}>
+              <TextInput
+                mode="outlined"
+                value={pro}
+                onChangeText={(text) => updatePro(text, index)}
+                style={{ flex: 1 }}
+                dense
+              />
+              <IconButton icon="delete" onPress={() => removePro(index)} />
             </View>
-          ))
-        )}
-      </View>
-    </ScrollView>
+          ))}
+          <Button onPress={addPro} icon="plus">Add Pro</Button>
+
+          <Text variant="titleSmall" style={{ marginTop: 16 }}>Cons</Text>
+          {cons.map((con, index) => (
+            <View key={index} style={styles.row}>
+              <TextInput
+                mode="outlined"
+                value={con}
+                onChangeText={(text) => updateCon(text, index)}
+                style={{ flex: 1 }}
+                dense
+              />
+              <IconButton icon="delete" onPress={() => removeCon(index)} />
+            </View>
+          ))}
+          <Button onPress={addCon} icon="plus">Add Con</Button>
+        </View>
+
+        <Divider style={{ marginVertical: 20 }} />
+
+        <View style={styles.section}>
+          <Text variant="titleMedium">Translations</Text>
+          {translations.length === 0 ? (
+            <Text>No translations found.</Text>
+          ) : (
+            translations.map((t) => (
+              <View key={t.language_code} style={[styles.row, { justifyContent: "space-between", paddingVertical: 8 }]}>
+                <Text style={{ textTransform: "uppercase" }}>{t.language_code}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text style={{ marginRight: 8 }}>{t.human_verified ? "Verified" : "Unverified"}</Text>
+                  <Switch
+                    value={t.human_verified}
+                    onValueChange={() => toggleVerified(t.language_code, t.human_verified)}
+                  />
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", padding: 16, justifyContent: "space-between" },
-  searchContainer: { padding: 16 },
+  header: {
+    marginHorizontal: 16,
+    padding: 14,
+    borderRadius: 24,
+    borderWidth: 1,
+    gap: 12,
+    elevation: 1,
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  searchbar: {
+    borderRadius: 22,
+    borderWidth: 1,
+    elevation: 0,
+  },
+  content: { flex: 1, paddingHorizontal: 16, paddingTop: 12 },
   card: { marginBottom: 8 },
+  detailHeader: { flexDirection: "row", alignItems: "center", padding: 16, justifyContent: "space-between" },
   section: { padding: 16 },
   row: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
 });
