@@ -65,7 +65,7 @@ export default function LnfScreen() {
           <Button
             mode="text"
             icon="shield-account"
-            onPress={() => router.push('/admin/bills')}
+            onPress={() => router.push('/admin/login')}
             style={styles.adminButton}
             compact
           >
