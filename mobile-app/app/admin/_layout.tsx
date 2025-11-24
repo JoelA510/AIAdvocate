@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, usePathname } from 'expo-router';
 import { View, StyleSheet } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
 import { useAuth } from '../../src/providers/AuthProvider';
@@ -7,15 +7,25 @@ import { supabase } from '../../src/lib/supabase';
 
 export default function AdminLayout() {
     const router = useRouter();
+    const pathname = usePathname();
     const { session } = useAuth();
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-    const [checking, setChecking] = useState(true);
+    const [checking, setChecking] = useState(false);
 
+    // Only check admin status if NOT on login page
     useEffect(() => {
+        // Allow login page to render without checks
+        if (pathname === '/admin/login') {
+            return;
+        }
+
         const checkAdmin = async () => {
+            setChecking(true);
+
             // Not authenticated or using anonymous auth - show login
             if (!session?.user || !session.user.email) {
                 router.replace('/admin/login');
+                setChecking(false);
                 return;
             }
 
@@ -28,7 +38,7 @@ export default function AdminLayout() {
                     .single();
 
                 if (error || !data) {
-                    // Not an admin - redirect to login with error
+                    // Not an admin - redirect to login
                     console.warn('Admin access denied for user:', session.user.email);
                     router.replace('/admin/login');
                     return;
@@ -45,10 +55,10 @@ export default function AdminLayout() {
         };
 
         checkAdmin();
-    }, [session, router]);
+    }, [session, pathname, router]);
 
-    // Show loading while checking
-    if (checking || isAdmin === null) {
+    // Show loading only when checking (not on login page)
+    if (checking && pathname !== '/admin/login') {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" />
@@ -57,7 +67,7 @@ export default function AdminLayout() {
         );
     }
 
-    // If we get here, user is verified admin - show the nested screens
+    // Render the stack with both screens
     return (
         <Stack>
             <Stack.Screen
