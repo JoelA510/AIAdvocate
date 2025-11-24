@@ -214,18 +214,21 @@ export default function AdminBillsScreen() {
         </View>
         <View style={styles.searchContainer}>
           <TextInput
+            key="search-input"
             mode="outlined"
             placeholder="Search Bill Number (e.g. AB 123)"
             value={searchQuery}
             onChangeText={setSearchQuery}
             right={<TextInput.Icon icon="magnify" onPress={searchBills} />}
             onSubmitEditing={searchBills}
+            returnKeyType="search"
           />
         </View>
         {loading ? (
           <ActivityIndicator style={{ marginTop: 20 }} />
         ) : (
           <FlatList
+            key="bills-list"
             data={bills}
             keyExtractor={(item) => item.id.toString()}
             renderItem={({ item }) => (
