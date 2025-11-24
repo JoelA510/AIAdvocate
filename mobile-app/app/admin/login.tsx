@@ -50,17 +50,20 @@ export default function AdminLoginScreen() {
                     return;
                 }
 
-                // Success - navigate to admin bills
+                // Success - show toast
                 Toast.show({
                     type: 'success',
                     text1: 'Welcome',
                     text2: `Logged in as ${email}`,
                 });
 
-                // Small delay to ensure session propagates
+                // Force session refresh to update AuthProvider
+                await supabase.auth.getSession();
+
+                // Navigate after ensuring session is refreshed
                 setTimeout(() => {
                     router.push('/admin/bills');
-                }, 100);
+                }, 300);
             }
         } catch (err: any) {
             Toast.show({
