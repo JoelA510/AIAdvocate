@@ -5,6 +5,7 @@ export default function AdminLayout() {
         <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="login" />
             <Stack.Screen name="bills" />
+            <Stack.Screen name="account" />
         </Stack>
     );
 }

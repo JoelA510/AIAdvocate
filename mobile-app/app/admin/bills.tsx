@@ -231,6 +231,11 @@ export default function AdminBillsScreen() {
       <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
         <View style={styles.header}>
           <Text variant="headlineMedium">Admin: Bills</Text>
+          <IconButton
+            icon="account-cog"
+            onPress={() => router.push('/admin/account')}
+            mode="contained-tonal"
+          />
         </View>
         <View style={styles.searchContainer}>
           <TextInput
