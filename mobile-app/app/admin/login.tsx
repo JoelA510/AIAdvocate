@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
-import { Text, TextInput, Button, Card } from 'react-native-paper';
+import { Text, TextInput, Button, Card, useTheme } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { supabase } from '../../src/lib/supabase';
 import Toast from 'react-native-toast-message';
 
 export default function AdminLoginScreen() {
     const router = useRouter();
+    const theme = useTheme();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
@@ -78,7 +79,7 @@ export default function AdminLoginScreen() {
 
     return (
         <KeyboardAvoidingView
-            style={styles.container}
+            style={[styles.container, { backgroundColor: theme.colors.background }]}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
             <View style={styles.content}>
@@ -134,7 +135,6 @@ export default function AdminLoginScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
     },
     content: {
         flex: 1,
