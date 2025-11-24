@@ -9,6 +9,8 @@ import {
     List,
     Switch,
     ActivityIndicator,
+    Portal,
+    Modal,
 } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -35,7 +37,14 @@ export default function AdminAccountScreen() {
     const [qrCodeUri, setQrCodeUri] = useState('');
     const [verificationCode, setVerificationCode] = useState('');
     const [factorId, setFactorId] = useState('');
+    const [verifiedFactorId, setVerifiedFactorId] = useState('');
     const [loading, setLoading] = useState(true);
+
+    // Challenge state
+    const [showChallenge, setShowChallenge] = useState(false);
+    const [challengeMode, setChallengeMode] = useState<'password' | 'disable' | null>(null);
+    const [challengeCode, setChallengeCode] = useState('');
+    const [verifyingChallenge, setVerifyingChallenge] = useState(false);
 
     // Check admin status and MFA status on mount
     useEffect(() => {
@@ -66,12 +75,15 @@ export default function AdminAccountScreen() {
         if (!error && data?.all) {
             const totpFactor = data.all.find((f: any) => f.factor_type === 'totp' && f.status === 'verified');
             setMfaEnabled(!!totpFactor);
+            if (totpFactor) {
+                setVerifiedFactorId(totpFactor.id);
+            }
         }
 
         setLoading(false);
     };
 
-    const handlePasswordChange = async () => {
+    const initiatePasswordChange = () => {
         if (!newPassword || !confirmPassword || !currentPassword) {
             Toast.show({
                 type: 'error',
@@ -99,21 +111,34 @@ export default function AdminAccountScreen() {
             return;
         }
 
+        if (mfaEnabled) {
+            setChallengeMode('password');
+            setShowChallenge(true);
+        } else {
+            performPasswordChange();
+        }
+    };
+
+    const performPasswordChange = async () => {
         setChangingPassword(true);
         try {
-            // Re-authenticate with current password first
-            const { error: signInError } = await supabase.auth.signInWithPassword({
-                email: session!.user.email!,
-                password: currentPassword,
-            });
-
-            if (signInError) {
-                Toast.show({
-                    type: 'error',
-                    text1: 'Authentication failed',
-                    text2: 'Current password is incorrect',
+            // Only re-auth with password if MFA is NOT enabled
+            // If MFA is enabled, we rely on the AAL2 upgrade we just did
+            if (!mfaEnabled) {
+                const { error: signInError } = await supabase.auth.signInWithPassword({
+                    email: session!.user.email!,
+                    password: currentPassword,
                 });
-                return;
+
+                if (signInError) {
+                    Toast.show({
+                        type: 'error',
+                        text1: 'Authentication failed',
+                        text2: 'Current password is incorrect',
+                    });
+                    setChangingPassword(false);
+                    return;
+                }
             }
 
             // Update password
@@ -141,6 +166,79 @@ export default function AdminAccountScreen() {
             });
         } finally {
             setChangingPassword(false);
+        }
+    };
+
+    const initiateDisableMFA = () => {
+        setChallengeMode('disable');
+        setShowChallenge(true);
+    };
+
+    const performDisableMFA = async () => {
+        try {
+            const { error } = await supabase.auth.mfa.unenroll({
+                factorId: verifiedFactorId,
+            });
+
+            if (error) throw error;
+
+            Toast.show({
+                type: 'success',
+                text1: 'MFA disabled',
+                text2: 'Two-factor authentication has been disabled',
+            });
+
+            setMfaEnabled(false);
+            setVerifiedFactorId('');
+        } catch (err: any) {
+            Toast.show({
+                type: 'error',
+                text1: 'Failed to disable MFA',
+                text2: err.message,
+            });
+        }
+    };
+
+    const handleChallengeSubmit = async () => {
+        if (challengeCode.length !== 6) {
+            Toast.show({
+                type: 'error',
+                text1: 'Invalid code',
+                text2: 'Please enter a 6-digit code',
+            });
+            return;
+        }
+
+        setVerifyingChallenge(true);
+        try {
+            const challenge = await supabase.auth.mfa.challenge({ factorId: verifiedFactorId });
+            if (challenge.error) throw challenge.error;
+
+            const verify = await supabase.auth.mfa.verify({
+                factorId: verifiedFactorId,
+                challengeId: challenge.data.id,
+                code: challengeCode,
+            });
+
+            if (verify.error) throw verify.error;
+
+            // Verification successful, close modal and proceed
+            setShowChallenge(false);
+            setChallengeCode('');
+
+            if (challengeMode === 'password') {
+                await performPasswordChange();
+            } else if (challengeMode === 'disable') {
+                await performDisableMFA();
+            }
+        } catch (err: any) {
+            Toast.show({
+                type: 'error',
+                text1: 'Verification failed',
+                text2: 'Invalid code or expired challenge',
+            });
+        } finally {
+            setVerifyingChallenge(false);
         }
     };
 
@@ -203,6 +301,7 @@ export default function AdminAccountScreen() {
             });
 
             setMfaEnabled(true);
+            setVerifiedFactorId(factorId);
             setEnrolling(false);
             setQrCodeUri('');
             setVerificationCode('');
@@ -214,51 +313,6 @@ export default function AdminAccountScreen() {
                 text2: 'Invalid code. Please try again.',
             });
         }
-    };
-
-    const handleDisableMFA = () => {
-        Alert.alert(
-            'Disable MFA',
-            'Are you sure you want to disable two-factor authentication? This will make your account less secure.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Disable',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            const { data, error: listError } = await supabase.auth.mfa.listFactors();
-
-                            if (listError) throw listError;
-
-                            const totpFactor = data?.all?.find((f: any) => f.factor_type === 'totp' && f.status === 'verified');
-
-                            if (totpFactor) {
-                                const { error } = await supabase.auth.mfa.unenroll({
-                                    factorId: totpFactor.id,
-                                });
-
-                                if (error) throw error;
-
-                                Toast.show({
-                                    type: 'success',
-                                    text1: 'MFA disabled',
-                                    text2: 'Two-factor authentication has been disabled',
-                                });
-
-                                setMfaEnabled(false);
-                            }
-                        } catch (err: any) {
-                            Toast.show({
-                                type: 'error',
-                                text1: 'Failed to disable MFA',
-                                text2: err.message,
-                            });
-                        }
-                    },
-                },
-            ]
-        );
     };
 
     if (loading) {
@@ -328,11 +382,11 @@ export default function AdminAccountScreen() {
                         autoCapitalize="none"
                         disabled={changingPassword}
                         style={styles.input}
-                        onSubmitEditing={handlePasswordChange}
+                        onSubmitEditing={initiatePasswordChange}
                     />
                     <Button
                         mode="contained"
-                        onPress={handlePasswordChange}
+                        onPress={initiatePasswordChange}
                         loading={changingPassword}
                         disabled={changingPassword}
                         style={styles.button}
@@ -359,7 +413,7 @@ export default function AdminAccountScreen() {
                                             if (enabled) {
                                                 handleEnrollMFA();
                                             } else {
-                                                handleDisableMFA();
+                                                initiateDisableMFA();
                                             }
                                         }}
                                     />
@@ -419,6 +473,55 @@ export default function AdminAccountScreen() {
                     )}
                 </Card.Content>
             </Card>
+
+            <Portal>
+                <Modal
+                    visible={showChallenge}
+                    onDismiss={() => {
+                        setShowChallenge(false);
+                        setChallengeCode('');
+                    }}
+                    contentContainerStyle={[styles.modalContent, { backgroundColor: theme.colors.surface }]}
+                >
+                    <Text variant="titleLarge" style={{ marginBottom: 16 }}>
+                        Security Verification
+                    </Text>
+                    <Text variant="bodyMedium" style={{ marginBottom: 16 }}>
+                        Please enter the code from your authenticator app to continue.
+                    </Text>
+                    <TextInput
+                        mode="outlined"
+                        label="MFA Code"
+                        value={challengeCode}
+                        onChangeText={setChallengeCode}
+                        keyboardType="number-pad"
+                        maxLength={6}
+                        style={styles.input}
+                        autoFocus
+                    />
+                    <View style={styles.buttonRow}>
+                        <Button
+                            mode="outlined"
+                            onPress={() => {
+                                setShowChallenge(false);
+                                setChallengeCode('');
+                            }}
+                            style={{ flex: 1, marginRight: 8 }}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            mode="contained"
+                            onPress={handleChallengeSubmit}
+                            loading={verifyingChallenge}
+                            disabled={challengeCode.length !== 6 || verifyingChallenge}
+                            style={{ flex: 1, marginLeft: 8 }}
+                        >
+                            Verify
+                        </Button>
+                    </View>
+                </Modal>
+            </Portal>
         </ScrollView>
     );
 }
@@ -457,5 +560,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         marginTop: 16,
         width: '100%',
+    },
+    modalContent: {
+        margin: 20,
+        padding: 20,
+        borderRadius: 8,
     },
 });
