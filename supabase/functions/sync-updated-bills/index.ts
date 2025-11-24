@@ -94,25 +94,44 @@ const sanitizeRawText = (raw: string): string =>
 const formatLegislationText = (raw: string): string => {
   if (!raw) return "";
   let working = raw;
+
+  // 1. HTML Parsing (if applicable)
   if (working.trim().startsWith("<")) {
     try {
       const doc = new DOMParser().parseFromString(working, "text/html");
       const walk = (node: Node, acc: string[] = []): string[] => {
-        if (node.nodeType === 3) acc.push((node as Text).data);
-        if (node.nodeType === 1) {
+        if (node.nodeType === 3) { // Text node
+          acc.push((node as Text).data);
+        }
+        if (node.nodeType === 1) { // Element node
           const el = node as Element;
-          if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(el.tagName)) {
+          if (["SCRIPT", "STYLE", "NOSCRIPT", "HEAD", "META"].includes(el.tagName)) {
             return acc;
           }
-          if (["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6"].includes(el.tagName)) {
-            acc.push("\n\n");
+
+          // Block elements - add newlines before
+          if (["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "SECTION", "ARTICLE", "HEADER", "FOOTER", "LI", "TR"].includes(el.tagName)) {
+            acc.push("\n");
           }
-          if (el.tagName === "LI") acc.push("\n• ");
+
+          // Lists
+          if (el.tagName === "LI") acc.push("• ");
+
+          // Tables
+          if (el.tagName === "TR") acc.push("\n");
+          if (el.tagName === "TD" || el.tagName === "TH") acc.push(" | ");
+
+          // Line breaks
           if (el.tagName === "BR") acc.push("\n");
+
           for (const child of Array.from(el.childNodes)) {
             walk(child, acc);
           }
-          if (el.tagName === "LI") acc.push("\n");
+
+          // Block elements - add newlines after
+          if (["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "SECTION", "ARTICLE", "HEADER", "FOOTER", "UL", "OL", "TABLE"].includes(el.tagName)) {
+            acc.push("\n\n");
+          }
         }
         return acc;
       };
@@ -121,12 +140,23 @@ const formatLegislationText = (raw: string): string => {
       console.warn("DOMParser parse failure", { error: String(error) });
     }
   }
-  const collapsed = collapseNLBlocks(
-    collapseSpacesExceptNL(
-      normalizeNewlines(working.replace(/\uFFFD|Â|\u00A0/g, " ")),
-    ),
-  );
-  return collapsed.trim();
+
+  // 2. Text Cleanup & Formatting
+  working = normalizeNewlines(working);
+  working = working.replace(/\uFFFD|Â|\u00A0/g, " ");
+  working = collapseSpacesExceptNL(working);
+
+  // Smart Formatting for Legislative Text
+  // Ensure headers like "SECTION 1." or "Article 5" are on their own lines
+  working = working
+    .replace(/(\n\s*)?(SECTION\s+\d+\.?)/gi, "\n\n$2")
+    .replace(/(\n\s*)?(ARTICLE\s+\d+\.?)/gi, "\n\n$2")
+    .replace(/(\n\s*)?(CHAPTER\s+\d+\.?)/gi, "\n\n$2");
+
+  // Collapse multiple newlines (max 2)
+  working = collapseNLBlocks(working);
+
+  return working.trim();
 };
 
 const toAscii = (input: string): string =>

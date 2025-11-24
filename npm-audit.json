@@ -1,0 +1,282 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "@expo/image-utils": {
+      "name": "@expo/image-utils",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "semver"
+      ],
+      "effects": [
+        "expo-pwa"
+      ],
+      "range": "<=0.0.1-canary-20240109-93608d8 || 0.3.10-alpha.0 - 0.4.2",
+      "nodes": [
+        "node_modules/expo-pwa/node_modules/@expo/image-utils"
+      ],
+      "fixAvailable": {
+        "name": "@expo/webpack-config",
+        "version": "18.0.0",
+        "isSemVerMajor": true
+      }
+    },
+    "@expo/webpack-config": {
+      "name": "@expo/webpack-config",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "expo-pwa",
+        "webpack-dev-server"
+      ],
+      "effects": [],
+      "range": ">=0.12.53-alpha.0",
+      "nodes": [
+        "node_modules/@expo/webpack-config"
+      ],
+      "fixAvailable": {
+        "name": "@expo/webpack-config",
+        "version": "18.0.0",
+        "isSemVerMajor": true
+      }
+    },
+    "@sentry/browser": {
+      "name": "@sentry/browser",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1099838,
+          "name": "@sentry/browser",
+          "dependency": "@sentry/browser",
+          "title": "Sentry SDK Prototype Pollution gadget in JavaScript SDKs",
+          "url": "https://github.com/advisories/GHSA-593m-55hh-j8gv",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-913"
+          ],
+          "cvss": {
+            "score": 5.6,
+            "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L"
+          },
+          "range": "<7.119.1"
+        }
+      ],
+      "effects": [
+        "@sentry/react",
+        "@sentry/react-native"
+      ],
+      "range": "<7.119.1",
+      "nodes": [
+        "node_modules/@sentry/react/node_modules/@sentry/browser",
+        "node_modules/sentry-expo/node_modules/@sentry/browser"
+      ],
+      "fixAvailable": {
+        "name": "sentry-expo",
+        "version": "7.1.1",
+        "isSemVerMajor": true
+      }
+    },
+    "@sentry/react": {
+      "name": "@sentry/react",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        "@sentry/browser"
+      ],
+      "effects": [
+        "@sentry/react-native",
+        "sentry-expo"
+      ],
+      "range": "<=7.119.0",
+      "nodes": [
+        "node_modules/@sentry/react"
+      ],
+      "fixAvailable": {
+        "name": "sentry-expo",
+        "version": "7.1.1",
+        "isSemVerMajor": true
+      }
+    },
+    "@sentry/react-native": {
+      "name": "@sentry/react-native",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        "@sentry/browser",
+        "@sentry/react",
+        {
+          "source": 1096616,
+          "name": "@sentry/react-native",
+          "dependency": "@sentry/react-native",
+          "title": "Potential leakage of Sentry auth tokens by React Native SDK with Expo plugin",
+          "url": "https://github.com/advisories/GHSA-68c2-4mpx-qh95",
+          "severity": "low",
+          "cwe": [
+            "CWE-200"
+          ],
+          "cvss": {
+            "score": 0,
+            "vectorString": null
+          },
+          "range": ">=5.16.0 <=5.19.0"
+        }
+      ],
+      "effects": [
+        "sentry-expo"
+      ],
+      "range": "<=5.33.1",
+      "nodes": [
+        "node_modules/sentry-expo/node_modules/@sentry/react-native"
+      ],
+      "fixAvailable": {
+        "name": "sentry-expo",
+        "version": "7.1.1",
+        "isSemVerMajor": true
+      }
+    },
+    "expo-pwa": {
+      "name": "expo-pwa",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "@expo/image-utils"
+      ],
+      "effects": [
+        "@expo/webpack-config"
+      ],
+      "range": ">=0.0.59-alpha.0",
+      "nodes": [
+        "node_modules/expo-pwa"
+      ],
+      "fixAvailable": {
+        "name": "@expo/webpack-config",
+        "version": "18.0.0",
+        "isSemVerMajor": true
+      }
+    },
+    "semver": {
+      "name": "semver",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1101088,
+          "name": "semver",
+          "dependency": "semver",
+          "title": "semver vulnerable to Regular Expression Denial of Service",
+          "url": "https://github.com/advisories/GHSA-c2qf-rxjj-qqgw",
+          "severity": "high",
+          "cwe": [
+            "CWE-1333"
+          ],
+          "cvss": {
+            "score": 7.5,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+          },
+          "range": ">=7.0.0 <7.5.2"
+        }
+      ],
+      "effects": [
+        "@expo/image-utils"
+      ],
+      "range": "7.0.0 - 7.5.1",
+      "nodes": [
+        "node_modules/expo-pwa/node_modules/semver"
+      ],
+      "fixAvailable": {
+        "name": "@expo/webpack-config",
+        "version": "18.0.0",
+        "isSemVerMajor": true
+      }
+    },
+    "sentry-expo": {
+      "name": "sentry-expo",
+      "severity": "moderate",
+      "isDirect": true,
+      "via": [
+        "@sentry/react",
+        "@sentry/react-native"
+      ],
+      "effects": [],
+      "range": ">=6.0.0",
+      "nodes": [
+        "node_modules/sentry-expo"
+      ],
+      "fixAvailable": {
+        "name": "sentry-expo",
+        "version": "7.1.1",
+        "isSemVerMajor": true
+      }
+    },
+    "webpack-dev-server": {
+      "name": "webpack-dev-server",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1108429,
+          "name": "webpack-dev-server",
+          "dependency": "webpack-dev-server",
+          "title": "webpack-dev-server users' source code may be stolen when they access a malicious web site with non-Chromium based browser",
+          "url": "https://github.com/advisories/GHSA-9jgg-88mc-972h",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-346"
+          ],
+          "cvss": {
+            "score": 6.5,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N"
+          },
+          "range": "<=5.2.0"
+        },
+        {
+          "source": 1108430,
+          "name": "webpack-dev-server",
+          "dependency": "webpack-dev-server",
+          "title": "webpack-dev-server users' source code may be stolen when they access a malicious web site",
+          "url": "https://github.com/advisories/GHSA-4v9v-hfq4-rm2v",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-749"
+          ],
+          "cvss": {
+            "score": 5.3,
+            "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N"
+          },
+          "range": "<=5.2.0"
+        }
+      ],
+      "effects": [
+        "@expo/webpack-config"
+      ],
+      "range": "<=5.2.0",
+      "nodes": [
+        "node_modules/webpack-dev-server"
+      ],
+      "fixAvailable": {
+        "name": "@expo/webpack-config",
+        "version": "18.0.0",
+        "isSemVerMajor": true
+      }
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 5,
+      "high": 4,
+      "critical": 0,
+      "total": 9
+    },
+    "dependencies": {
+      "prod": 1356,
+      "dev": 381,
+      "optional": 6,
+      "peer": 43,
+      "peerOptional": 0,
+      "total": 1778
+    }
+  }
+}
