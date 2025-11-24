@@ -56,7 +56,11 @@ export default function AdminLoginScreen() {
                     text1: 'Welcome',
                     text2: `Logged in as ${email}`,
                 });
-                router.replace('/admin/bills');
+
+                // Small delay to ensure session propagates
+                setTimeout(() => {
+                    router.push('/admin/bills');
+                }, 100);
             }
         } catch (err: any) {
             Toast.show({
