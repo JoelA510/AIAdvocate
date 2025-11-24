@@ -17,6 +17,21 @@ import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 import Toast from "react-native-toast-message";
 
+// Helper function for audit logging
+const logAdminAction = async (userId: string, action: string, billId?: number, details?: any) => {
+  try {
+    await supabase.from('admin_audit_log').insert({
+      user_id: userId,
+      action,
+      bill_id: billId,
+      details: details ? JSON.stringify(details) : null,
+    });
+  } catch (err) {
+    // Silent fail on audit logging to not interrupt user workflow
+    console.warn('Failed to log admin action:', err);
+  }
+};
+
 type AdminBill = {
   id: number;
   bill_number: string;
@@ -40,13 +55,13 @@ export default function AdminBillsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { session } = useAuth();
-  
+
   const [searchQuery, setSearchQuery] = useState("");
   const [bills, setBills] = useState<AdminBill[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedBill, setSelectedBill] = useState<AdminBill | null>(null);
   const [translations, setTranslations] = useState<Translation[]>([]);
-  
+
   // Edit state
   const [pros, setPros] = useState<string[]>([]);
   const [cons, setCons] = useState<string[]>([]);
@@ -62,7 +77,7 @@ export default function AdminBillsScreen() {
         .select("user_id")
         .eq("user_id", session.user.id)
         .single();
-      
+
       if (error || !data) {
         Alert.alert("Access Denied", "You do not have admin permissions.");
         router.replace("/");
@@ -80,7 +95,7 @@ export default function AdminBillsScreen() {
         .select("id, bill_number, title, panel_review")
         .ilike("bill_number", `%${searchQuery}%`)
         .limit(20);
-        
+
       if (error) throw error;
       setBills(data || []);
     } catch (err: any) {
@@ -95,7 +110,7 @@ export default function AdminBillsScreen() {
       .from("bill_translations")
       .select("language_code, human_verified")
       .eq("bill_id", billId);
-      
+
     if (!error && data) {
       setTranslations(data);
     }
@@ -110,7 +125,7 @@ export default function AdminBillsScreen() {
   };
 
   const handleSave = async () => {
-    if (!selectedBill) return;
+    if (!selectedBill || !session?.user) return;
     setSaving(true);
     try {
       const updatedReview = {
@@ -130,7 +145,15 @@ export default function AdminBillsScreen() {
       if (error) throw error;
 
       Toast.show({ type: "success", text1: "Saved successfully" });
-      
+
+      // Log the action
+      await logAdminAction(
+        session.user.id,
+        'update_bill_review',
+        selectedBill.id,
+        { pros: pros.length, cons: cons.length, notes_length: notes.length }
+      );
+
       // Update local state
       setBills(prev => prev.map(b => b.id === selectedBill.id ? { ...b, panel_review: updatedReview } : b));
       setSelectedBill({ ...selectedBill, panel_review: updatedReview });
@@ -143,7 +166,7 @@ export default function AdminBillsScreen() {
   };
 
   const toggleVerified = async (lang: string, currentValue: boolean) => {
-    if (!selectedBill) return;
+    if (!selectedBill || !session?.user) return;
     try {
       const { error } = await supabase
         .from("bill_translations")
@@ -154,6 +177,14 @@ export default function AdminBillsScreen() {
       if (error) throw error;
 
       setTranslations(prev => prev.map(t => t.language_code === lang ? { ...t, human_verified: !currentValue } : t));
+
+      // Log the verification toggle
+      await logAdminAction(
+        session.user.id,
+        'toggle_translation_verification',
+        selectedBill.id,
+        { language: lang, verified: !currentValue }
+      );
     } catch (err: any) {
       Toast.show({ type: "error", text1: "Update failed", text2: err.message });
     }

@@ -1,7 +1,7 @@
 // mobile-app/app/(tabs)/lnf.tsx (modified)
 import React from "react";
 import { StyleSheet, View, Platform, Linking, Pressable } from "react-native";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
@@ -15,6 +15,7 @@ const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
 export default function LnfScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   return (
     <ThemedView style={styles.container}>
@@ -58,6 +59,19 @@ export default function LnfScreen() {
             style={{ flex: 1 }}
           />
         )}
+
+        {/* Admin Access Button */}
+        <View style={styles.adminButtonContainer}>
+          <Button
+            mode="text"
+            icon="shield-account"
+            onPress={() => router.push('/admin/bills')}
+            style={styles.adminButton}
+            compact
+          >
+            Admin
+          </Button>
+        </View>
       </View>
     </ThemedView>
   );
@@ -72,4 +86,13 @@ const styles = StyleSheet.create({
   },
   heroCard: { flex: 1, justifyContent: "center" },
   heroBody: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 8 },
+  adminButtonContainer: {
+    position: 'absolute',
+    bottom: 16,
+    right: 16,
+    opacity: 0.7,
+  },
+  adminButton: {
+    backgroundColor: 'rgba(128, 128, 128, 0.1)',
+  },
 });
