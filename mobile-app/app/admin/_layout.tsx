@@ -13,9 +13,9 @@ export default function AdminLayout() {
 
     useEffect(() => {
         const checkAdmin = async () => {
-            // Not authenticated at all
-            if (!session?.user) {
-                router.replace('/');
+            // Not authenticated or using anonymous auth - show login
+            if (!session?.user || !session.user.email) {
+                router.replace('/admin/login');
                 return;
             }
 
@@ -28,9 +28,9 @@ export default function AdminLayout() {
                     .single();
 
                 if (error || !data) {
-                    // Not an admin - redirect to home
+                    // Not an admin - redirect to login with error
                     console.warn('Admin access denied for user:', session.user.email);
-                    router.replace('/');
+                    router.replace('/admin/login');
                     return;
                 }
 
@@ -38,7 +38,7 @@ export default function AdminLayout() {
                 setIsAdmin(true);
             } catch (err) {
                 console.error('Error checking admin status:', err);
-                router.replace('/');
+                router.replace('/admin/login');
             } finally {
                 setChecking(false);
             }
@@ -60,6 +60,13 @@ export default function AdminLayout() {
     // If we get here, user is verified admin - show the nested screens
     return (
         <Stack>
+            <Stack.Screen
+                name="login"
+                options={{
+                    title: 'Admin Login',
+                    headerShown: true
+                }}
+            />
             <Stack.Screen
                 name="bills"
                 options={{
