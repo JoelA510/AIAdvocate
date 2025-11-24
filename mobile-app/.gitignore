@@ -12,3 +12,7 @@ supabase/.env.example
 supabase/.envios/
 android/
 .vercel
+coverage/
+node_modules/
+dist/
+.expo/

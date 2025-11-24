@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "i18n:scan": "i18next-scanner",
-    "test": "jest"
+    "test": "jest",
+    "check-size": "node scripts/check-bundle-size.js"
   },
   "dependencies": {
     "@expo/webpack-config": "^19.0.1",
