@@ -56,7 +56,16 @@ export default function AdminUsersScreen() {
 
             setAdmins(data.admins);
         } catch (err: any) {
-            Toast.show({ type: "error", text1: "Failed to load admins", text2: err.message });
+            console.error("Load admins error:", err);
+            if (err.message?.includes("Failed to send a request")) {
+                Toast.show({
+                    type: "error",
+                    text1: "Edge Function Missing",
+                    text2: "Please deploy 'manage-admin-users' function."
+                });
+            } else {
+                Toast.show({ type: "error", text1: "Failed to load admins", text2: err.message });
+            }
         } finally {
             setLoading(false);
         }

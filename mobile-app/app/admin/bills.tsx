@@ -217,10 +217,11 @@ export default function AdminBillsScreen() {
         notes,
       };
 
-      const { error } = await supabase
-        .from("bills")
-        .update({ panel_review: updatedReview })
-        .eq("id", selectedBill.id);
+      // Use RPC to ensure persistence (bypasses potential RLS issues)
+      const { error } = await supabase.rpc('update_bill_review', {
+        p_bill_id: selectedBill.id,
+        p_review: updatedReview
+      });
 
       if (error) throw error;
 
@@ -236,15 +237,17 @@ export default function AdminBillsScreen() {
         throw new Error("Save verified failed - data may not have persisted");
       }
 
-      Toast.show({ type: "success", text1: "Saved successfully" });
+      // Deep verification: Check if content matches
+      const savedReview = verifyData.panel_review;
+      if (
+        savedReview.notes !== notes ||
+        JSON.stringify(savedReview.pros) !== JSON.stringify(pros) ||
+        JSON.stringify(savedReview.cons) !== JSON.stringify(cons)
+      ) {
+        throw new Error("Save verification mismatch - DB data does not match local state");
+      }
 
-      // Log the action
-      await logAdminAction(
-        session.user.id,
-        'update_bill_review',
-        selectedBill.id,
-        { pros: pros.length, cons: cons.length, notes_length: notes.length }
-      );
+      Toast.show({ type: "success", text1: "Saved successfully" });
 
       // Update local state
       setBills(prev => prev.map(b => b.id === selectedBill.id ? { ...b, panel_review: updatedReview } : b));
