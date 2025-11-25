@@ -254,25 +254,26 @@ export default function AdminBillsScreen() {
 
       // 2. Save Summaries based on selected language
       if (selectedLanguage === 'en') {
-        const { error: billError } = await supabase
-          .from('bills')
-          .update({
-            title: editTitle,
-            summary_simple: editSimple,
-            summary_medium: editMedium,
-            summary_complex: editComplex,
-          })
-          .eq('id', selectedBill.id);
+        // Use RPC for secure update (Deep Debug Version)
+        const { data: updatedData, error: billError } = await supabase.rpc('update_bill_summary', {
+          p_bill_id: selectedBill.id,
+          p_title: editTitle,
+          p_simple: editSimple,
+          p_medium: editMedium,
+          p_complex: editComplex
+        });
 
         if (billError) throw billError;
 
-        // Update local state
+        console.log("RPC Returned Data:", updatedData);
+
+        // Update local state with the data returned from DB
         const updatedBill = {
           ...selectedBill,
-          title: editTitle,
-          summary_simple: editSimple,
-          summary_medium: editMedium,
-          summary_complex: editComplex,
+          title: updatedData.title,
+          summary_simple: updatedData.summary_simple,
+          summary_medium: updatedData.summary_medium,
+          summary_complex: updatedData.summary_complex,
           panel_review: updatedReview
         };
         setSelectedBill(updatedBill);
@@ -287,23 +288,22 @@ export default function AdminBillsScreen() {
             title: editTitle,
             simple: editSimple,
             medium: editMedium,
-            complex: editComplex
+            complex: editComplex,
+            db_verified: true
           }
         );
 
       } else {
-        // Update Translation
-        const { error: transError } = await supabase
-          .from('bill_translations')
-          .update({
-            title: editTitle,
-            summary_simple: editSimple,
-            summary_medium: editMedium,
-            summary_complex: editComplex,
-            human_verified: isVerified
-          })
-          .eq('bill_id', selectedBill.id)
-          .eq('language_code', selectedLanguage);
+        // Use RPC for secure translation update
+        const { error: transError } = await supabase.rpc('update_bill_translation_secure', {
+          p_bill_id: selectedBill.id,
+          p_language_code: selectedLanguage,
+          p_title: editTitle,
+          p_simple: editSimple,
+          p_medium: editMedium,
+          p_complex: editComplex,
+          p_verified: isVerified
+        });
 
         if (transError) throw transError;
 
