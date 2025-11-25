@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { View, StyleSheet, ScrollView, FlatList, Alert } from "react-native";
+import { View, StyleSheet, ScrollView, FlatList, Alert, Platform } from "react-native";
 import {
   Text,
   TextInput,
@@ -11,6 +11,7 @@ import {
   Divider,
   IconButton,
   Searchbar,
+  SegmentedButtons,
 } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -29,7 +30,6 @@ const logAdminAction = async (userId: string, action: string, billId?: number, d
       details: details ? JSON.stringify(details) : null,
     });
   } catch (err) {
-    // Silent fail on audit logging to not interrupt user workflow
     console.warn('Failed to log admin action:', err);
   }
 };
@@ -38,13 +38,18 @@ type AdminBill = {
   id: number;
   bill_number: string;
   title: string;
+  summary_simple?: string;
+  summary_medium?: string;
+  summary_complex?: string;
+  original_text?: string;
   panel_review: {
     pros?: string[];
     cons?: string[];
     notes?: string;
-    recommendation?: string; // Keep for backward compatibility if needed
-    comment?: string; // Keep for backward compatibility if needed
+    recommendation?: string;
+    comment?: string;
   } | null;
+  created_at: string;
 };
 
 type Translation = {
@@ -52,6 +57,8 @@ type Translation = {
   human_verified: boolean;
   title?: string;
   summary_simple?: string;
+  summary_medium?: string;
+  summary_complex?: string;
 };
 
 export default function AdminBillsScreen() {
@@ -66,23 +73,30 @@ export default function AdminBillsScreen() {
   const [loading, setLoading] = useState(true);
   const [initialLoad, setInitialLoad] = useState(true);
   const [selectedBill, setSelectedBill] = useState<AdminBill | null>(null);
-  const [translations, setTranslations] = useState<Translation[]>([]);
 
-  // Edit state
+  // Translation/Summary State
+  const [availableLanguages, setAvailableLanguages] = useState<string[]>(['en']);
+  const [selectedLanguage, setSelectedLanguage] = useState('en');
+  const [translations, setTranslations] = useState<Record<string, Translation>>({});
+
+  // Edit state (Review)
   const [pros, setPros] = useState<string[]>([]);
   const [cons, setCons] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
+
+  // Edit state (Summaries)
+  const [editTitle, setEditTitle] = useState("");
+  const [editSimple, setEditSimple] = useState("");
+  const [editMedium, setEditMedium] = useState("");
+  const [editComplex, setEditComplex] = useState("");
+  const [isVerified, setIsVerified] = useState(false);
+
   const [saving, setSaving] = useState(false);
 
   // Logs state
   const [billLogs, setBillLogs] = useState<any[]>([]);
 
-  // Translation edit state
-  const [editingTranslation, setEditingTranslation] = useState<string | null>(null);
-  const [transTitle, setTransTitle] = useState("");
-  const [transSummary, setTransSummary] = useState("");
-
-  // Check if user is admin (simple client-side check, RLS enforces real security)
+  // Check if user is admin
   useEffect(() => {
     const checkAdmin = async () => {
       if (!session?.user || !session.user.email) {
@@ -114,7 +128,7 @@ export default function AdminBillsScreen() {
     try {
       let queryBuilder = supabase
         .from("bills")
-        .select("id, bill_number, title, panel_review, created_at")
+        .select("id, bill_number, title, summary_simple, summary_medium, summary_complex, original_text, panel_review, created_at")
         .order("created_at", { ascending: false })
         .limit(50);
 
@@ -141,11 +155,21 @@ export default function AdminBillsScreen() {
   const fetchTranslations = async (billId: number) => {
     const { data, error } = await supabase
       .from("bill_translations")
-      .select("language_code, human_verified, title, summary_simple")
+      .select("*")
       .eq("bill_id", billId);
 
     if (!error && data) {
-      setTranslations(data);
+      const transMap: Record<string, Translation> = {};
+      const langs = ['en'];
+      data.forEach((t: any) => {
+        transMap[t.language_code] = t;
+        if (!langs.includes(t.language_code)) langs.push(t.language_code);
+      });
+      setTranslations(transMap);
+      setAvailableLanguages(langs);
+    } else {
+      setAvailableLanguages(['en']);
+      setTranslations({});
     }
   };
 
@@ -166,50 +190,54 @@ export default function AdminBillsScreen() {
     setPros(bill.panel_review?.pros || []);
     setCons(bill.panel_review?.cons || []);
     setNotes(bill.panel_review?.notes || bill.panel_review?.comment || "");
+
+    // Reset language to EN initially
+    setSelectedLanguage('en');
+    setEditTitle(bill.title || "");
+    setEditSimple(bill.summary_simple || "");
+    setEditMedium(bill.summary_medium || "");
+    setEditComplex(bill.summary_complex || "");
+    setIsVerified(bill.panel_review ? true : false); // 'en' verification is tied to bill verification? Or just assume verified.
+    // Actually bills table has is_verified, but let's stick to translations logic for now.
+
     await fetchTranslations(bill.id);
     await loadBillLogs(bill.id);
   };
 
-  const startEditingTranslation = (t: any) => {
-    setEditingTranslation(t.language_code);
-    setTransTitle(t.title || "");
-    setTransSummary(t.summary_simple || "");
-  };
-
-  const saveTranslation = async (lang: string) => {
+  // Handle language switch
+  useEffect(() => {
     if (!selectedBill) return;
-    try {
-      const { error } = await supabase
-        .from("bill_translations")
-        .update({
-          title: transTitle,
-          summary_simple: transSummary,
-          human_verified: true // Auto-verify on edit
-        })
-        .eq("bill_id", selectedBill.id)
-        .eq("language_code", lang);
 
-      if (error) throw error;
-
-      Toast.show({ type: "success", text1: "Translation updated" });
-      setEditingTranslation(null);
-      fetchTranslations(selectedBill.id); // Reload
-
-      await logAdminAction(
-        session!.user!.id,
-        'update_translation',
-        selectedBill.id,
-        { language: lang }
-      );
-    } catch (err: any) {
-      Toast.show({ type: "error", text1: "Update failed", text2: err.message });
+    if (selectedLanguage === 'en') {
+      setEditTitle(selectedBill.title || "");
+      setEditSimple(selectedBill.summary_simple || "");
+      setEditMedium(selectedBill.summary_medium || "");
+      setEditComplex(selectedBill.summary_complex || "");
+      setIsVerified(true); // English is source
+    } else {
+      const t = translations[selectedLanguage];
+      if (t) {
+        setEditTitle(t.title || "");
+        setEditSimple(t.summary_simple || "");
+        setEditMedium(t.summary_medium || "");
+        setEditComplex(t.summary_complex || "");
+        setIsVerified(t.human_verified);
+      } else {
+        // Should not happen if availableLanguages is correct, but fallback
+        setEditTitle("");
+        setEditSimple("");
+        setEditMedium("");
+        setEditComplex("");
+        setIsVerified(false);
+      }
     }
-  };
+  }, [selectedLanguage, translations, selectedBill]);
 
   const handleSave = async () => {
     if (!selectedBill || !session?.user) return;
     setSaving(true);
     try {
+      // 1. Save Panel Review (Pros/Cons/Notes) - Always saves to bill
       const updatedReview = {
         ...selectedBill.panel_review,
         pros,
@@ -217,43 +245,70 @@ export default function AdminBillsScreen() {
         notes,
       };
 
-      // Use RPC to ensure persistence (bypasses potential RLS issues)
-      const { error } = await supabase.rpc('update_bill_review', {
+      const { error: rpcError } = await supabase.rpc('update_bill_review', {
         p_bill_id: selectedBill.id,
         p_review: updatedReview
       });
 
-      if (error) throw error;
+      if (rpcError) throw rpcError;
 
-      // Verify save by reading back
-      const { data: verifyData, error: verifyError } = await supabase
-        .from("bills")
-        .select("panel_review")
-        .eq("id", selectedBill.id)
-        .single();
+      // 2. Save Summaries based on selected language
+      if (selectedLanguage === 'en') {
+        const { error: billError } = await supabase
+          .from('bills')
+          .update({
+            title: editTitle,
+            summary_simple: editSimple,
+            summary_medium: editMedium,
+            summary_complex: editComplex,
+          })
+          .eq('id', selectedBill.id);
 
-      if (verifyError || !verifyData) {
-        console.error("Verification failed:", verifyError);
-        throw new Error("Save verified failed - data may not have persisted");
-      }
+        if (billError) throw billError;
 
-      // Deep verification: Check if content matches
-      const savedReview = verifyData.panel_review;
-      if (
-        savedReview.notes !== notes ||
-        JSON.stringify(savedReview.pros) !== JSON.stringify(pros) ||
-        JSON.stringify(savedReview.cons) !== JSON.stringify(cons)
-      ) {
-        throw new Error("Save verification mismatch - DB data does not match local state");
+        // Update local state
+        const updatedBill = {
+          ...selectedBill,
+          title: editTitle,
+          summary_simple: editSimple,
+          summary_medium: editMedium,
+          summary_complex: editComplex,
+          panel_review: updatedReview
+        };
+        setSelectedBill(updatedBill);
+        setBills(prev => prev.map(b => b.id === selectedBill.id ? updatedBill : b));
+
+      } else {
+        // Update Translation
+        const { error: transError } = await supabase
+          .from('bill_translations')
+          .update({
+            title: editTitle,
+            summary_simple: editSimple,
+            summary_medium: editMedium,
+            summary_complex: editComplex,
+            human_verified: isVerified
+          })
+          .eq('bill_id', selectedBill.id)
+          .eq('language_code', selectedLanguage);
+
+        if (transError) throw transError;
+
+        // Update local translations map
+        setTranslations(prev => ({
+          ...prev,
+          [selectedLanguage]: {
+            ...prev[selectedLanguage],
+            title: editTitle,
+            summary_simple: editSimple,
+            summary_medium: editMedium,
+            summary_complex: editComplex,
+            human_verified: isVerified
+          }
+        }));
       }
 
       Toast.show({ type: "success", text1: "Saved successfully" });
-
-      // Update local state
-      setBills(prev => prev.map(b => b.id === selectedBill.id ? { ...b, panel_review: updatedReview } : b));
-      setSelectedBill({ ...selectedBill, panel_review: updatedReview });
-
-      // Reload logs to show the new action
       await loadBillLogs(selectedBill.id);
 
     } catch (err: any) {
@@ -261,31 +316,6 @@ export default function AdminBillsScreen() {
       Toast.show({ type: "error", text1: "Save failed", text2: err.message });
     } finally {
       setSaving(false);
-    }
-  };
-
-  const toggleVerified = async (lang: string, currentValue: boolean) => {
-    if (!selectedBill || !session?.user) return;
-    try {
-      const { error } = await supabase
-        .from("bill_translations")
-        .update({ human_verified: !currentValue })
-        .eq("bill_id", selectedBill.id)
-        .eq("language_code", lang);
-
-      if (error) throw error;
-
-      setTranslations(prev => prev.map(t => t.language_code === lang ? { ...t, human_verified: !currentValue } : t));
-
-      // Log the verification toggle
-      await logAdminAction(
-        session.user.id,
-        'toggle_translation_verification',
-        selectedBill.id,
-        { language: lang, verified: !currentValue }
-      );
-    } catch (err: any) {
-      Toast.show({ type: "error", text1: "Update failed", text2: err.message });
     }
   };
 
@@ -308,32 +338,12 @@ export default function AdminBillsScreen() {
   if (!selectedBill) {
     return (
       <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
-        <View
-          style={[
-            styles.header,
-            {
-              backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
-              borderColor: colors.outlineVariant ?? theme.colors.outline,
-              shadowColor: colors.shadow ?? "#000",
-            },
-          ]}
-        >
+        <View style={[styles.header, { backgroundColor: colors.surfaceContainerHigh, borderColor: colors.outlineVariant }]}>
           <View style={styles.headerTopRow}>
             <Text variant="titleLarge" style={{ fontWeight: '600' }}>Admin View: Bills</Text>
             <View style={{ flexDirection: 'row' }}>
-              <IconButton
-                icon="account-group"
-                onPress={() => router.push('/admin/users')}
-                mode="contained-tonal"
-                size={24}
-                style={{ marginRight: 8 }}
-              />
-              <IconButton
-                icon="account-cog"
-                onPress={() => router.push('/admin/account')}
-                mode="contained-tonal"
-                size={24}
-              />
+              <IconButton icon="account-group" onPress={() => router.push('/admin/users')} mode="contained-tonal" size={24} style={{ marginRight: 8 }} />
+              <IconButton icon="account-cog" onPress={() => router.push('/admin/account')} mode="contained-tonal" size={24} />
             </View>
           </View>
           <Searchbar
@@ -343,16 +353,7 @@ export default function AdminBillsScreen() {
             onSubmitEditing={searchBills}
             onIconPress={searchBills}
             loading={loading}
-            style={[
-              styles.searchbar,
-              {
-                backgroundColor: colors.surfaceContainerLowest ?? theme.colors.surface,
-                borderColor: colors.outlineVariant ?? theme.colors.outline,
-              },
-            ]}
-            inputStyle={{ fontSize: 16 }}
-            iconColor={theme.colors.primary}
-            placeholderTextColor={theme.colors.onSurfaceVariant}
+            style={[styles.searchbar, { backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }]}
           />
           <Button mode="text" onPress={() => router.push('/admin/logs')} style={{ alignSelf: 'flex-end', marginTop: -8 }}>
             View All Logs
@@ -364,7 +365,6 @@ export default function AdminBillsScreen() {
             <ActivityIndicator style={{ marginTop: 20 }} size="large" />
           ) : (
             <FlatList
-              key="bills-list"
               data={bills}
               keyExtractor={(item) => item.id.toString()}
               showsVerticalScrollIndicator={false}
@@ -383,17 +383,7 @@ export default function AdminBillsScreen() {
 
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
-      <View
-        style={[
-          styles.header,
-          {
-            backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
-            borderColor: colors.outlineVariant ?? theme.colors.outline,
-            shadowColor: colors.shadow ?? "#000",
-            marginBottom: 0, // Override default margin for detail view
-          },
-        ]}
-      >
+      <View style={[styles.header, { backgroundColor: colors.surfaceContainerHigh, borderColor: colors.outlineVariant, marginBottom: 0 }]}>
         <View style={styles.headerTopRow}>
           <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>Back</Button>
           <Text variant="titleMedium" style={{ fontWeight: '600' }}>{selectedBill.bill_number}</Text>
@@ -401,13 +391,11 @@ export default function AdminBillsScreen() {
         </View>
       </View>
 
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 40 }}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+
+        {/* Survivor Panel Notes Section */}
         <View style={styles.section}>
-          <Text variant="titleMedium">Survivor Panel Notes</Text>
+          <Text variant="titleMedium" style={{ marginBottom: 12 }}>Survivor Panel Review</Text>
           <TextInput
             mode="outlined"
             label="General Notes / Summary"
@@ -421,13 +409,7 @@ export default function AdminBillsScreen() {
           <Text variant="titleSmall" style={{ marginTop: 8 }}>Pros</Text>
           {pros.map((pro, index) => (
             <View key={index} style={styles.row}>
-              <TextInput
-                mode="outlined"
-                value={pro}
-                onChangeText={(text) => updatePro(text, index)}
-                style={{ flex: 1, backgroundColor: theme.colors.surface }}
-                dense
-              />
+              <TextInput mode="outlined" value={pro} onChangeText={(text) => updatePro(text, index)} style={{ flex: 1, backgroundColor: theme.colors.surface }} dense />
               <IconButton icon="delete" onPress={() => removePro(index)} />
             </View>
           ))}
@@ -436,13 +418,7 @@ export default function AdminBillsScreen() {
           <Text variant="titleSmall" style={{ marginTop: 16 }}>Cons</Text>
           {cons.map((con, index) => (
             <View key={index} style={styles.row}>
-              <TextInput
-                mode="outlined"
-                value={con}
-                onChangeText={(text) => updateCon(text, index)}
-                style={{ flex: 1, backgroundColor: theme.colors.surface }}
-                dense
-              />
+              <TextInput mode="outlined" value={con} onChangeText={(text) => updateCon(text, index)} style={{ flex: 1, backgroundColor: theme.colors.surface }} dense />
               <IconButton icon="delete" onPress={() => removeCon(index)} />
             </View>
           ))}
@@ -451,61 +427,69 @@ export default function AdminBillsScreen() {
 
         <Divider style={{ marginVertical: 20 }} />
 
+        {/* Bill Summaries Section */}
         <View style={styles.section}>
-          <Text variant="titleMedium">Translations</Text>
-          {translations.length === 0 ? (
-            <Text>No translations found.</Text>
-          ) : (
-            translations.map((t: any) => (
-              <Card key={t.language_code} style={{ marginBottom: 12, backgroundColor: theme.colors.surface }}>
-                <Card.Content>
-                  <View style={[styles.row, { justifyContent: "space-between" }]}>
-                    <Text style={{ textTransform: "uppercase", fontWeight: 'bold' }}>{t.language_code}</Text>
-                    <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <Text style={{ marginRight: 8 }}>{t.human_verified ? "Verified" : "Unverified"}</Text>
-                      <Switch
-                        value={t.human_verified}
-                        onValueChange={() => toggleVerified(t.language_code, t.human_verified)}
-                      />
-                    </View>
-                  </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text variant="titleMedium">Bill Summaries</Text>
+            {selectedLanguage !== 'en' && (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ marginRight: 8 }}>Verified</Text>
+                <Switch value={isVerified} onValueChange={setIsVerified} />
+              </View>
+            )}
+          </View>
 
-                  {editingTranslation === t.language_code ? (
-                    <View>
-                      <TextInput
-                        label="Title"
-                        value={transTitle}
-                        onChangeText={setTransTitle}
-                        style={{ marginBottom: 8 }}
-                      />
-                      <TextInput
-                        label="Summary"
-                        value={transSummary}
-                        onChangeText={setTransSummary}
-                        multiline
-                        numberOfLines={3}
-                        style={{ marginBottom: 8 }}
-                      />
-                      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-                        <Button onPress={() => setEditingTranslation(null)}>Cancel</Button>
-                        <Button mode="contained" onPress={() => saveTranslation(t.language_code)}>Save</Button>
-                      </View>
-                    </View>
-                  ) : (
-                    <View>
-                      <Text variant="bodyMedium" style={{ fontWeight: 'bold' }}>{t.title}</Text>
-                      <Text variant="bodySmall" numberOfLines={2}>{t.summary_simple}</Text>
-                      <Button onPress={() => startEditingTranslation(t)} style={{ alignSelf: 'flex-start', marginTop: 4 }}>Edit</Button>
-                    </View>
-                  )}
-                </Card.Content>
-              </Card>
-            ))
-          )}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+            <SegmentedButtons
+              value={selectedLanguage}
+              onValueChange={setSelectedLanguage}
+              buttons={availableLanguages.map(lang => ({
+                value: lang,
+                label: lang.toUpperCase(),
+              }))}
+              style={{ minWidth: 200 }}
+            />
+          </ScrollView>
+
+          <TextInput
+            mode="outlined"
+            label="Title"
+            value={editTitle}
+            onChangeText={setEditTitle}
+            style={{ marginBottom: 12, backgroundColor: theme.colors.surface }}
+          />
+          <TextInput
+            mode="outlined"
+            label="Simple Summary"
+            value={editSimple}
+            onChangeText={setEditSimple}
+            multiline
+            numberOfLines={4}
+            style={{ marginBottom: 12, backgroundColor: theme.colors.surface }}
+          />
+          <TextInput
+            mode="outlined"
+            label="Medium Summary"
+            value={editMedium}
+            onChangeText={setEditMedium}
+            multiline
+            numberOfLines={6}
+            style={{ marginBottom: 12, backgroundColor: theme.colors.surface }}
+          />
+          <TextInput
+            mode="outlined"
+            label="Complex Summary"
+            value={editComplex}
+            onChangeText={setEditComplex}
+            multiline
+            numberOfLines={8}
+            style={{ marginBottom: 12, backgroundColor: theme.colors.surface }}
+          />
         </View>
 
         <Divider style={{ marginVertical: 20 }} />
 
+        {/* Audit Logs Section */}
         <View style={styles.section}>
           <Text variant="titleMedium" style={{ marginBottom: 8 }}>Audit Logs (This Bill)</Text>
           {billLogs.length === 0 ? (
@@ -548,7 +532,6 @@ const styles = StyleSheet.create({
   },
   content: { flex: 1, paddingHorizontal: 16, paddingTop: 12 },
   card: { marginBottom: 8 },
-  detailHeader: { flexDirection: "row", alignItems: "center", padding: 16, justifyContent: "space-between" },
   section: { padding: 16 },
   row: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
 });
