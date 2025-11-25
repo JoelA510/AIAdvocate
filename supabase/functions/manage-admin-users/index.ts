@@ -66,11 +66,15 @@ serve(async (req) => {
             }
 
             // Log action
-            await supabaseAdmin.from("admin_audit_log").insert({
+            const { error: logError } = await supabaseAdmin.from("admin_audit_log").insert({
                 user_id: user.id,
                 action: "create_admin",
                 details: { target_email: email, target_user_id: newUser.user.id },
             });
+
+            if (logError) {
+                console.error("Failed to log create_admin:", logError);
+            }
 
             return new Response(JSON.stringify({ user: newUser.user }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -78,25 +82,37 @@ serve(async (req) => {
         } else if (action === "delete") {
             if (!userId) throw new Error("User ID required");
 
+            console.log(`Attempting to delete user: ${userId}`);
+
             // Remove from app_admins first
             const { error: deleteAdminError } = await supabaseAdmin
                 .from("app_admins")
                 .delete()
                 .eq("user_id", userId);
 
-            if (deleteAdminError) throw deleteAdminError;
+            if (deleteAdminError) {
+                console.error("Failed to delete from app_admins:", deleteAdminError);
+                throw deleteAdminError;
+            }
 
             // Delete from Auth
             const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(userId);
 
-            if (deleteAuthError) throw deleteAuthError;
+            if (deleteAuthError) {
+                console.error("Failed to delete from Auth:", deleteAuthError);
+                throw deleteAuthError;
+            }
 
             // Log action
-            await supabaseAdmin.from("admin_audit_log").insert({
+            const { error: logError } = await supabaseAdmin.from("admin_audit_log").insert({
                 user_id: user.id,
                 action: "delete_admin",
                 details: { target_user_id: userId },
             });
+
+            if (logError) {
+                console.error("Failed to log delete_admin:", logError);
+            }
 
             return new Response(JSON.stringify({ success: true }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
