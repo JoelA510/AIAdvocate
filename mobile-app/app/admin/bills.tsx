@@ -50,6 +50,8 @@ type AdminBill = {
 type Translation = {
   language_code: string;
   human_verified: boolean;
+  title?: string;
+  summary_simple?: string;
 };
 
 export default function AdminBillsScreen() {
@@ -71,6 +73,14 @@ export default function AdminBillsScreen() {
   const [cons, setCons] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Logs state
+  const [billLogs, setBillLogs] = useState<any[]>([]);
+
+  // Translation edit state
+  const [editingTranslation, setEditingTranslation] = useState<string | null>(null);
+  const [transTitle, setTransTitle] = useState("");
+  const [transSummary, setTransSummary] = useState("");
 
   // Check if user is admin (simple client-side check, RLS enforces real security)
   useEffect(() => {
@@ -131,11 +141,23 @@ export default function AdminBillsScreen() {
   const fetchTranslations = async (billId: number) => {
     const { data, error } = await supabase
       .from("bill_translations")
-      .select("language_code, human_verified")
+      .select("language_code, human_verified, title, summary_simple")
       .eq("bill_id", billId);
 
     if (!error && data) {
       setTranslations(data);
+    }
+  };
+
+  const loadBillLogs = async (billId: number) => {
+    const { data, error } = await supabase
+      .from("admin_audit_log")
+      .select("*")
+      .eq("bill_id", billId)
+      .order("timestamp", { ascending: false });
+
+    if (!error && data) {
+      setBillLogs(data);
     }
   };
 
@@ -145,6 +167,43 @@ export default function AdminBillsScreen() {
     setCons(bill.panel_review?.cons || []);
     setNotes(bill.panel_review?.notes || bill.panel_review?.comment || "");
     await fetchTranslations(bill.id);
+    await loadBillLogs(bill.id);
+  };
+
+  const startEditingTranslation = (t: any) => {
+    setEditingTranslation(t.language_code);
+    setTransTitle(t.title || "");
+    setTransSummary(t.summary_simple || "");
+  };
+
+  const saveTranslation = async (lang: string) => {
+    if (!selectedBill) return;
+    try {
+      const { error } = await supabase
+        .from("bill_translations")
+        .update({
+          title: transTitle,
+          summary_simple: transSummary,
+          human_verified: true // Auto-verify on edit
+        })
+        .eq("bill_id", selectedBill.id)
+        .eq("language_code", lang);
+
+      if (error) throw error;
+
+      Toast.show({ type: "success", text1: "Translation updated" });
+      setEditingTranslation(null);
+      fetchTranslations(selectedBill.id); // Reload
+
+      await logAdminAction(
+        session!.user!.id,
+        'update_translation',
+        selectedBill.id,
+        { language: lang }
+      );
+    } catch (err: any) {
+      Toast.show({ type: "error", text1: "Update failed", text2: err.message });
+    }
   };
 
   const handleSave = async () => {
@@ -255,12 +314,21 @@ export default function AdminBillsScreen() {
         >
           <View style={styles.headerTopRow}>
             <Text variant="titleLarge" style={{ fontWeight: '600' }}>Admin View: Bills</Text>
-            <IconButton
-              icon="account-cog"
-              onPress={() => router.push('/admin/account')}
-              mode="contained-tonal"
-              size={24}
-            />
+            <View style={{ flexDirection: 'row' }}>
+              <IconButton
+                icon="account-group"
+                onPress={() => router.push('/admin/users')}
+                mode="contained-tonal"
+                size={24}
+                style={{ marginRight: 8 }}
+              />
+              <IconButton
+                icon="account-cog"
+                onPress={() => router.push('/admin/account')}
+                mode="contained-tonal"
+                size={24}
+              />
+            </View>
           </View>
           <Searchbar
             placeholder="Search Bill Number (e.g. AB 123)"
@@ -280,6 +348,9 @@ export default function AdminBillsScreen() {
             iconColor={theme.colors.primary}
             placeholderTextColor={theme.colors.onSurfaceVariant}
           />
+          <Button mode="text" onPress={() => router.push('/admin/logs')} style={{ alignSelf: 'flex-end', marginTop: -8 }}>
+            View All Logs
+          </Button>
         </View>
 
         <View style={[styles.content, { paddingBottom: insets.bottom + 12 }]}>
@@ -379,16 +450,66 @@ export default function AdminBillsScreen() {
           {translations.length === 0 ? (
             <Text>No translations found.</Text>
           ) : (
-            translations.map((t) => (
-              <View key={t.language_code} style={[styles.row, { justifyContent: "space-between", paddingVertical: 8 }]}>
-                <Text style={{ textTransform: "uppercase" }}>{t.language_code}</Text>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Text style={{ marginRight: 8 }}>{t.human_verified ? "Verified" : "Unverified"}</Text>
-                  <Switch
-                    value={t.human_verified}
-                    onValueChange={() => toggleVerified(t.language_code, t.human_verified)}
-                  />
-                </View>
+            translations.map((t: any) => (
+              <Card key={t.language_code} style={{ marginBottom: 12, backgroundColor: theme.colors.surface }}>
+                <Card.Content>
+                  <View style={[styles.row, { justifyContent: "space-between" }]}>
+                    <Text style={{ textTransform: "uppercase", fontWeight: 'bold' }}>{t.language_code}</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      <Text style={{ marginRight: 8 }}>{t.human_verified ? "Verified" : "Unverified"}</Text>
+                      <Switch
+                        value={t.human_verified}
+                        onValueChange={() => toggleVerified(t.language_code, t.human_verified)}
+                      />
+                    </View>
+                  </View>
+
+                  {editingTranslation === t.language_code ? (
+                    <View>
+                      <TextInput
+                        label="Title"
+                        value={transTitle}
+                        onChangeText={setTransTitle}
+                        style={{ marginBottom: 8 }}
+                      />
+                      <TextInput
+                        label="Summary"
+                        value={transSummary}
+                        onChangeText={setTransSummary}
+                        multiline
+                        numberOfLines={3}
+                        style={{ marginBottom: 8 }}
+                      />
+                      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                        <Button onPress={() => setEditingTranslation(null)}>Cancel</Button>
+                        <Button mode="contained" onPress={() => saveTranslation(t.language_code)}>Save</Button>
+                      </View>
+                    </View>
+                  ) : (
+                    <View>
+                      <Text variant="bodyMedium" style={{ fontWeight: 'bold' }}>{t.title}</Text>
+                      <Text variant="bodySmall" numberOfLines={2}>{t.summary_simple}</Text>
+                      <Button onPress={() => startEditingTranslation(t)} style={{ alignSelf: 'flex-start', marginTop: 4 }}>Edit</Button>
+                    </View>
+                  )}
+                </Card.Content>
+              </Card>
+            ))
+          )}
+        </View>
+
+        <Divider style={{ marginVertical: 20 }} />
+
+        <View style={styles.section}>
+          <Text variant="titleMedium" style={{ marginBottom: 8 }}>Audit Logs (This Bill)</Text>
+          {billLogs.length === 0 ? (
+            <Text>No logs found for this bill.</Text>
+          ) : (
+            billLogs.map((log) => (
+              <View key={log.id} style={{ marginBottom: 8, padding: 8, backgroundColor: theme.colors.surfaceVariant, borderRadius: 8 }}>
+                <Text variant="labelSmall">{new Date(log.timestamp).toLocaleString()}</Text>
+                <Text variant="bodyMedium">{log.action}</Text>
+                <Text variant="bodySmall" style={{ fontFamily: 'monospace' }}>{JSON.stringify(log.details)}</Text>
               </View>
             ))
           )}
