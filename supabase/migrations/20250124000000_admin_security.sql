@@ -114,4 +114,24 @@ ORDER BY u.created_at DESC;
 -- FROM public.admin_audit_log al
 -- JOIN auth.users u ON al.user_id = u.id
 -- ORDER BY al.timestamp DESC
--- LIMIT 20;
+-- ================================================================
+-- PART 5: ADMIN CAPABILITIES (RLS UPDATES)
+-- ================================================================
+
+-- Allow admins to UPDATE bills (for panel reviews)
+CREATE POLICY "Admins can update bills" ON public.bills
+  FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()));
+
+-- Allow admins to MANAGE translations (Insert/Update/Delete)
+CREATE POLICY "Admins can manage translations" ON public.bill_translations
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()));
+
+-- Allow admins to VIEW ALL audit logs
+CREATE POLICY "Admins can view all audit logs" ON public.admin_audit_log
+  FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()));
+
