@@ -219,42 +219,50 @@ export default function BillDetailsScreen() {
             ) : null}
           </View>
 
-          {bill.panel_review && (
-            (bill.panel_review.notes ||
-              (bill.panel_review.pros && bill.panel_review.pros.length > 0) ||
-              (bill.panel_review.cons && bill.panel_review.cons.length > 0) ||
-              bill.panel_review.recommendation ||
-              bill.panel_review.comment) ? (
+          {bill.panel_review && (() => {
+            const hasNotes = bill.panel_review.notes && bill.panel_review.notes.trim().length > 0;
+            const hasPros = bill.panel_review.pros && bill.panel_review.pros.some(p => p && p.trim().length > 0);
+            const hasCons = bill.panel_review.cons && bill.panel_review.cons.some(c => c && c.trim().length > 0);
+            const hasRec = bill.panel_review.recommendation && bill.panel_review.recommendation.trim().length > 0;
+            const hasComment = bill.panel_review.comment && bill.panel_review.comment.trim().length > 0;
+
+            if (!hasNotes && !hasPros && !hasCons && !hasRec && !hasComment) return null;
+
+            return (
               <Card style={styles.reviewCard} mode="outlined">
-                <Card.Title title={t("bill.panel.title", "Survivor Panel Review")} />
+                <Card.Title
+                  title={t("bill.panel.title", "Survivor Panel Review")}
+                  titleVariant="headlineSmall"
+                  titleStyle={{ fontWeight: "bold" }}
+                />
                 <Card.Content>
                   {/* Legacy Support */}
-                  {bill.panel_review.recommendation && (
+                  {hasRec && (
                     <Text variant="labelLarge" style={styles.reviewRecommendation}>
                       {t("bill.panel.recommendation", "Recommendation: {{r}}", {
                         r: bill.panel_review.recommendation,
                       })}
                     </Text>
                   )}
-                  {bill.panel_review.comment && (
+                  {hasComment && (
                     <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
                       {bill.panel_review.comment}
                     </Text>
                   )}
 
                   {/* New Fields */}
-                  {bill.panel_review.notes ? (
+                  {hasNotes && (
                     <Text variant="bodyMedium" style={{ marginBottom: 12 }}>
                       {bill.panel_review.notes}
                     </Text>
-                  ) : null}
+                  )}
 
-                  {bill.panel_review.pros && bill.panel_review.pros.length > 0 && (
+                  {hasPros && (
                     <View style={{ marginBottom: 8 }}>
                       <Text variant="labelMedium" style={{ color: "green", fontWeight: "bold" }}>
                         Pros:
                       </Text>
-                      {bill.panel_review.pros.map((pro, i) => (
+                      {bill.panel_review.pros!.filter(p => p && p.trim().length > 0).map((pro, i) => (
                         <Text key={i} variant="bodySmall">
                           • {pro}
                         </Text>
@@ -262,12 +270,12 @@ export default function BillDetailsScreen() {
                     </View>
                   )}
 
-                  {bill.panel_review.cons && bill.panel_review.cons.length > 0 && (
+                  {hasCons && (
                     <View>
                       <Text variant="labelMedium" style={{ color: "red", fontWeight: "bold" }}>
                         Cons:
                       </Text>
-                      {bill.panel_review.cons.map((con, i) => (
+                      {bill.panel_review.cons!.filter(c => c && c.trim().length > 0).map((con, i) => (
                         <Text key={i} variant="bodySmall">
                           • {con}
                         </Text>
@@ -276,8 +284,8 @@ export default function BillDetailsScreen() {
                   )}
                 </Card.Content>
               </Card>
-            ) : null
-          )}
+            );
+          })()}
 
           <Divider style={styles.divider} />
           <FindYourRep bill={bill} />
