@@ -253,6 +253,9 @@ export default function AdminBillsScreen() {
       setBills(prev => prev.map(b => b.id === selectedBill.id ? { ...b, panel_review: updatedReview } : b));
       setSelectedBill({ ...selectedBill, panel_review: updatedReview });
 
+      // Reload logs to show the new action
+      await loadBillLogs(selectedBill.id);
+
     } catch (err: any) {
       console.error("Save error:", err);
       Toast.show({ type: "error", text1: "Save failed", text2: err.message });

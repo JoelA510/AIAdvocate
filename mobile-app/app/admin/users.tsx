@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, StyleSheet, FlatList, Alert } from "react-native";
+import { View, StyleSheet, FlatList, Alert, Platform } from "react-native";
 import {
     Text,
     Button,
@@ -97,29 +97,38 @@ export default function AdminUsersScreen() {
     };
 
     const handleRemoveAdmin = async (userId: string) => {
-        Alert.alert(
-            "Remove Admin",
-            "Are you sure you want to remove this admin? This will delete their account.",
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Remove",
-                    style: "destructive",
-                    onPress: async () => {
-                        try {
-                            const { error } = await supabase.functions.invoke("manage-admin-users", {
-                                body: { action: "delete", userId },
-                            });
-                            if (error) throw error;
-                            Toast.show({ type: "success", text1: "Admin removed" });
-                            loadAdmins();
-                        } catch (err: any) {
-                            Toast.show({ type: "error", text1: "Failed to remove admin", text2: err.message });
-                        }
+        if (Platform.OS === 'web') {
+            const confirmed = window.confirm("Are you sure you want to remove this admin? This will delete their account.");
+            if (confirmed) {
+                await removeAdmin(userId);
+            }
+        } else {
+            Alert.alert(
+                "Remove Admin",
+                "Are you sure you want to remove this admin? This will delete their account.",
+                [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                        text: "Remove",
+                        style: "destructive",
+                        onPress: () => removeAdmin(userId),
                     },
-                },
-            ]
-        );
+                ]
+            );
+        }
+    };
+
+    const removeAdmin = async (userId: string) => {
+        try {
+            const { error } = await supabase.functions.invoke("manage-admin-users", {
+                body: { action: "delete", userId },
+            });
+            if (error) throw error;
+            Toast.show({ type: "success", text1: "Admin removed" });
+            loadAdmins();
+        } catch (err: any) {
+            Toast.show({ type: "error", text1: "Failed to remove admin", text2: err.message });
+        }
     };
 
     return (
