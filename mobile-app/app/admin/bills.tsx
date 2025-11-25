@@ -278,6 +278,19 @@ export default function AdminBillsScreen() {
         setSelectedBill(updatedBill);
         setBills(prev => prev.map(b => b.id === selectedBill.id ? updatedBill : b));
 
+        // Log English Summary Update
+        await logAdminAction(
+          session.user.id,
+          'update_bill_summary_en',
+          selectedBill.id,
+          {
+            title: editTitle,
+            simple: editSimple,
+            medium: editMedium,
+            complex: editComplex
+          }
+        );
+
       } else {
         // Update Translation
         const { error: transError } = await supabase
@@ -306,6 +319,21 @@ export default function AdminBillsScreen() {
             human_verified: isVerified
           }
         }));
+
+        // Log Translation Update
+        await logAdminAction(
+          session.user.id,
+          'update_bill_translation',
+          selectedBill.id,
+          {
+            language: selectedLanguage,
+            title: editTitle,
+            simple: editSimple,
+            medium: editMedium,
+            complex: editComplex,
+            verified: isVerified
+          }
+        );
       }
 
       Toast.show({ type: "success", text1: "Saved successfully" });
