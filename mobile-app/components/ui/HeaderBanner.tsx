@@ -8,7 +8,7 @@ import { useAppTheme } from "@/providers/AppThemeProvider";
 import { PATHS } from "@/lib/paths";
 
 const BANNER = require("../../assets/images/header-banner.png");
-const HEADER_HEIGHT = 50;
+const HEADER_HEIGHT = 56;
 const EXTRA_PAD = 24;
 const COLLAPSED_ROUTES = new Set<string>(["/splash"]);
 
@@ -31,7 +31,7 @@ export default function HeaderBanner({ forceShow }: Props) {
 
   const nextLang = i18n.language === "es" ? "en" : "es";
   const onToggleLang = () => {
-    i18n.changeLanguage(nextLang).catch(() => {});
+    i18n.changeLanguage(nextLang).catch(() => { });
   };
 
   const themeIcon = resolvedScheme === "dark" ? "weather-night" : "white-balance-sunny";
@@ -83,7 +83,7 @@ export default function HeaderBanner({ forceShow }: Props) {
           height: containerHeight,
           backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
           borderBottomColor: colors.outlineVariant ?? theme.colors.outline,
-          shadowColor: colors.shadow ?? "#000",
+          shadowColor: colors.shadow ?? theme.colors.shadow,
         },
       ]}
     >
@@ -133,7 +133,7 @@ export default function HeaderBanner({ forceShow }: Props) {
               accessibilityRole="button"
               activeOpacity={0.85}
             >
-              <Text style={{ color: theme.colors.onPrimary, fontWeight: "600" }}>
+              <Text style={[theme.fonts.labelLarge, { color: theme.colors.onPrimary }]}>
                 {i18n.language === "es" ? "ES" : "EN"}
               </Text>
             </TouchableOpacity>

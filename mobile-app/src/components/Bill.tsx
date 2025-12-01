@@ -341,7 +341,6 @@ export default function BillComponent({ bill }: { bill: Bill }) {
       <Pressable
         onPress={handlePress}
         android_ripple={{ color: theme.colors.surfaceVariant }}
-        style={{ borderRadius: 24 }}
       >
         <Card.Content style={styles.content}>
           <View style={styles.header}>
@@ -450,7 +449,6 @@ const styles = StyleSheet.create({
   card: {
     marginBottom: 18,
     borderWidth: 1,
-    borderRadius: 24,
   },
   content: {
     gap: 8,
@@ -461,7 +459,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  billNumber: { fontWeight: "700" },
+  billNumber: {},
   title: { marginBottom: 4 },
   summary: { marginTop: 4 },
   metaContainer: { marginTop: 12, gap: 4 },

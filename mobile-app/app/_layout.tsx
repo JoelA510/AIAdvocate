@@ -69,11 +69,12 @@ export default function RootLayout() {
   // If config failed, show a minimal error screen.
   if (configError) {
     const t = (k: string, d: string) => i18next.t(k, d);
+    const colors = colorScheme === "dark" ? Colors.dark : Colors.light;
     return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorTitle}>{t("config.errorTitle", "Configuration Error")}</Text>
-        <Text style={styles.errorBody}>{configError}</Text>
-        <Text style={styles.errorHint}>
+      <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
+        <Text style={[styles.errorTitle, { color: colors.text }]}>{t("config.errorTitle", "Configuration Error")}</Text>
+        <Text style={[styles.errorBody, { color: colors.text }]}>{configError}</Text>
+        <Text style={[styles.errorHint, { color: colors.icon }]}>
           {t("config.errorHint", "Check your mobile-app/.env and restart the dev server.")}
         </Text>
       </View>
@@ -149,23 +150,21 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 24,
     paddingTop: 64,
-    backgroundColor: "#fff",
     justifyContent: "flex-start",
   },
   errorTitle: {
-    fontSize: 20,
-    fontWeight: "700",
+    fontSize: 24,
+    fontWeight: "400", // Using a lighter weight typical of MD3 headlines
     marginBottom: 12,
   },
   errorBody: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#333",
   },
   errorHint: {
     marginTop: 16,
     fontSize: 12,
-    color: "#666",
+    color: Colors.light.icon,
   },
   fallbackContainer: {
     flex: 1,

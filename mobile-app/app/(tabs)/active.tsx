@@ -117,6 +117,7 @@ export default function ActiveScreen() {
           {
             backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
             borderColor: colors.outlineVariant ?? theme.colors.outline,
+            borderRadius: theme.roundness * 6,
           },
         ]}
       >
@@ -133,9 +134,8 @@ const styles = StyleSheet.create({
   },
   header: {
     marginHorizontal: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    borderRadius: 24,
+    padding: 16,
+    // borderRadius will be applied via style prop to access theme
     borderWidth: 1,
     elevation: 1,
   },
