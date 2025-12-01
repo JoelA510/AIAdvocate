@@ -431,6 +431,7 @@ export default function BillsHomeScreen() {
             backgroundColor: colors.surfaceContainerHigh ?? theme.colors.surface,
             borderColor: colors.outlineVariant ?? theme.colors.outline,
             shadowColor: colors.shadow ?? "#000",
+            borderRadius: theme.roundness * 6,
           },
         ]}
       >
@@ -447,7 +448,7 @@ export default function BillsHomeScreen() {
               borderColor: colors.outlineVariant ?? theme.colors.outline,
             },
           ]}
-          inputStyle={{ fontSize: 16 }}
+
           iconColor={theme.colors.primary}
           placeholderTextColor={theme.colors.onSurfaceVariant}
         />
@@ -471,14 +472,12 @@ const styles = StyleSheet.create({
   header: {
     marginHorizontal: 16,
     padding: 14,
-    borderRadius: 24,
+    // borderRadius will be applied via style prop to access theme
     borderWidth: 1,
     gap: 8,
     elevation: 1,
   },
   searchbar: {
-    borderRadius: 22,
-    borderWidth: 1,
     elevation: 0,
   },
   sessionButtons: { marginTop: 8 },

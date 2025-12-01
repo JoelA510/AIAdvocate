@@ -142,7 +142,7 @@ export default function FooterNav() {
             accessibilityLabel={item.label}
           >
             {iconNode}
-            <Text style={[styles.label, { color: iconColor }]} numberOfLines={1}>
+            <Text style={[styles.label, theme.fonts.labelSmall, { color: iconColor }]} numberOfLines={1}>
               {item.label}
             </Text>
           </Pressable>
@@ -171,10 +171,8 @@ const styles = StyleSheet.create({
     opacity: 1,
   },
   label: {
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "none",
     marginTop: 2,
+    textAlign: "center",
   },
   lnfIcon: {
     width: 22,

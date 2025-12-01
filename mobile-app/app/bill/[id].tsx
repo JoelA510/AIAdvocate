@@ -143,7 +143,7 @@ export default function BillDetailsScreen() {
   if (loading) {
     return (
       <View style={[styles.centeredContainer, { backgroundColor: theme.colors.background }]}>
-        <ActivityIndicator size="large" />
+        <PaperActivityIndicator size="large" />
       </View>
     );
   }
@@ -200,7 +200,7 @@ export default function BillDetailsScreen() {
           {isTranslating ? (
             <View style={styles.translatingContainer}>
               <PaperActivityIndicator size="small" />
-              <Text style={styles.translatingText}>{t("bill.translating", "Translating...")}</Text>
+              <Text variant="bodyLarge" style={[styles.translatingText, { color: theme.colors.onSurfaceVariant }]}>{t("bill.translating", "Translating...")}</Text>
             </View>
           ) : (
             <Text variant="titleLarge" style={styles.subtitle}>
@@ -233,7 +233,6 @@ export default function BillDetailsScreen() {
                 <Card.Title
                   title={t("bill.panel.title", "Survivor Panel Review")}
                   titleVariant="headlineSmall"
-                  titleStyle={{ fontWeight: "bold" }}
                 />
                 <Card.Content>
                   {/* Legacy Support */}
@@ -259,7 +258,7 @@ export default function BillDetailsScreen() {
 
                   {hasPros && (
                     <View style={{ marginBottom: 8 }}>
-                      <Text variant="labelMedium" style={{ color: "green", fontWeight: "bold" }}>
+                      <Text variant="labelMedium" style={{ color: theme.colors.primary }}>
                         Pros:
                       </Text>
                       {bill.panel_review.pros!.filter(p => p && p.trim().length > 0).map((pro, i) => (
@@ -272,7 +271,7 @@ export default function BillDetailsScreen() {
 
                   {hasCons && (
                     <View>
-                      <Text variant="labelMedium" style={{ color: "red", fontWeight: "bold" }}>
+                      <Text variant="labelMedium" style={{ color: theme.colors.error }}>
                         Cons:
                       </Text>
                       {bill.panel_review.cons!.filter(c => c && c.trim().length > 0).map((con, i) => (
@@ -303,19 +302,18 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   centeredContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 16 },
   container: { flex: 1, padding: 16, paddingBottom: 40 },
-  title: { fontWeight: "bold" },
+  title: {},
   subtitle: { marginBottom: 16 },
   actionsContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-start",
     marginBottom: 8,
-    marginLeft: -8,
     gap: 8,
   },
   divider: { marginVertical: 16 },
   reviewCard: { marginVertical: 8 },
-  reviewRecommendation: { fontWeight: "bold", marginBottom: 8 },
+  reviewRecommendation: { marginBottom: 8 },
   translatingContainer: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-  translatingText: { marginLeft: 12, fontSize: 18, fontStyle: "italic", color: "gray" },
+  translatingText: { marginLeft: 12, fontStyle: "italic" },
 });
