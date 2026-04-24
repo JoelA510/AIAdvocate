@@ -35,8 +35,8 @@ BEGIN
 
   IF endpoint = 'sync-updated-bills' THEN
     sync_secret := COALESCE(
-      vault.get_secret('sync_secret'),
-      (SELECT value FROM public.app_config WHERE key = 'sync_secret' LIMIT 1)
+      vault.get_secret('SYNC_SECRET'),
+      vault.get_secret('sync_secret')
     );
 
     IF sync_secret IS NULL OR sync_secret = '' THEN
@@ -45,7 +45,7 @@ BEGIN
       RETURN;
     END IF;
 
-    req_headers := req_headers || jsonb_build_object('authorization', 'Bearer ' || sync_secret);
+    req_headers := req_headers || jsonb_build_object('Authorization', 'Bearer ' || sync_secret);
   END IF;
 
   -- normalize final URL

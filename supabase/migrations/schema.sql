@@ -150,9 +150,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  status_code INT;
-  anon_key    TEXT;
-  base_url    TEXT;
+  status_code  INT;
+  anon_key     TEXT;
+  base_url     TEXT;
+  sync_secret  TEXT;
+  req_headers  JSONB;
 BEGIN
   -- prefer Vault, then app_config
   base_url := COALESCE(
@@ -173,13 +175,30 @@ BEGIN
     RETURN;
   END IF;
 
+  req_headers := jsonb_build_object('Content-Type','application/json','apikey', anon_key);
+
+  IF endpoint = 'sync-updated-bills' THEN
+    sync_secret := COALESCE(
+      vault.get_secret('SYNC_SECRET'),
+      vault.get_secret('sync_secret')
+    );
+
+    IF sync_secret IS NULL OR sync_secret = '' THEN
+      INSERT INTO public.cron_job_errors(job_name, error_message)
+      VALUES (job_name, 'Invoke Error: missing sync_secret for sync-updated-bills');
+      RETURN;
+    END IF;
+
+    req_headers := req_headers || jsonb_build_object('Authorization', 'Bearer ' || sync_secret);
+  END IF;
+
   -- normalize final URL
   base_url := rtrim(base_url, '/');
 
   SELECT status INTO status_code
   FROM net.http_post(
     url     := base_url || '/' || endpoint,
-    headers := jsonb_build_object('Content-Type','application/json','apikey', anon_key)::text
+    headers := req_headers::text
   );
 
   IF status_code <> 200 THEN
