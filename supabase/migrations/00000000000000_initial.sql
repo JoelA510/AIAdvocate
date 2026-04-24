@@ -278,11 +278,14 @@ CREATE OR REPLACE FUNCTION public.invoke_edge_function(endpoint TEXT, job_name T
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
-  status_code INT;
-  anon_key    TEXT;
-  base_url    TEXT;
+  anon_key     TEXT;
+  base_url     TEXT;
+  sync_secret  TEXT;
+  req_headers  JSONB;
+  request_id   BIGINT;
 BEGIN
   -- prefer Vault, then app_config
   base_url := COALESCE(
@@ -303,18 +306,34 @@ BEGIN
     RETURN;
   END IF;
 
+  req_headers := jsonb_build_object('Content-Type','application/json','apikey', anon_key);
+
+  IF endpoint = 'sync-updated-bills' THEN
+    sync_secret := COALESCE(
+      vault.get_secret('SYNC_SECRET'),
+      vault.get_secret('sync_secret')
+    );
+
+    IF sync_secret IS NULL OR sync_secret = '' THEN
+      INSERT INTO public.cron_job_errors(job_name, error_message)
+      VALUES (job_name, 'Invoke Error: missing sync_secret for sync-updated-bills');
+      RETURN;
+    END IF;
+
+    req_headers := req_headers || jsonb_build_object('Authorization', 'Bearer ' || sync_secret);
+  END IF;
+
   -- normalize final URL
   base_url := rtrim(base_url, '/');
 
-  SELECT status INTO status_code
-  FROM net.http_post(
+  SELECT net.http_post(
     url     := base_url || '/' || endpoint,
-    headers := jsonb_build_object('Content-Type','application/json','apikey', anon_key)::text
-  );
+    headers := req_headers
+  ) INTO request_id;
 
-  IF status_code <> 200 THEN
+  IF request_id IS NULL THEN
     INSERT INTO public.cron_job_errors(job_name, error_message)
-    VALUES (job_name, 'Invoke Error: ' || endpoint || ' returned status ' || status_code);
+    VALUES (job_name, 'Invoke Error: ' || endpoint || ' enqueue returned null request id');
   END IF;
 
 EXCEPTION
