@@ -4,13 +4,14 @@ CREATE OR REPLACE FUNCTION public.invoke_edge_function(endpoint TEXT, job_name T
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
-  status_code  INT;
   anon_key     TEXT;
   base_url     TEXT;
   sync_secret  TEXT;
   req_headers  JSONB;
+  request_id   BIGINT;
 BEGIN
   -- prefer Vault, then app_config
   base_url := COALESCE(
@@ -51,15 +52,14 @@ BEGIN
   -- normalize final URL
   base_url := rtrim(base_url, '/');
 
-  SELECT status INTO status_code
-  FROM net.http_post(
+  SELECT net.http_post(
     url     := base_url || '/' || endpoint,
-    headers := req_headers::text
-  );
+    headers := req_headers
+  ) INTO request_id;
 
-  IF status_code <> 200 THEN
+  IF request_id IS NULL THEN
     INSERT INTO public.cron_job_errors(job_name, error_message)
-    VALUES (job_name, 'Invoke Error: ' || endpoint || ' returned status ' || status_code);
+    VALUES (job_name, 'Invoke Error: ' || endpoint || ' enqueue returned null request id');
   END IF;
 
 EXCEPTION
