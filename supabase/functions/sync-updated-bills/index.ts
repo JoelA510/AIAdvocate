@@ -62,6 +62,10 @@ const BROWSER_HEADERS = {
 };
 
 const MAX_BILLS_PER_RUN = Math.max(0, Number.parseInt(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "3", 10) || 0);
+const RESPONSE_PREVIEW_LIMIT = Math.max(
+  1,
+  Math.min(25, Number.parseInt(Deno.env.get("SYNC_RESPONSE_PREVIEW_LIMIT") ?? "10", 10) || 10),
+);
 const MAX_MODEL_INPUT_CHARS = 12000;
 const MIN_SUMMARY_LENGTHS = {
   simple: 200,
@@ -734,8 +738,10 @@ serve(async (req) => {
 
     return toJson({
       message: `Processed ${processedBills.length} bill(s).`,
-      processedBills,
-      failures,
+      processedBillsCount: processedBills.length,
+      processedBillsPreview: processedBills.slice(0, RESPONSE_PREVIEW_LIMIT),
+      failuresCount: failures.length,
+      failuresPreview: failures.slice(0, RESPONSE_PREVIEW_LIMIT),
     });
   } catch (error) {
     console.error("Function failed", { error: String(error) });

@@ -15,13 +15,90 @@ type BillRow = {
   vote_events?: Array<{ count: number }>;
 };
 
+type CursorState = {
+  last_bill_id: number | null;
+  last_failed_bill_id: number | null;
+  next_offset?: number | null; // legacy support for older cursor shape
+  completed_at: string | null;
+  updated_at: string;
+  total_available: number | null;
+};
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_LIMIT_PER_RUN = 30;
+const MAX_LIMIT_PER_RUN = 100;
 const RATE_LIMIT_DELAY_MS = 1200;
+const CURSOR_KEY = "votes_backfill:openstates:ca";
+const DEFAULT_MAX_RUNTIME_MS = 18_000;
+const HARD_MAX_RUNTIME_MS = 26_000;
+const DEADLINE_GUARD_MS = 1_000;
+const PREVIEW_LIMIT = 10;
+
+const parsePositiveInt = (value: string | null, fallback: number, max: number): number => {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1, Math.min(Math.floor(parsed), max));
+};
+
+const parseNonNegativeInt = (value: string | null): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.floor(parsed);
+};
+
+const getMaxRuntimeMs = (): number =>
+  parsePositiveInt(Deno.env.get("VOTES_BACKFILL_MAX_RUNTIME_MS") ?? null, DEFAULT_MAX_RUNTIME_MS, HARD_MAX_RUNTIME_MS);
+
+const getDefaultLimitPerRun = (): number =>
+  parsePositiveInt(
+    Deno.env.get("VOTES_BACKFILL_MAX_BILLS_PER_RUN") ?? null,
+    DEFAULT_LIMIT_PER_RUN,
+    MAX_LIMIT_PER_RUN,
+  );
+
+async function getCursor(supabaseAdmin: ReturnType<typeof createClient>): Promise<CursorState | null> {
+  const { data, error } = await supabaseAdmin
+    .from("ingestion_cursors")
+    .select("cursor")
+    .eq("key", CURSOR_KEY)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data?.cursor as CursorState | null) ?? null;
+}
+
+async function setCursor(supabaseAdmin: ReturnType<typeof createClient>, cursor: CursorState): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("ingestion_cursors")
+    .upsert({ key: CURSOR_KEY, cursor, updated_at: cursor.updated_at }, { onConflict: "key" });
+
+  if (error) throw error;
+}
+
+async function resolveLegacyOffsetResumeId(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  legacyOffset: number,
+): Promise<number> {
+  if (!Number.isFinite(legacyOffset) || legacyOffset <= 0) return 0;
+
+  const { data, error } = await supabaseAdmin
+    .from("bills")
+    .select("id")
+    .not("openstates_bill_id", "is", null)
+    .order("id", { ascending: true })
+    .range(legacyOffset - 1, legacyOffset - 1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return typeof data?.id === "number" ? data.id : 0;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -30,15 +107,19 @@ serve(async (req) => {
 
   const url = new URL(req.url);
   const force = url.searchParams.get("force") === "true";
-  const limitParam = Number(url.searchParams.get("limit") ?? "0");
-  const offsetParam = Number(url.searchParams.get("offset") ?? "0");
-  const pageSizeParam = Number(url.searchParams.get("page_size") ?? "0");
+  const limitRaw = url.searchParams.get("limit");
+  const offsetRaw = url.searchParams.get("offset");
+  const startBillIdRaw = url.searchParams.get("start_bill_id");
+  const pageSizeRaw = url.searchParams.get("page_size");
 
-  const pageSize = Number.isFinite(pageSizeParam) && pageSizeParam > 0
-    ? Math.min(pageSizeParam, DEFAULT_PAGE_SIZE)
-    : DEFAULT_PAGE_SIZE;
-  const initialOffset = Number.isFinite(offsetParam) && offsetParam > 0 ? Math.floor(offsetParam) : 0;
-  let remaining = Number.isFinite(limitParam) && limitParam > 0 ? Math.floor(limitParam) : Number.POSITIVE_INFINITY;
+  const pageSize = parsePositiveInt(pageSizeRaw, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE);
+  const explicitLimit = limitRaw ? parsePositiveInt(limitRaw, getDefaultLimitPerRun(), MAX_LIMIT_PER_RUN) : null;
+  const runLimit = explicitLimit ?? getDefaultLimitPerRun();
+  const explicitOffset = parseNonNegativeInt(offsetRaw);
+  const explicitStartBillId = parseNonNegativeInt(startBillIdRaw);
+  const startedAt = Date.now();
+  const stopAt = startedAt + getMaxRuntimeMs();
+  let remaining = runLimit;
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -72,31 +153,50 @@ serve(async (req) => {
       });
     }
 
-    let offset = initialOffset;
+    const cursorState = force ? null : await getCursor(supabaseAdmin);
+    const legacyOffset = cursorState?.next_offset ?? null;
+    const offsetResumeId = explicitOffset !== null
+      ? await resolveLegacyOffsetResumeId(supabaseAdmin, explicitOffset)
+      : null;
+    const legacyResumeId = (explicitStartBillId === null && explicitOffset === null && !force && legacyOffset !== null)
+      ? await resolveLegacyOffsetResumeId(supabaseAdmin, legacyOffset)
+      : null;
+    const startAfterBillId = explicitStartBillId ??
+      offsetResumeId ??
+      Math.max(0, cursorState?.last_bill_id ?? legacyResumeId ?? 0);
+    let lastSuccessfulBillId = startAfterBillId;
     let processedBills = 0;
     let totalVoteEvents = 0;
     let totalVoteRecords = 0;
-    const skippedBills: Array<{ id: number; reason: string }> = [];
-    const billErrors: Array<{ id: number; message: string }> = [];
+    let skippedBillsCount = 0;
+    const skippedBillsPreview: Array<{ id: number; reason: string }> = [];
+    let errorsCount = 0;
+    const errorsPreview: Array<{ id: number; message: string }> = [];
+    let sourceExhausted = false;
+    let failedBillId: number | null = null;
 
-    while (remaining > 0) {
-      const fetchCount = Number.isFinite(remaining) ? Math.min(pageSize, remaining) : pageSize;
+    while (remaining > 0 && Date.now() < stopAt - DEADLINE_GUARD_MS) {
+      const fetchCount = Math.min(pageSize, remaining);
       const { data, error } = await supabaseAdmin
         .from("bills")
         .select("id,bill_number,title,openstates_bill_id,vote_events(count)")
         .not("openstates_bill_id", "is", null)
+        .gt("id", lastSuccessfulBillId)
         .order("id", { ascending: true })
-        .range(offset, offset + fetchCount - 1);
+        .limit(fetchCount);
 
       if (error) throw error;
-      if (!data || data.length === 0) break;
-
-      const bills = (data as BillRow[]).filter((bill): bill is BillRow => Boolean(bill.openstates_bill_id));
-      if (Number.isFinite(remaining)) {
-        remaining -= bills.length;
+      if (!data || data.length === 0) {
+        sourceExhausted = true;
+        break;
       }
 
+      const bills = (data as BillRow[]).filter((bill): bill is BillRow => Boolean(bill.openstates_bill_id));
       for (const bill of bills) {
+        if (remaining <= 0 || Date.now() >= stopAt - DEADLINE_GUARD_MS) {
+          break;
+        }
+
         const billContext: BillContext = {
           id: bill.id,
           openstates_bill_id: bill.openstates_bill_id,
@@ -106,7 +206,12 @@ serve(async (req) => {
 
         const existingCount = bill.vote_events?.[0]?.count ?? 0;
         if (!force && existingCount > 0) {
-          skippedBills.push({ id: bill.id, reason: "Existing vote events present" });
+          skippedBillsCount += 1;
+          if (skippedBillsPreview.length < PREVIEW_LIMIT) {
+            skippedBillsPreview.push({ id: bill.id, reason: "Existing vote events present" });
+          }
+          lastSuccessfulBillId = bill.id;
+          remaining -= 1;
           continue;
         }
 
@@ -119,6 +224,8 @@ serve(async (req) => {
               billNumber: bill.bill_number,
               openstatesId: bill.openstates_bill_id,
             });
+            lastSuccessfulBillId = bill.id;
+            remaining -= 1;
             continue;
           }
 
@@ -139,6 +246,8 @@ serve(async (req) => {
             voteRecordsProcessed,
           });
 
+          lastSuccessfulBillId = bill.id;
+          remaining -= 1;
           await sleep(RATE_LIMIT_DELAY_MS);
         } catch (err) {
           const message = err instanceof Error ? err.message : JSON.stringify(err);
@@ -147,30 +256,75 @@ serve(async (req) => {
             billNumber: bill.bill_number,
             error: message,
           });
-          billErrors.push({ id: bill.id, message });
+          errorsCount += 1;
+          if (errorsPreview.length < PREVIEW_LIMIT) {
+            errorsPreview.push({ id: bill.id, message });
+          }
+          failedBillId = bill.id;
           await sleep(RATE_LIMIT_DELAY_MS);
+          break;
         }
       }
 
-      offset += bills.length;
-      if (Number.isFinite(remaining) && remaining <= 0) {
+      if (failedBillId !== null) {
+        break;
+      }
+      if (bills.length < fetchCount) {
+        sourceExhausted = true;
+      }
+      if (remaining <= 0 || sourceExhausted) {
         break;
       }
     }
 
+    const hasMore = failedBillId !== null || !sourceExhausted;
+    const nowIso = new Date().toISOString();
+    const cursor: CursorState = {
+      last_bill_id: lastSuccessfulBillId,
+      last_failed_bill_id: failedBillId,
+      next_offset: null,
+      completed_at: hasMore ? null : nowIso,
+      updated_at: nowIso,
+      total_available: availableCount ?? null,
+    };
+    await setCursor(supabaseAdmin, cursor);
+
     const summary = {
+      message: hasMore
+        ? "Processed bounded votes backfill batch. Invoke again to continue."
+        : "Votes backfill batch completed for current offset window.",
+      cursor_key: CURSOR_KEY,
+      runtime_ms: Date.now() - startedAt,
+      forced: force,
+      page_size: pageSize,
+      requested_limit: runLimit,
       processedBills,
       voteEventsUpserted: totalVoteEvents,
       voteRecordsUpserted: totalVoteRecords,
-      skippedBills,
-      errors: billErrors,
+      skippedBillsCount,
+      skippedBillsPreview,
+      errorsCount,
+      errorsPreview,
+      errors: errorsPreview,
+      skippedBills: skippedBillsPreview,
+      continuation: {
+        has_more: hasMore,
+        next_bill_id: lastSuccessfulBillId,
+        failed_bill_id: failedBillId,
+        next_offset: null,
+      },
+      processed_window: {
+        start_after_bill_id: startAfterBillId,
+        end_at_bill_id: lastSuccessfulBillId,
+        available_count: availableCount,
+      },
     };
 
     log("info", "Backfill summary", summary);
 
     return new Response(JSON.stringify(summary), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: billErrors.length ? 207 : 200,
+      status: errorsCount ? 207 : 200,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
