@@ -43,12 +43,14 @@ const RELEVANT_KEYWORDS = [
 const KEYWORD_REGEX = new RegExp(`\\b(${RELEVANT_KEYWORDS.join("|")})\\b`, "i");
 
 const CURSOR_KEY_PREFIX = "bulk_import_dataset";
-const DEFAULT_FILES_PER_INVOCATION = 75;
-const MAX_FILES_PER_INVOCATION = 250;
-const UPSERT_BATCH_SIZE = 75;
+const DEFAULT_FILES_PER_INVOCATION = 40;
+const MAX_FILES_PER_INVOCATION = 100;
+const DEFAULT_UPSERT_BATCH_SIZE = 40;
+const MAX_UPSERT_BATCH_SIZE = 100;
 const ERROR_PREVIEW_LIMIT = 10;
-const DEFAULT_MAX_RUNTIME_MS = 22_000;
-const HARD_MAX_RUNTIME_MS = 28_000;
+const DEFAULT_MAX_RUNTIME_MS = 18_000;
+const HARD_MAX_RUNTIME_MS = 26_000;
+const DEADLINE_GUARD_MS = 1_250;
 
 type SupabaseAdminClient = ReturnType<typeof createClient>;
 
@@ -173,6 +175,13 @@ const getMaxRuntimeMs = (): number =>
     Deno.env.get("BULK_IMPORT_MAX_RUNTIME_MS"),
     DEFAULT_MAX_RUNTIME_MS,
     HARD_MAX_RUNTIME_MS,
+  );
+
+const getUpsertBatchSize = (): number =>
+  parsePositiveInt(
+    Deno.env.get("BULK_IMPORT_UPSERT_BATCH_SIZE"),
+    DEFAULT_UPSERT_BATCH_SIZE,
+    MAX_UPSERT_BATCH_SIZE,
   );
 
 const getCursor = async (
@@ -310,6 +319,43 @@ serve(async (req) => {
     const datasetHash = activeDataset.dataset_hash ?? null;
     const cursorKey = buildCursorKey(state, sessionId);
 
+    const existingCursor = options.force_restart ? null : await getCursor(supabaseAdmin, cursorKey);
+
+    const sameCursorDataset = Boolean(datasetHash) &&
+      existingCursor?.session_id === sessionId &&
+      existingCursor?.state === state &&
+      existingCursor?.dataset_hash === datasetHash;
+
+    if (!options.force_restart && sameCursorDataset && existingCursor?.completed_at) {
+      return jsonResponse({
+        message: "Dataset cursor already completed for active session hash. Skipping dataset download.",
+        session_id: sessionId,
+        cursor_key: cursorKey,
+        dataset_hash_present: true,
+        skipped_download: true,
+        continuation: {
+          has_more: false,
+          next_index: existingCursor.next_index ?? 0,
+          total_files: existingCursor.total_files ?? 0,
+        },
+      });
+    }
+
+    if (Date.now() >= stopAt - DEADLINE_GUARD_MS) {
+      return jsonResponse({
+        message: "Runtime budget reached before dataset download; invoke again to continue.",
+        session_id: sessionId,
+        cursor_key: cursorKey,
+        dataset_hash_present: Boolean(datasetHash),
+        skipped_download: true,
+        continuation: {
+          has_more: true,
+          next_index: existingCursor?.next_index ?? 0,
+          total_files: existingCursor?.total_files ?? 0,
+        },
+      });
+    }
+
     const legiscanUrl =
       `https://api.legiscan.com/?op=getDataset&id=${sessionId}&key=${legiscanApiKey}&access_key=${accessKey}`;
 
@@ -328,8 +374,6 @@ serve(async (req) => {
 
     const totalFiles = billFiles.length;
     const nowIso = new Date().toISOString();
-
-    const existingCursor = options.force_restart ? null : await getCursor(supabaseAdmin, cursorKey);
 
     const sameDataset =
       existingCursor?.session_id === sessionId &&
@@ -405,6 +449,7 @@ serve(async (req) => {
     };
 
     const pendingRows: BillSeedRow[] = [];
+    const upsertBatchSize = getUpsertBatchSize();
 
     let nextIndex = startIndex;
 
@@ -413,7 +458,7 @@ serve(async (req) => {
       i < totalFiles && stats.processed_files < options.max_files;
       i += 1
     ) {
-      if (Date.now() >= stopAt) break;
+      if (Date.now() >= stopAt - DEADLINE_GUARD_MS) break;
 
       const file = billFiles[i];
       nextIndex = i + 1;
@@ -444,7 +489,8 @@ serve(async (req) => {
 
         stats.matched_bills += 1;
 
-        if (pendingRows.length >= UPSERT_BATCH_SIZE) {
+        if (pendingRows.length >= upsertBatchSize) {
+          if (Date.now() >= stopAt - DEADLINE_GUARD_MS) break;
           const result = await flushUpsertBatch(
             supabaseAdmin,
             pendingRows.splice(0, pendingRows.length),

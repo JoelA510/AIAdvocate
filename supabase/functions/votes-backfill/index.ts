@@ -15,13 +15,63 @@ type BillRow = {
   vote_events?: Array<{ count: number }>;
 };
 
+type CursorState = {
+  next_offset: number;
+  completed_at: string | null;
+  updated_at: string;
+  total_available: number | null;
+};
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_LIMIT_PER_RUN = 30;
+const MAX_LIMIT_PER_RUN = 100;
 const RATE_LIMIT_DELAY_MS = 1200;
+const CURSOR_KEY = "votes_backfill:openstates:ca";
+const DEFAULT_MAX_RUNTIME_MS = 18_000;
+const HARD_MAX_RUNTIME_MS = 26_000;
+const DEADLINE_GUARD_MS = 1_000;
+const PREVIEW_LIMIT = 10;
+
+const parsePositiveInt = (value: string | null, fallback: number, max: number): number => {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1, Math.min(Math.floor(parsed), max));
+};
+
+const getMaxRuntimeMs = (): number =>
+  parsePositiveInt(Deno.env.get("VOTES_BACKFILL_MAX_RUNTIME_MS") ?? null, DEFAULT_MAX_RUNTIME_MS, HARD_MAX_RUNTIME_MS);
+
+const getDefaultLimitPerRun = (): number =>
+  parsePositiveInt(
+    Deno.env.get("VOTES_BACKFILL_MAX_BILLS_PER_RUN") ?? null,
+    DEFAULT_LIMIT_PER_RUN,
+    MAX_LIMIT_PER_RUN,
+  );
+
+async function getCursor(supabaseAdmin: ReturnType<typeof createClient>): Promise<CursorState | null> {
+  const { data, error } = await supabaseAdmin
+    .from("ingestion_cursors")
+    .select("cursor")
+    .eq("key", CURSOR_KEY)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data?.cursor as CursorState | null) ?? null;
+}
+
+async function setCursor(supabaseAdmin: ReturnType<typeof createClient>, cursor: CursorState): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("ingestion_cursors")
+    .upsert({ key: CURSOR_KEY, cursor, updated_at: cursor.updated_at }, { onConflict: "key" });
+
+  if (error) throw error;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -30,15 +80,17 @@ serve(async (req) => {
 
   const url = new URL(req.url);
   const force = url.searchParams.get("force") === "true";
-  const limitParam = Number(url.searchParams.get("limit") ?? "0");
-  const offsetParam = Number(url.searchParams.get("offset") ?? "0");
-  const pageSizeParam = Number(url.searchParams.get("page_size") ?? "0");
+  const limitRaw = url.searchParams.get("limit");
+  const offsetRaw = url.searchParams.get("offset");
+  const pageSizeRaw = url.searchParams.get("page_size");
 
-  const pageSize = Number.isFinite(pageSizeParam) && pageSizeParam > 0
-    ? Math.min(pageSizeParam, DEFAULT_PAGE_SIZE)
-    : DEFAULT_PAGE_SIZE;
-  const initialOffset = Number.isFinite(offsetParam) && offsetParam > 0 ? Math.floor(offsetParam) : 0;
-  let remaining = Number.isFinite(limitParam) && limitParam > 0 ? Math.floor(limitParam) : Number.POSITIVE_INFINITY;
+  const pageSize = parsePositiveInt(pageSizeRaw, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE);
+  const explicitLimit = limitRaw ? parsePositiveInt(limitRaw, getDefaultLimitPerRun(), MAX_LIMIT_PER_RUN) : null;
+  const runLimit = explicitLimit ?? getDefaultLimitPerRun();
+  const explicitOffset = offsetRaw ? parsePositiveInt(offsetRaw, 0, Number.MAX_SAFE_INTEGER) : null;
+  const startedAt = Date.now();
+  const stopAt = startedAt + getMaxRuntimeMs();
+  let remaining = runLimit;
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -72,15 +124,20 @@ serve(async (req) => {
       });
     }
 
-    let offset = initialOffset;
+    const cursorState = force ? null : await getCursor(supabaseAdmin);
+    let offset = explicitOffset ?? Math.max(0, cursorState?.next_offset ?? 0);
     let processedBills = 0;
     let totalVoteEvents = 0;
     let totalVoteRecords = 0;
-    const skippedBills: Array<{ id: number; reason: string }> = [];
-    const billErrors: Array<{ id: number; message: string }> = [];
+    let skippedBillsCount = 0;
+    const skippedBillsPreview: Array<{ id: number; reason: string }> = [];
+    let errorsCount = 0;
+    const errorsPreview: Array<{ id: number; message: string }> = [];
+    const startOffset = offset;
+    let hasMore = offset < availableCount;
 
-    while (remaining > 0) {
-      const fetchCount = Number.isFinite(remaining) ? Math.min(pageSize, remaining) : pageSize;
+    while (remaining > 0 && Date.now() < stopAt - DEADLINE_GUARD_MS) {
+      const fetchCount = Math.min(pageSize, remaining);
       const { data, error } = await supabaseAdmin
         .from("bills")
         .select("id,bill_number,title,openstates_bill_id,vote_events(count)")
@@ -89,12 +146,13 @@ serve(async (req) => {
         .range(offset, offset + fetchCount - 1);
 
       if (error) throw error;
-      if (!data || data.length === 0) break;
+      if (!data || data.length === 0) {
+        hasMore = false;
+        break;
+      }
 
       const bills = (data as BillRow[]).filter((bill): bill is BillRow => Boolean(bill.openstates_bill_id));
-      if (Number.isFinite(remaining)) {
-        remaining -= bills.length;
-      }
+      remaining -= bills.length;
 
       for (const bill of bills) {
         const billContext: BillContext = {
@@ -106,7 +164,10 @@ serve(async (req) => {
 
         const existingCount = bill.vote_events?.[0]?.count ?? 0;
         if (!force && existingCount > 0) {
-          skippedBills.push({ id: bill.id, reason: "Existing vote events present" });
+          skippedBillsCount += 1;
+          if (skippedBillsPreview.length < PREVIEW_LIMIT) {
+            skippedBillsPreview.push({ id: bill.id, reason: "Existing vote events present" });
+          }
           continue;
         }
 
@@ -147,30 +208,62 @@ serve(async (req) => {
             billNumber: bill.bill_number,
             error: message,
           });
-          billErrors.push({ id: bill.id, message });
+          errorsCount += 1;
+          if (errorsPreview.length < PREVIEW_LIMIT) {
+            errorsPreview.push({ id: bill.id, message });
+          }
           await sleep(RATE_LIMIT_DELAY_MS);
         }
       }
 
       offset += bills.length;
-      if (Number.isFinite(remaining) && remaining <= 0) {
+      hasMore = offset < availableCount;
+      if (remaining <= 0) {
         break;
       }
     }
 
+    const nowIso = new Date().toISOString();
+    const cursor: CursorState = {
+      next_offset: offset,
+      completed_at: hasMore ? null : nowIso,
+      updated_at: nowIso,
+      total_available: availableCount ?? null,
+    };
+    await setCursor(supabaseAdmin, cursor);
+
     const summary = {
+      message: hasMore
+        ? "Processed bounded votes backfill batch. Invoke again to continue."
+        : "Votes backfill batch completed for current offset window.",
+      cursor_key: CURSOR_KEY,
+      runtime_ms: Date.now() - startedAt,
+      forced: force,
+      page_size: pageSize,
+      requested_limit: runLimit,
       processedBills,
       voteEventsUpserted: totalVoteEvents,
       voteRecordsUpserted: totalVoteRecords,
-      skippedBills,
-      errors: billErrors,
+      skippedBillsCount,
+      skippedBillsPreview,
+      errorsCount,
+      errorsPreview,
+      continuation: {
+        has_more: hasMore,
+        next_offset: offset,
+      },
+      processed_window: {
+        start_offset: startOffset,
+        end_offset_exclusive: offset,
+        available_count: availableCount,
+      },
     };
 
     log("info", "Backfill summary", summary);
 
     return new Response(JSON.stringify(summary), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: billErrors.length ? 207 : 200,
+      status: errorsCount ? 207 : 200,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
