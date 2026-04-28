@@ -16,7 +16,9 @@ type BillRow = {
 };
 
 type CursorState = {
-  next_offset: number;
+  last_bill_id: number | null;
+  last_failed_bill_id: number | null;
+  next_offset?: number | null; // legacy support for older cursor shape
   completed_at: string | null;
   updated_at: string;
   total_available: number | null;
@@ -42,6 +44,13 @@ const parsePositiveInt = (value: string | null, fallback: number, max: number): 
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.max(1, Math.min(Math.floor(parsed), max));
+};
+
+const parseNonNegativeInt = (value: string | null): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.floor(parsed);
 };
 
 const getMaxRuntimeMs = (): number =>
@@ -73,6 +82,24 @@ async function setCursor(supabaseAdmin: ReturnType<typeof createClient>, cursor:
   if (error) throw error;
 }
 
+async function resolveLegacyOffsetResumeId(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  legacyOffset: number,
+): Promise<number> {
+  if (!Number.isFinite(legacyOffset) || legacyOffset <= 0) return 0;
+
+  const { data, error } = await supabaseAdmin
+    .from("bills")
+    .select("id")
+    .not("openstates_bill_id", "is", null)
+    .order("id", { ascending: true })
+    .range(legacyOffset - 1, legacyOffset - 1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return typeof data?.id === "number" ? data.id : 0;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -82,12 +109,14 @@ serve(async (req) => {
   const force = url.searchParams.get("force") === "true";
   const limitRaw = url.searchParams.get("limit");
   const offsetRaw = url.searchParams.get("offset");
+  const startBillIdRaw = url.searchParams.get("start_bill_id");
   const pageSizeRaw = url.searchParams.get("page_size");
 
   const pageSize = parsePositiveInt(pageSizeRaw, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE);
   const explicitLimit = limitRaw ? parsePositiveInt(limitRaw, getDefaultLimitPerRun(), MAX_LIMIT_PER_RUN) : null;
   const runLimit = explicitLimit ?? getDefaultLimitPerRun();
-  const explicitOffset = offsetRaw ? parsePositiveInt(offsetRaw, 0, Number.MAX_SAFE_INTEGER) : null;
+  const explicitOffset = parseNonNegativeInt(offsetRaw);
+  const explicitStartBillId = parseNonNegativeInt(startBillIdRaw);
   const startedAt = Date.now();
   const stopAt = startedAt + getMaxRuntimeMs();
   let remaining = runLimit;
@@ -125,7 +154,17 @@ serve(async (req) => {
     }
 
     const cursorState = force ? null : await getCursor(supabaseAdmin);
-    let offset = explicitOffset ?? Math.max(0, cursorState?.next_offset ?? 0);
+    const legacyOffset = cursorState?.next_offset ?? null;
+    const offsetResumeId = explicitOffset !== null
+      ? await resolveLegacyOffsetResumeId(supabaseAdmin, explicitOffset)
+      : null;
+    const legacyResumeId = (explicitStartBillId === null && explicitOffset === null && !force && legacyOffset !== null)
+      ? await resolveLegacyOffsetResumeId(supabaseAdmin, legacyOffset)
+      : null;
+    const startAfterBillId = explicitStartBillId ??
+      offsetResumeId ??
+      Math.max(0, cursorState?.last_bill_id ?? legacyResumeId ?? 0);
+    let lastSuccessfulBillId = startAfterBillId;
     let processedBills = 0;
     let totalVoteEvents = 0;
     let totalVoteRecords = 0;
@@ -133,8 +172,8 @@ serve(async (req) => {
     const skippedBillsPreview: Array<{ id: number; reason: string }> = [];
     let errorsCount = 0;
     const errorsPreview: Array<{ id: number; message: string }> = [];
-    const startOffset = offset;
-    let hasMore = offset < availableCount;
+    let sourceExhausted = false;
+    let failedBillId: number | null = null;
 
     while (remaining > 0 && Date.now() < stopAt - DEADLINE_GUARD_MS) {
       const fetchCount = Math.min(pageSize, remaining);
@@ -142,19 +181,22 @@ serve(async (req) => {
         .from("bills")
         .select("id,bill_number,title,openstates_bill_id,vote_events(count)")
         .not("openstates_bill_id", "is", null)
+        .gt("id", lastSuccessfulBillId)
         .order("id", { ascending: true })
-        .range(offset, offset + fetchCount - 1);
+        .limit(fetchCount);
 
       if (error) throw error;
       if (!data || data.length === 0) {
-        hasMore = false;
+        sourceExhausted = true;
         break;
       }
 
       const bills = (data as BillRow[]).filter((bill): bill is BillRow => Boolean(bill.openstates_bill_id));
-      remaining -= bills.length;
-
       for (const bill of bills) {
+        if (remaining <= 0 || Date.now() >= stopAt - DEADLINE_GUARD_MS) {
+          break;
+        }
+
         const billContext: BillContext = {
           id: bill.id,
           openstates_bill_id: bill.openstates_bill_id,
@@ -168,6 +210,8 @@ serve(async (req) => {
           if (skippedBillsPreview.length < PREVIEW_LIMIT) {
             skippedBillsPreview.push({ id: bill.id, reason: "Existing vote events present" });
           }
+          lastSuccessfulBillId = bill.id;
+          remaining -= 1;
           continue;
         }
 
@@ -180,6 +224,8 @@ serve(async (req) => {
               billNumber: bill.bill_number,
               openstatesId: bill.openstates_bill_id,
             });
+            lastSuccessfulBillId = bill.id;
+            remaining -= 1;
             continue;
           }
 
@@ -200,6 +246,8 @@ serve(async (req) => {
             voteRecordsProcessed,
           });
 
+          lastSuccessfulBillId = bill.id;
+          remaining -= 1;
           await sleep(RATE_LIMIT_DELAY_MS);
         } catch (err) {
           const message = err instanceof Error ? err.message : JSON.stringify(err);
@@ -212,20 +260,29 @@ serve(async (req) => {
           if (errorsPreview.length < PREVIEW_LIMIT) {
             errorsPreview.push({ id: bill.id, message });
           }
+          failedBillId = bill.id;
           await sleep(RATE_LIMIT_DELAY_MS);
+          break;
         }
       }
 
-      offset += bills.length;
-      hasMore = offset < availableCount;
-      if (remaining <= 0) {
+      if (failedBillId !== null) {
+        break;
+      }
+      if (bills.length < fetchCount) {
+        sourceExhausted = true;
+      }
+      if (remaining <= 0 || sourceExhausted) {
         break;
       }
     }
 
+    const hasMore = failedBillId !== null || !sourceExhausted;
     const nowIso = new Date().toISOString();
     const cursor: CursorState = {
-      next_offset: offset,
+      last_bill_id: lastSuccessfulBillId,
+      last_failed_bill_id: failedBillId,
+      next_offset: null,
       completed_at: hasMore ? null : nowIso,
       updated_at: nowIso,
       total_available: availableCount ?? null,
@@ -248,13 +305,17 @@ serve(async (req) => {
       skippedBillsPreview,
       errorsCount,
       errorsPreview,
+      errors: errorsPreview,
+      skippedBills: skippedBillsPreview,
       continuation: {
         has_more: hasMore,
-        next_offset: offset,
+        next_bill_id: lastSuccessfulBillId,
+        failed_bill_id: failedBillId,
+        next_offset: null,
       },
       processed_window: {
-        start_offset: startOffset,
-        end_offset_exclusive: offset,
+        start_after_bill_id: startAfterBillId,
+        end_at_bill_id: lastSuccessfulBillId,
         available_count: availableCount,
       },
     };
