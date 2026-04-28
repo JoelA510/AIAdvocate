@@ -151,18 +151,23 @@ export async function syncBillVoteEvents(
     if (recordsError) throw recordsError;
   }
 
-  for (const eventId of emptyEvents) {
-    await supabase.from("vote_records").delete().eq("vote_event_id", eventId);
+  if (emptyEvents.length) {
+    const { error: emptyDeleteError } = await supabase
+      .from("vote_records")
+      .delete()
+      .in("vote_event_id", emptyEvents);
+    if (emptyDeleteError) throw emptyDeleteError;
   }
 
   for (const [eventId, allowed] of perEventAllowed.entries()) {
     const keep = Array.from(allowed);
     if (!keep.length) continue;
-    await supabase
+    const { error: staleDeleteError } = await supabase
       .from("vote_records")
       .delete()
       .eq("vote_event_id", eventId)
       .not("person_openstates_id", "in", buildInFilter(keep));
+    if (staleDeleteError) throw staleDeleteError;
   }
 
   return {

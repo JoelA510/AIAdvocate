@@ -17,6 +17,7 @@ const corsHeaders = {
 
 const JOB_KEY = "votes-daily:last-run";
 const FALLBACK_WINDOW_MS = 1000 * 60 * 60 * 48; // 48 hours
+const PREVIEW_LIMIT = 10;
 
 type BillRow = {
   id: number;
@@ -115,18 +116,25 @@ serve(async (req) => {
     let processedBills = 0;
     let totalVoteEvents = 0;
     let totalVoteRecords = 0;
-    const skippedBills: Array<{ provider_bill_id: string; reason: string }> = [];
+    let skippedBillsCount = 0;
+    const skippedBillsPreview: Array<{ provider_bill_id: string; reason: string }> = [];
 
     for (const billId of billIdList) {
       const billContext = billMap.get(billId);
       if (!billContext) {
-        skippedBills.push({ provider_bill_id: billId, reason: "No matching bill in Supabase" });
+        skippedBillsCount += 1;
+        if (skippedBillsPreview.length < PREVIEW_LIMIT) {
+          skippedBillsPreview.push({ provider_bill_id: billId, reason: "No matching bill in Supabase" });
+        }
         continue;
       }
 
       const bundle = bundles.get(billId);
       if (!bundle || !bundle.events.length) {
-        skippedBills.push({ provider_bill_id: billId, reason: "No vote events returned" });
+        skippedBillsCount += 1;
+        if (skippedBillsPreview.length < PREVIEW_LIMIT) {
+          skippedBillsPreview.push({ provider_bill_id: billId, reason: "No vote events returned" });
+        }
         continue;
       }
 
@@ -154,10 +162,13 @@ serve(async (req) => {
           billNumber: billContext.bill_number,
           error: message,
         });
-        skippedBills.push({
-          provider_bill_id: billId,
-          reason: `Sync error: ${message}`,
-        });
+        skippedBillsCount += 1;
+        if (skippedBillsPreview.length < PREVIEW_LIMIT) {
+          skippedBillsPreview.push({
+            provider_bill_id: billId,
+            reason: `Sync error: ${message}`,
+          });
+        }
       }
     }
 
@@ -168,7 +179,8 @@ serve(async (req) => {
       processedBills,
       voteEventsUpserted: totalVoteEvents,
       voteRecordsUpserted: totalVoteRecords,
-      skippedBills,
+      skippedBillsCount,
+      skippedBillsPreview,
       eventsWithoutBill,
     };
 
@@ -176,7 +188,7 @@ serve(async (req) => {
 
     return new Response(JSON.stringify(summary), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: skippedBills.length ? 207 : 200,
+      status: skippedBillsCount ? 207 : 200,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
