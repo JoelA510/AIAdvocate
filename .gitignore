@@ -6,6 +6,7 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+aiadvocate-2a04d-db374c178b37.json
 
 # Native
 .kotlin/

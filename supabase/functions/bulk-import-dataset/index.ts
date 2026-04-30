@@ -231,38 +231,40 @@ const flushUpsertBatch = async (
 
   const billIds = dedupedRows.map((bill) => bill.id);
 
+  // Fetch all existing summary fields to preserve them
   const { data: existingRows, error: existingError } = await supabaseAdmin
     .from("bills")
-    .select("id, summary_simple")
+    .select("id, summary_simple, summary_medium, summary_complex")
     .in("id", billIds);
 
   if (existingError) throw existingError;
 
-  const existingIdSet = new Set<number>();
-  const existingSummaryMap = new Map<number, string>();
-
-  (existingRows ?? []).forEach((row: { id: number; summary_simple: string | null }) => {
-    existingIdSet.add(row.id);
-    if (preserveExistingSummary(row.summary_simple)) {
-      existingSummaryMap.set(row.id, row.summary_simple);
-    }
+  const existingDataMap = new Map<number, any>();
+  (existingRows ?? []).forEach((row) => {
+    existingDataMap.set(row.id, row);
   });
 
-  dedupedRows.forEach((bill) => {
-    const existingSummary = existingSummaryMap.get(bill.id);
-    if (existingSummary) {
-      bill.summary_simple = existingSummary;
+  const finalRows = dedupedRows.map((bill) => {
+    const existing = existingDataMap.get(bill.id);
+    if (existing) {
+      return {
+        ...bill,
+        summary_simple: existing.summary_simple,
+        summary_medium: existing.summary_medium,
+        summary_complex: existing.summary_complex,
+      };
     }
+    return bill;
   });
 
   const { error } = await supabaseAdmin
     .from("bills")
-    .upsert(dedupedRows, { onConflict: "id" });
+    .upsert(finalRows, { onConflict: "id" });
 
   if (error) throw error;
 
-  const updated = dedupedRows.filter((row) => existingIdSet.has(row.id)).length;
-  const inserted = dedupedRows.length - updated;
+  const updated = (existingRows ?? []).length;
+  const inserted = finalRows.length - updated;
 
   return { inserted, updated };
 };
@@ -554,10 +556,29 @@ serve(async (req) => {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    console.error("Critical error in bulk-import-dataset:", error);
+    
+    let message = "Unknown error";
+    let stack = undefined;
+    let details = error;
 
-    console.error("Function failed:", message);
+    if (error instanceof Error) {
+      message = error.message;
+      stack = error.stack;
+    } else if (typeof error === "string") {
+      message = error;
+    } else {
+      try {
+        message = JSON.stringify(error);
+      } catch {
+        message = String(error);
+      }
+    }
 
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse({ 
+      error: message,
+      stack,
+      details
+    }, 500);
   }
 });
