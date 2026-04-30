@@ -1,15 +1,19 @@
 {
   "cli": {
     "version": ">= 9.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
       "developmentClient": true,
       "distribution": "internal",
       "channel": "development",
-      "android": { "buildType": "apk" },
-      "ios": { "simulator": false }
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      }
     },
     "preview": {
       "distribution": "internal",
@@ -30,12 +34,10 @@
     "production": {
       "ios": {
         "metadataPath": "./store.config.json"
+      },
+      "android": {
+        "track": "internal"
       }
-      /* Optionally add Android track when you start submitting:
-      ,"android": {
-        "track": "internal"   // or "production", "beta", etc.
-      }
-      */
     }
   }
 }
