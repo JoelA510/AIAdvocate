@@ -163,6 +163,30 @@ const formatLegislationText = (raw: string): string => {
   return working.trim();
 };
 
+const scrapeLeginfoText = async (stateLink: string): Promise<string | null> => {
+  try {
+    const urlObj = new URL(stateLink);
+    const billId = urlObj.searchParams.get("bill_id");
+    if (!billId) return null;
+
+    const leginfoUrl = `https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${billId}`;
+    const res = await fetch(leginfoUrl, { headers: BROWSER_HEADERS });
+    if (!res.ok) return null;
+
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc) return null;
+
+    const billContent = doc.getElementById("bill_all");
+    if (!billContent) return null;
+
+    return billContent.textContent || null;
+  } catch (error) {
+    console.warn("Leginfo scrape failed", { error: String(error) });
+    return null;
+  }
+};
+
 const toAscii = (input: string): string =>
   input
     .normalize("NFKD")
@@ -401,6 +425,23 @@ serve(async (req) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const logClient = createClient(supabaseUrl, supabaseKey);
+      await logClient.from("cron_job_errors").insert({
+        job_name: "sync-updated-bills",
+        error_message: "DEBUG: Handler invoked"
+      });
+    } catch (e) {
+      console.error("Early logging failed", e);
+    }
+  } else {
+    console.error("Missing env vars for early logging", { supabaseUrl, supabaseKey });
+  }
+
   const AUTH = Deno.env.get("SYNC_SECRET") ?? "";
   const supplied = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (req.method !== "POST") {
@@ -423,6 +464,16 @@ serve(async (req) => {
     );
 
     const owner = (crypto as any).randomUUID?.() ?? String(Date.now());
+    const maxBillsToProcess = MAX_BILLS_PER_RUN;
+
+    try {
+      await supabaseAdmin.from("cron_job_errors").insert({
+        job_name: "sync-updated-bills",
+        error_message: `DEBUG: Starting run. owner=${owner} maxBillsToProcess=${maxBillsToProcess}`
+      });
+    } catch (e) {
+      console.error("Failed to log debug start", e);
+    }
 
     const processedBills: number[] = [];
     const failures: Array<{ billId: number; reason: string }> = [];
@@ -432,7 +483,17 @@ serve(async (req) => {
         p_owner: owner,
         p_ttl_seconds: 900,
       });
-      if (error) throw error;
+      if (error) {
+        try {
+          await supabaseAdmin.from("cron_job_errors").insert({
+            job_name: "sync-updated-bills",
+            error_message: `DEBUG: lease_next_bill RPC error: ${JSON.stringify(error)}`
+          });
+        } catch (e) {
+          console.error("Failed to log RPC error", e);
+        }
+        throw error;
+      }
       if (data === null || data === undefined) return null;
       const id = typeof data === "number" ? data : Number(data);
       return Number.isFinite(id) ? id : null;
@@ -449,30 +510,63 @@ serve(async (req) => {
       if (existingBillError) throw existingBillError;
 
       const billDetailsUrl = `https://api.legiscan.com/?op=getBill&id=${billId}&key=${legiscanApiKey}`;
-      const { bill: billData } = await fetchJsonWithRetries<{ bill: any }>(
-        billDetailsUrl,
-        "legiscan getBill",
-      );
-
+      let billData: any;
       let decodedText: string | undefined;
-      const latestTextDoc =
-        billData.texts?.length > 0 ? billData.texts[billData.texts.length - 1] : null;
 
-      if (latestTextDoc?.doc_id) {
-        const billTextUrl = `https://api.legiscan.com/?op=getBillText&id=${latestTextDoc.doc_id}&key=${legiscanApiKey}`;
-        const { text: textData } = await fetchJsonWithRetries<{ text: { doc: string } }>(
-          billTextUrl,
-          "legiscan getBillText",
+      try {
+        const res = await fetchJsonWithRetries<{ bill: any; status?: string }>(
+          billDetailsUrl,
+          "legiscan getBill",
         );
-        const binaryString = atob(textData.doc);
-        const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
-        const decoder = new TextDecoder("utf-8", { fatal: false });
-        decodedText = decoder
-          .decode(bytes)
-          .replace(/^\uFEFF/, "")
-          .replace(/[\u200B-\u200D\u2060]/g, "");
-      } else {
-        console.log("- No LegiScan text, using title", {
+        if (res.status === "ERROR") {
+          throw new Error(`LegiScan error: ${JSON.stringify(res.alert || res)}`);
+        }
+        billData = res.bill;
+
+        const latestTextDoc =
+          billData.texts?.length > 0 ? billData.texts[billData.texts.length - 1] : null;
+
+        if (latestTextDoc?.doc_id) {
+          const billTextUrl = `https://api.legiscan.com/?op=getBillText&id=${latestTextDoc.doc_id}&key=${legiscanApiKey}`;
+          const textRes = await fetchJsonWithRetries<{ text: { doc: string }; status?: string }>(
+            billTextUrl,
+            "legiscan getBillText",
+          );
+          if (textRes.status === "ERROR") {
+            throw new Error(`LegiScan text error: ${JSON.stringify(textRes.alert || textRes)}`);
+          }
+          const binaryString = atob(textRes.text.doc);
+          const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
+          const decoder = new TextDecoder("utf-8", { fatal: false });
+          decodedText = decoder
+            .decode(bytes)
+            .replace(/^\uFEFF/, "")
+            .replace(/[\u200B-\u200D\u2060]/g, "");
+        }
+      } catch (err) {
+        console.warn("- LegiScan failed, attempting Leginfo fallback", { bill_id: billId, error: String(err) });
+      }
+
+      if (!billData) {
+        const { data: dbBill, error: dbError } = await supabaseAdmin.from("bills").select("*").eq("id", billId).single();
+        if (dbError) throw dbError;
+        billData = {
+          bill_id: dbBill.id,
+          bill_number: dbBill.bill_number,
+          title: dbBill.title,
+          description: dbBill.description,
+          state_link: dbBill.state_link,
+          summary: ""
+        };
+      }
+
+      if (!decodedText && billData.state_link) {
+        console.log("- Attempting Leginfo scrape", { bill_id: billId, link: billData.state_link });
+        decodedText = await scrapeLeginfoText(billData.state_link) ?? undefined;
+      }
+
+      if (!decodedText) {
+        console.log("- No LegiScan/Leginfo text, using title", {
           bill_id: billData.bill_id,
           bill_number: billData.bill_number,
         });
@@ -711,10 +805,19 @@ serve(async (req) => {
       console.log("✅ Processed bill", { bill_id: billData.bill_id, bill_number: billData.bill_number });
     };
 
-    const maxBillsToProcess = MAX_BILLS_PER_RUN;
     for (let i = 0; i < maxBillsToProcess; i++) {
       const nextId = await leaseNextBillId();
-      if (!nextId) break;
+      if (!nextId) {
+        try {
+          await supabaseAdmin.from("cron_job_errors").insert({
+            job_name: "sync-updated-bills",
+            error_message: `DEBUG: lease_next_bill returned null at iteration ${i}`
+          });
+        } catch (e) {
+          console.error("Failed to log lease null", e);
+        }
+        break;
+      }
 
       try {
         await processBill(nextId);
@@ -723,6 +826,17 @@ serve(async (req) => {
         if (releaseError) throw releaseError;
       } catch (err) {
         console.error("❌ Failed processing bill", { bill_id: nextId, error: String(err) });
+        
+        // Log error to cron_job_errors table
+        try {
+          await supabaseAdmin.from("cron_job_errors").insert({
+            job_name: "sync-updated-bills",
+            error_message: `Bill ${nextId} failed: ${String(err)}`
+          });
+        } catch (e) {
+          console.error("Failed to log bill failure", e);
+        }
+
         const { error: releaseError } = await supabaseAdmin
           .rpc("release_bill_lease", { p_id: nextId, p_owner: owner, p_ok: false });
         if (releaseError) {
