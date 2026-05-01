@@ -289,19 +289,20 @@ BEGIN
     status_date = EXCLUDED.status_date,
     state_link = EXCLUDED.state_link,
     change_hash = EXCLUDED.change_hash,
-    original_text = EXCLUDED.original_text,
-    original_text_formatted = EXCLUDED.original_text_formatted,
-    summary_simple = EXCLUDED.summary_simple,
-    summary_medium = EXCLUDED.summary_medium,
-    summary_complex = EXCLUDED.summary_complex,
-    summary_ok = EXCLUDED.summary_ok,
-    summary_len_simple = EXCLUDED.summary_len_simple,
-    summary_hash = EXCLUDED.summary_hash,
+    original_text = COALESCE(EXCLUDED.original_text, public.bills.original_text),
+    original_text_formatted = COALESCE(EXCLUDED.original_text_formatted, public.bills.original_text_formatted),
+    summary_simple = COALESCE(EXCLUDED.summary_simple, public.bills.summary_simple),
+    summary_medium = COALESCE(EXCLUDED.summary_medium, public.bills.summary_medium),
+    summary_complex = COALESCE(EXCLUDED.summary_complex, public.bills.summary_complex),
+    summary_ok = COALESCE(EXCLUDED.summary_ok, public.bills.summary_ok),
+    summary_len_simple = COALESCE(EXCLUDED.summary_len_simple, public.bills.summary_len_simple),
+    summary_hash = COALESCE(EXCLUDED.summary_hash, public.bills.summary_hash),
     progress = EXCLUDED.progress,
     calendar = EXCLUDED.calendar,
     history = EXCLUDED.history,
     embedding = CASE
-      WHEN EXCLUDED.summary_hash IS DISTINCT FROM public.bills.summary_hash THEN EXCLUDED.embedding
+      WHEN EXCLUDED.embedding IS NOT NULL AND (EXCLUDED.summary_hash IS DISTINCT FROM public.bills.summary_hash OR public.bills.embedding IS NULL)
+      THEN EXCLUDED.embedding
       ELSE public.bills.embedding
     END;
 
