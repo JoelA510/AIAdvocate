@@ -17,20 +17,16 @@ jobs:
         with:
           node-version: '20'
           cache: 'yarn'
-          cache-dependency-path: 'mobile-app/yarn.lock'
+          cache-dependency-path: 'yarn.lock'
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
-        working-directory: ./mobile-app
 
       - name: Run tests
-        run: yarn test --ci --runInBand
-        working-directory: ./mobile-app
+        run: yarn workspace mobile-app test --ci --runInBand
 
       - name: Run linter
-        run: yarn lint
-        working-directory: ./mobile-app
+        run: yarn workspace mobile-app lint
 
       - name: TypeScript check
-        run: yarn typecheck
-        working-directory: ./mobile-app
+        run: yarn workspace mobile-app typecheck
