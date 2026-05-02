@@ -35,6 +35,7 @@ supabase/.temp
 
 # Ignore all environment files except for the example templates
 .env
+.env.supabase.local
 .env*.local
 .env.production
 mobile-app/.env
