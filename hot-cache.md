@@ -2,7 +2,7 @@
 
 **Date:** May 1-2, 2026
 **Branch:** `main`
-**Status:** Source changes implemented; dependency/security cleanup verified locally; Supabase production DB migration still needs runtime verification if not already applied.
+**Status:** Source changes implemented; dependency/security cleanup verified locally; mobile typecheck/lint/test blockers resolved; Supabase production DB migration still needs runtime verification if not already applied.
 
 ## What changed this session
 
@@ -45,21 +45,26 @@
   - `debug-process-bill`
 - Verified both are absent from `supabase functions list`.
 
+### Mobile CI cleanup
+
+- Added `mobile-app/scripts/generate-router-types.js` and wired `yarn workspace mobile-app typecheck` to regenerate Expo Router typed routes before `tsc`.
+- Ran ESLint autofix to clear the Prettier/import-format errors that made lint fail.
+- The admin route type errors are resolved by fresh Expo Router declarations that include `/admin/account`, `/admin/bills`, `/admin/login`, `/admin/logs`, and `/admin/users`.
+
 ## Validation performed
 
 - `yarn install --frozen-lockfile`: passed
 - `npm audit --json`: passed, zero vulnerabilities
 - `yarn audit --json`: passed, zero vulnerabilities
+- `yarn workspace mobile-app typecheck`: passed
+- `yarn workspace mobile-app lint`: passed with warnings only
 - `yarn workspace mobile-app test --ci --runInBand`: passed, 10 suites / 29 tests
 - `node -e "const xcode = require('xcode'); console.log(typeof xcode.project);"`: passed
 
-## Known validation failures not resolved in this session
+## Remaining warnings
 
-- `yarn workspace mobile-app typecheck` fails on existing Expo Router typed-route errors for `/admin/*` paths.
-- `yarn workspace mobile-app lint` fails with existing formatting/i18n issues:
-  - 1,756 total problems
-  - 1,696 errors
-  - 60 warnings
+- `yarn workspace mobile-app lint` still reports warnings for i18n literal strings, hook dependency suggestions, and a few unused test/admin variables, but it exits successfully.
+- `yarn workspace mobile-app test --ci --runInBand` passes but still prints existing React `act(...)` and open-handle warnings.
 
 ## Production verification still needed
 

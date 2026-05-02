@@ -57,11 +57,15 @@ export default function SummarySlider({ bill, onSummaryChange }: Props) {
       const fallbackText = textByLevel[fallbackLevel];
       if (fallbackText) {
         const fallbackLabel = LABELS[fallbackLevel];
-        return t("summary.fallback", "({{label}} summary used; {{target}} is not available.)\n\n{{text}}", {
-          label: fallbackLabel,
-          target: LABELS[lvl],
-          text: fallbackText,
-        });
+        return t(
+          "summary.fallback",
+          "({{label}} summary used; {{target}} is not available.)\n\n{{text}}",
+          {
+            label: fallbackLabel,
+            target: LABELS[lvl],
+            text: fallbackText,
+          },
+        );
       }
     }
 

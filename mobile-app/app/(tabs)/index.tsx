@@ -154,12 +154,9 @@ export default function BillsHomeScreen() {
     }
   }, [rawQueryParam]);
 
-  const handleSearchChange = useCallback(
-    (text: string) => {
-      setSearchQuery(text);
-    },
-    [],
-  );
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchQuery(text);
+  }, []);
 
   const handleClearQuery = useCallback(() => {
     setSearchQuery("");
@@ -402,9 +399,9 @@ export default function BillsHomeScreen() {
           message={
             normalizedQuery
               ? t(
-                "home.emptyWithQuery",
-                `We couldn't find any bills matching "${normalizedQuery}". Try another search.`,
-              )
+                  "home.emptyWithQuery",
+                  `We couldn't find any bills matching "${normalizedQuery}". Try another search.`,
+                )
               : t("home.emptyNoQuery", "There are no bills to display at the moment.")
           }
         />
@@ -448,7 +445,6 @@ export default function BillsHomeScreen() {
               borderColor: colors.outlineVariant ?? theme.colors.outline,
             },
           ]}
-
           iconColor={theme.colors.primary}
           placeholderTextColor={theme.colors.onSurfaceVariant}
         />

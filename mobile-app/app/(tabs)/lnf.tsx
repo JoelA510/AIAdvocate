@@ -65,7 +65,7 @@ export default function LnfScreen() {
           <Button
             mode="text"
             icon="shield-account"
-            onPress={() => router.push('/admin/login')}
+            onPress={() => router.push("/admin/login")}
             style={styles.adminButton}
             compact
           >
@@ -87,12 +87,12 @@ const styles = StyleSheet.create({
   heroCard: { flex: 1, justifyContent: "center" },
   heroBody: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 8 },
   adminButtonContainer: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 16,
     right: 24,
     opacity: 0.7,
   },
   adminButton: {
-    backgroundColor: 'rgba(128, 128, 128, 0.1)',
+    backgroundColor: "rgba(128, 128, 128, 0.1)",
   },
 });

@@ -23,14 +23,14 @@ import { ThemedView } from "../../components/ThemedView";
 // Helper function for audit logging
 const logAdminAction = async (userId: string, action: string, billId?: number, details?: any) => {
   try {
-    await supabase.from('admin_audit_log').insert({
+    await supabase.from("admin_audit_log").insert({
       user_id: userId,
       action,
       bill_id: billId,
       details: details ? JSON.stringify(details) : null,
     });
   } catch (err) {
-    console.warn('Failed to log admin action:', err);
+    console.warn("Failed to log admin action:", err);
   }
 };
 
@@ -75,8 +75,8 @@ export default function AdminBillsScreen() {
   const [selectedBill, setSelectedBill] = useState<AdminBill | null>(null);
 
   // Translation/Summary State
-  const [availableLanguages, setAvailableLanguages] = useState<string[]>(['en']);
-  const [selectedLanguage, setSelectedLanguage] = useState('en');
+  const [availableLanguages, setAvailableLanguages] = useState<string[]>(["en"]);
+  const [selectedLanguage, setSelectedLanguage] = useState("en");
   const [translations, setTranslations] = useState<Record<string, Translation>>({});
 
   // Edit state (Review)
@@ -128,7 +128,9 @@ export default function AdminBillsScreen() {
     try {
       let queryBuilder = supabase
         .from("bills")
-        .select("id, bill_number, title, summary_simple, summary_medium, summary_complex, original_text, panel_review, created_at")
+        .select(
+          "id, bill_number, title, summary_simple, summary_medium, summary_complex, original_text, panel_review, created_at",
+        )
         .order("created_at", { ascending: false })
         .limit(50);
 
@@ -160,7 +162,7 @@ export default function AdminBillsScreen() {
 
     if (!error && data) {
       const transMap: Record<string, Translation> = {};
-      const langs = ['en'];
+      const langs = ["en"];
       data.forEach((t: any) => {
         transMap[t.language_code] = t;
         if (!langs.includes(t.language_code)) langs.push(t.language_code);
@@ -168,7 +170,7 @@ export default function AdminBillsScreen() {
       setTranslations(transMap);
       setAvailableLanguages(langs);
     } else {
-      setAvailableLanguages(['en']);
+      setAvailableLanguages(["en"]);
       setTranslations({});
     }
   };
@@ -192,7 +194,7 @@ export default function AdminBillsScreen() {
     setNotes(bill.panel_review?.notes || bill.panel_review?.comment || "");
 
     // Reset language to EN initially
-    setSelectedLanguage('en');
+    setSelectedLanguage("en");
     setEditTitle(bill.title || "");
     setEditSimple(bill.summary_simple || "");
     setEditMedium(bill.summary_medium || "");
@@ -208,7 +210,7 @@ export default function AdminBillsScreen() {
   useEffect(() => {
     if (!selectedBill) return;
 
-    if (selectedLanguage === 'en') {
+    if (selectedLanguage === "en") {
       setEditTitle(selectedBill.title || "");
       setEditSimple(selectedBill.summary_simple || "");
       setEditMedium(selectedBill.summary_medium || "");
@@ -245,22 +247,22 @@ export default function AdminBillsScreen() {
         notes,
       };
 
-      const { error: rpcError } = await supabase.rpc('update_bill_review', {
+      const { error: rpcError } = await supabase.rpc("update_bill_review", {
         p_bill_id: selectedBill.id,
-        p_review: updatedReview
+        p_review: updatedReview,
       });
 
       if (rpcError) throw rpcError;
 
       // 2. Save Summaries based on selected language
-      if (selectedLanguage === 'en') {
+      if (selectedLanguage === "en") {
         // Use RPC for secure update (Deep Debug Version)
-        const { data: updatedData, error: billError } = await supabase.rpc('update_bill_summary', {
+        const { data: updatedData, error: billError } = await supabase.rpc("update_bill_summary", {
           p_bill_id: selectedBill.id,
           p_title: editTitle,
           p_simple: editSimple,
           p_medium: editMedium,
-          p_complex: editComplex
+          p_complex: editComplex,
         });
 
         if (billError) throw billError;
@@ -274,41 +276,35 @@ export default function AdminBillsScreen() {
           summary_simple: updatedData.summary_simple,
           summary_medium: updatedData.summary_medium,
           summary_complex: updatedData.summary_complex,
-          panel_review: updatedReview
+          panel_review: updatedReview,
         };
         setSelectedBill(updatedBill);
-        setBills(prev => prev.map(b => b.id === selectedBill.id ? updatedBill : b));
+        setBills((prev) => prev.map((b) => (b.id === selectedBill.id ? updatedBill : b)));
 
         // Log English Summary Update
-        await logAdminAction(
-          session.user.id,
-          'update_bill_summary_en',
-          selectedBill.id,
-          {
-            title: editTitle,
-            simple: editSimple,
-            medium: editMedium,
-            complex: editComplex,
-            db_verified: true
-          }
-        );
-
+        await logAdminAction(session.user.id, "update_bill_summary_en", selectedBill.id, {
+          title: editTitle,
+          simple: editSimple,
+          medium: editMedium,
+          complex: editComplex,
+          db_verified: true,
+        });
       } else {
         // Use RPC for secure translation update
-        const { error: transError } = await supabase.rpc('update_bill_translation_secure', {
+        const { error: transError } = await supabase.rpc("update_bill_translation_secure", {
           p_bill_id: selectedBill.id,
           p_language_code: selectedLanguage,
           p_title: editTitle,
           p_simple: editSimple,
           p_medium: editMedium,
           p_complex: editComplex,
-          p_verified: isVerified
+          p_verified: isVerified,
         });
 
         if (transError) throw transError;
 
         // Update local translations map
-        setTranslations(prev => ({
+        setTranslations((prev) => ({
           ...prev,
           [selectedLanguage]: {
             ...prev[selectedLanguage],
@@ -316,29 +312,23 @@ export default function AdminBillsScreen() {
             summary_simple: editSimple,
             summary_medium: editMedium,
             summary_complex: editComplex,
-            human_verified: isVerified
-          }
+            human_verified: isVerified,
+          },
         }));
 
         // Log Translation Update
-        await logAdminAction(
-          session.user.id,
-          'update_bill_translation',
-          selectedBill.id,
-          {
-            language: selectedLanguage,
-            title: editTitle,
-            simple: editSimple,
-            medium: editMedium,
-            complex: editComplex,
-            verified: isVerified
-          }
-        );
+        await logAdminAction(session.user.id, "update_bill_translation", selectedBill.id, {
+          language: selectedLanguage,
+          title: editTitle,
+          simple: editSimple,
+          medium: editMedium,
+          complex: editComplex,
+          verified: isVerified,
+        });
       }
 
       Toast.show({ type: "success", text1: "Saved successfully" });
       await loadBillLogs(selectedBill.id);
-
     } catch (err: any) {
       console.error("Save error:", err);
       Toast.show({ type: "error", text1: "Save failed", text2: err.message });
@@ -366,12 +356,30 @@ export default function AdminBillsScreen() {
   if (!selectedBill) {
     return (
       <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
-        <View style={[styles.header, { backgroundColor: colors.surfaceContainerHigh, borderColor: colors.outlineVariant }]}>
+        <View
+          style={[
+            styles.header,
+            { backgroundColor: colors.surfaceContainerHigh, borderColor: colors.outlineVariant },
+          ]}
+        >
           <View style={styles.headerTopRow}>
-            <Text variant="titleLarge" style={{ fontWeight: '600' }}>Admin View: Bills</Text>
-            <View style={{ flexDirection: 'row' }}>
-              <IconButton icon="account-group" onPress={() => router.push('/admin/users')} mode="contained-tonal" size={24} style={{ marginRight: 8 }} />
-              <IconButton icon="account-cog" onPress={() => router.push('/admin/account')} mode="contained-tonal" size={24} />
+            <Text variant="titleLarge" style={{ fontWeight: "600" }}>
+              Admin View: Bills
+            </Text>
+            <View style={{ flexDirection: "row" }}>
+              <IconButton
+                icon="account-group"
+                onPress={() => router.push("/admin/users")}
+                mode="contained-tonal"
+                size={24}
+                style={{ marginRight: 8 }}
+              />
+              <IconButton
+                icon="account-cog"
+                onPress={() => router.push("/admin/account")}
+                mode="contained-tonal"
+                size={24}
+              />
             </View>
           </View>
           <Searchbar
@@ -381,9 +389,19 @@ export default function AdminBillsScreen() {
             onSubmitEditing={searchBills}
             onIconPress={searchBills}
             loading={loading}
-            style={[styles.searchbar, { backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }]}
+            style={[
+              styles.searchbar,
+              {
+                backgroundColor: colors.surfaceContainerLowest,
+                borderColor: colors.outlineVariant,
+              },
+            ]}
           />
-          <Button mode="text" onPress={() => router.push('/admin/logs')} style={{ alignSelf: 'flex-end', marginTop: -8 }}>
+          <Button
+            mode="text"
+            onPress={() => router.push("/admin/logs")}
+            style={{ alignSelf: "flex-end", marginTop: -8 }}
+          >
             View All Logs
           </Button>
         </View>
@@ -411,19 +429,39 @@ export default function AdminBillsScreen() {
 
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
-      <View style={[styles.header, { backgroundColor: colors.surfaceContainerHigh, borderColor: colors.outlineVariant, marginBottom: 0 }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: colors.surfaceContainerHigh,
+            borderColor: colors.outlineVariant,
+            marginBottom: 0,
+          },
+        ]}
+      >
         <View style={styles.headerTopRow}>
-          <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>Back</Button>
-          <Text variant="titleMedium" style={{ fontWeight: '600' }}>{selectedBill.bill_number}</Text>
-          <Button mode="contained" onPress={handleSave} loading={saving}>Save</Button>
+          <Button icon="arrow-left" onPress={() => setSelectedBill(null)}>
+            Back
+          </Button>
+          <Text variant="titleMedium" style={{ fontWeight: "600" }}>
+            {selectedBill.bill_number}
+          </Text>
+          <Button mode="contained" onPress={handleSave} loading={saving}>
+            Save
+          </Button>
         </View>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Survivor Panel Notes Section */}
         <View style={styles.section}>
-          <Text variant="titleMedium" style={{ marginBottom: 12 }}>Survivor Panel Review</Text>
+          <Text variant="titleMedium" style={{ marginBottom: 12 }}>
+            Survivor Panel Review
+          </Text>
           <TextInput
             mode="outlined"
             label="General Notes / Summary"
@@ -434,44 +472,75 @@ export default function AdminBillsScreen() {
             style={{ marginBottom: 16, backgroundColor: theme.colors.surface }}
           />
 
-          <Text variant="titleSmall" style={{ marginTop: 8 }}>Pros</Text>
+          <Text variant="titleSmall" style={{ marginTop: 8 }}>
+            Pros
+          </Text>
           {pros.map((pro, index) => (
             <View key={index} style={styles.row}>
-              <TextInput mode="outlined" value={pro} onChangeText={(text) => updatePro(text, index)} style={{ flex: 1, backgroundColor: theme.colors.surface }} dense />
+              <TextInput
+                mode="outlined"
+                value={pro}
+                onChangeText={(text) => updatePro(text, index)}
+                style={{ flex: 1, backgroundColor: theme.colors.surface }}
+                dense
+              />
               <IconButton icon="delete" onPress={() => removePro(index)} />
             </View>
           ))}
-          <Button onPress={addPro} icon="plus">Add Pro</Button>
+          <Button onPress={addPro} icon="plus">
+            Add Pro
+          </Button>
 
-          <Text variant="titleSmall" style={{ marginTop: 16 }}>Cons</Text>
+          <Text variant="titleSmall" style={{ marginTop: 16 }}>
+            Cons
+          </Text>
           {cons.map((con, index) => (
             <View key={index} style={styles.row}>
-              <TextInput mode="outlined" value={con} onChangeText={(text) => updateCon(text, index)} style={{ flex: 1, backgroundColor: theme.colors.surface }} dense />
+              <TextInput
+                mode="outlined"
+                value={con}
+                onChangeText={(text) => updateCon(text, index)}
+                style={{ flex: 1, backgroundColor: theme.colors.surface }}
+                dense
+              />
               <IconButton icon="delete" onPress={() => removeCon(index)} />
             </View>
           ))}
-          <Button onPress={addCon} icon="plus">Add Con</Button>
+          <Button onPress={addCon} icon="plus">
+            Add Con
+          </Button>
         </View>
 
         <Divider style={{ marginVertical: 20 }} />
 
         {/* Bill Summaries Section */}
         <View style={styles.section}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 16,
+            }}
+          >
             <Text variant="titleMedium">Bill Summaries</Text>
-            {selectedLanguage !== 'en' && (
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {selectedLanguage !== "en" && (
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <Text style={{ marginRight: 8 }}>Verified</Text>
                 <Switch value={isVerified} onValueChange={setIsVerified} />
               </View>
             )}
           </View>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginBottom: 16 }}
+          >
             <SegmentedButtons
               value={selectedLanguage}
               onValueChange={setSelectedLanguage}
-              buttons={availableLanguages.map(lang => ({
+              buttons={availableLanguages.map((lang) => ({
                 value: lang,
                 label: lang.toUpperCase(),
               }))}
@@ -519,15 +588,27 @@ export default function AdminBillsScreen() {
 
         {/* Audit Logs Section */}
         <View style={styles.section}>
-          <Text variant="titleMedium" style={{ marginBottom: 8 }}>Audit Logs (This Bill)</Text>
+          <Text variant="titleMedium" style={{ marginBottom: 8 }}>
+            Audit Logs (This Bill)
+          </Text>
           {billLogs.length === 0 ? (
             <Text>No logs found for this bill.</Text>
           ) : (
             billLogs.map((log) => (
-              <View key={log.id} style={{ marginBottom: 8, padding: 8, backgroundColor: theme.colors.surfaceVariant, borderRadius: 8 }}>
+              <View
+                key={log.id}
+                style={{
+                  marginBottom: 8,
+                  padding: 8,
+                  backgroundColor: theme.colors.surfaceVariant,
+                  borderRadius: 8,
+                }}
+              >
                 <Text variant="labelSmall">{new Date(log.timestamp).toLocaleString()}</Text>
                 <Text variant="bodyMedium">{log.action}</Text>
-                <Text variant="bodySmall" style={{ fontFamily: 'monospace' }}>{JSON.stringify(log.details)}</Text>
+                <Text variant="bodySmall" style={{ fontFamily: "monospace" }}>
+                  {JSON.stringify(log.details)}
+                </Text>
               </View>
             ))
           )}
@@ -548,9 +629,9 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   headerTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 4,
   },
   searchbar: {
