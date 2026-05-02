@@ -31,7 +31,7 @@ export default function HeaderBanner({ forceShow }: Props) {
 
   const nextLang = i18n.language === "es" ? "en" : "es";
   const onToggleLang = () => {
-    i18n.changeLanguage(nextLang).catch(() => { });
+    i18n.changeLanguage(nextLang).catch(() => {});
   };
 
   const themeIcon = resolvedScheme === "dark" ? "weather-night" : "white-balance-sunny";

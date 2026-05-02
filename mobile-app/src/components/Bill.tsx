@@ -338,10 +338,7 @@ export default function BillComponent({ bill }: { bill: Bill }) {
         },
       ]}
     >
-      <Pressable
-        onPress={handlePress}
-        android_ripple={{ color: theme.colors.surfaceVariant }}
-      >
+      <Pressable onPress={handlePress} android_ripple={{ color: theme.colors.surfaceVariant }}>
         <Card.Content style={styles.content}>
           <View style={styles.header}>
             <Text variant="titleMedium" style={styles.billNumber}>
@@ -393,9 +390,9 @@ export default function BillComponent({ bill }: { bill: Bill }) {
                   status: statusText,
                   dateSuffix: statusDateFormatted
                     ? t("bill.meta.statusDateSuffix", {
-                      defaultValue: " ({{date}})",
-                      date: statusDateFormatted,
-                    })
+                        defaultValue: " ({{date}})",
+                        date: statusDateFormatted,
+                      })
                     : "",
                 })}
               </Text>

@@ -37,7 +37,7 @@ const LOGO_ASPECT_RATIO = 1500 / 257;
 initSentry();
 
 // Prevent splash auto-hide until assets/config load.
-SplashScreen.preventAutoHideAsync().catch(() => { });
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const [configError, setConfigError] = useState<string | null>(null);
@@ -53,16 +53,16 @@ export default function RootLayout() {
     try {
       initConfig();
       setIsReady(true);
-      SplashScreen.hideAsync().catch(() => { });
+      SplashScreen.hideAsync().catch(() => {});
     } catch (e: any) {
       setConfigError(e?.message ?? "Unknown configuration error");
-      SplashScreen.hideAsync().catch(() => { });
+      SplashScreen.hideAsync().catch(() => {});
     }
   }, []);
 
   useEffect(() => {
     if (configError) {
-      SplashScreen.hideAsync().catch(() => { });
+      SplashScreen.hideAsync().catch(() => {});
     }
   }, [configError]);
 
@@ -72,7 +72,9 @@ export default function RootLayout() {
     const colors = colorScheme === "dark" ? Colors.dark : Colors.light;
     return (
       <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
-        <Text style={[styles.errorTitle, { color: colors.text }]}>{t("config.errorTitle", "Configuration Error")}</Text>
+        <Text style={[styles.errorTitle, { color: colors.text }]}>
+          {t("config.errorTitle", "Configuration Error")}
+        </Text>
         <Text style={[styles.errorBody, { color: colors.text }]}>{configError}</Text>
         <Text style={[styles.errorHint, { color: colors.icon }]}>
           {t("config.errorHint", "Check your mobile-app/.env and restart the dev server.")}

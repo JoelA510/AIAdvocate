@@ -62,7 +62,7 @@ export async function decryptNote(ciphertext: string): Promise<string> {
     const key = await getEncryptionKey();
 
     // Decode from base64
-    const encrypted = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+    const encrypted = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
 
     // XOR decryption
     const encoder = new TextEncoder();

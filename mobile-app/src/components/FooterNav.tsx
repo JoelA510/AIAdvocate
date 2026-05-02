@@ -142,7 +142,10 @@ export default function FooterNav() {
             accessibilityLabel={item.label}
           >
             {iconNode}
-            <Text style={[styles.label, theme.fonts.labelSmall, { color: iconColor }]} numberOfLines={1}>
+            <Text
+              style={[styles.label, theme.fonts.labelSmall, { color: iconColor }]}
+              numberOfLines={1}
+            >
               {item.label}
             </Text>
           </Pressable>
