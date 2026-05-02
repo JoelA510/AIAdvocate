@@ -18,7 +18,6 @@
     "check-size": "node scripts/check-bundle-size.js"
   },
   "dependencies": {
-    "@expo/webpack-config": "^19.0.1",
     "@hcaptcha/react-native-hcaptcha": "^1.0.2",
     "@react-native-async-storage/async-storage": "2.1.2",
     "@react-native-firebase/app": "^22.4.0",
@@ -69,7 +68,6 @@
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "^0.20.0",
     "react-native-webview": "13.13.5",
-    "sentry-expo": "^7.2.0",
     "webpack-bundle-analyzer": "^5.0.1"
   },
   "devDependencies": {
@@ -100,7 +98,7 @@
     "pretty-format": "29.7.0",
     "react-test-renderer": "19.0.0",
     "typescript": "~5.8.3",
-    "webpack": "^5",
+    "webpack": "^5.106.2",
     "whatwg-fetch": "^3.6.20"
   },
   "expo": {

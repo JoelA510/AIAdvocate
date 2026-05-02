@@ -4,6 +4,22 @@
   "workspaces": [
     "mobile-app"
   ],
+  "resolutions": {
+    "**/@expo/cli/glob": "10.5.0",
+    "**/@expo/config/glob": "10.5.0",
+    "**/@expo/config-plugins/glob": "10.5.0",
+    "**/@expo/devcert/glob": "10.5.0",
+    "**/@expo/fingerprint/glob": "10.5.0",
+    "**/@expo/metro-config/glob": "10.5.0",
+    "**/@expo/metro-config/postcss": "8.5.13",
+    "**/expo-dev-launcher/ajv": "8.20.0",
+    "**/expo-modules-autolinking/glob": "10.5.0",
+    "**/expo-updates/glob": "10.5.0",
+    "**/http-proxy-agent/@tootallnate/once": "3.0.1",
+    "**/sucrase/glob": "10.5.0",
+    "terser-webpack-plugin": "5.5.0",
+    "**/xcode/uuid": "14.0.0"
+  },
   "dependencies": {
     "pg": "^8.16.3",
     "postgresql": "^0.0.1"
