@@ -2,7 +2,7 @@
 
 **Date:** May 1-2, 2026
 **Branch:** `main`
-**Status:** Source changes implemented; dependency/security cleanup verified locally; mobile typecheck/lint/test blockers resolved; Supabase production DB migration still needs runtime verification if not already applied.
+**Status:** Source changes implemented; dependency/security cleanup verified locally; mobile typecheck/lint/test blockers resolved; Supabase production DB is current through the LegiScan guardrail migrations; ingestion was not manually invoked because the LegiScan key may still be revoked.
 
 ## What changed this session
 
@@ -21,7 +21,7 @@
   - LegiScan API usage guardrails
 - Deployed Edge Functions observed in Supabase:
   - `bulk-import-dataset` version 60
-  - `sync-updated-bills` version 56
+  - `sync-updated-bills` version 57
 
 ### Dependabot vulnerability cleanup
 
@@ -51,6 +51,38 @@
 - Ran ESLint autofix to clear the Prettier/import-format errors that made lint fail.
 - The admin route type errors are resolved by fresh Expo Router declarations that include `/admin/account`, `/admin/bills`, `/admin/login`, `/admin/logs`, and `/admin/users`.
 
+### Supabase deployment and migration verification
+
+- Added `.env.supabase.local` to `.gitignore` in commit `7e851bb Ignore local Supabase DB password env`.
+- Confirmed `.env.supabase.local` is ignored and should contain `SUPABASE_DB_PASSWORD`.
+- Fixed local shell parsing of `.env.supabase.local` by quoting the password value after detecting that an unquoted `$` shortened the sourced value.
+- Ran `supabase db push --dry-run --password "$SUPABASE_DB_PASSWORD"` successfully after the quoting fix.
+- Ran `supabase db push --password "$SUPABASE_DB_PASSWORD" --yes`; remote DB reported up to date.
+- Verified production migration history includes:
+  - `20260501120000_repair_bill_text_summary_queue`
+  - `20260501123000_validate_bill_sync_secret_from_vault`
+  - `20260501124000_fix_bill_translation_upsert_columns`
+  - `20260501130000_legiscan_api_usage_guardrails`
+- Redeployed production Edge Functions:
+  - `bulk-import-dataset`
+  - `sync-updated-bills`
+- Verified deployed function list after redeploy:
+  - `bulk-import-dataset` active version 60, updated `2026-05-01 22:30:50 UTC`
+  - `sync-updated-bills` active version 57, updated `2026-05-02 01:43:03 UTC`
+- Ran non-secret production verification:
+  - no application functions reference nonexistent `vault.get_secret` or `vault.delete_secret`
+  - Vault has non-empty `bill-sync-api-key`, `LEGISCAN_API_KEY`, and `supabase_anon_key`
+  - `app_config.functions_base_url` is present
+  - no new `cron_job_errors` or `net._http_response` rows after redeploy because ingestion was not invoked
+- Current production data snapshot from verification:
+  - `public.bills` count: 84
+  - newest bill `created_at`: `2026-04-30 10:12:08.517554+00`
+  - created in last 7 days: 37
+  - latest `status_date`: `2025-10-13`
+  - bills missing any summary: 72
+  - summary-worker claimable: 31
+  - currently leased: 0
+
 ## Validation performed
 
 - `yarn install --frozen-lockfile`: passed
@@ -60,21 +92,34 @@
 - `yarn workspace mobile-app lint`: passed with warnings only
 - `yarn workspace mobile-app test --ci --runInBand`: passed, 10 suites / 29 tests
 - `node -e "const xcode = require('xcode'); console.log(typeof xcode.project);"`: passed
+- GitHub Actions CI, CodeQL, and Automatic Dependency Submission passed on `3379a13`.
+- GitHub Actions CI passed on `7e851bb`.
 
 ## Remaining warnings
 
 - `yarn workspace mobile-app lint` still reports warnings for i18n literal strings, hook dependency suggestions, and a few unused test/admin variables, but it exits successfully.
 - `yarn workspace mobile-app test --ci --runInBand` passes but still prints existing React `act(...)` and open-handle warnings.
 
-## Production verification still needed
+## Follow-ups
 
-If the latest Supabase migrations have not been applied to production, apply them with Supabase DB credentials and run the verification SQL from `AGENTS.md`, especially:
+- Once the LegiScan API key is reinstated, run a small/manual invocation before any broad backfill.
+- After manual invocation, verify:
+  - `net._http_response` has recent `2xx`
+  - no new `cron_job_errors`
+  - bill original text imports
+  - summaries become generated or summary-worker claimable count drops
+  - bill freshness improves beyond the current latest `status_date` of `2025-10-13`
+- Do not run a large catch-up/backfill until the small invocation path is proven healthy.
+- Production ingestion is deployment-verified but not end-to-end source-API verified after the redeploy because the LegiScan key may still be unavailable.
 
-- check for broken `vault.get_secret` / `vault.delete_secret` usage
-- verify required Vault/app config presence without exposing values
-- invoke `public.invoke_full_legislative_refresh()`
-- inspect `net._http_response`
-- inspect recent `cron_job_errors`
-- verify bill freshness and summary queue health
+## Useful commands
 
-Do not claim production ingestion is fully repaired until those downstream checks show fresh bills, source text, and summary activity.
+```bash
+set -a
+source .env.supabase.local
+set +a
+
+supabase db push --password "$SUPABASE_DB_PASSWORD"
+```
+
+Keep `.env.supabase.local` local-only and quoted if the password contains shell-special characters.
