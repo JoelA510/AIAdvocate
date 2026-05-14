@@ -40,6 +40,7 @@ CREATE POLICY "Admins can manage translations" ON public.bill_translations
 -- Public Read Access (if needed for the app, usually public needs to read translations)
 -- Assuming public needs to read translations for the app to work?
 -- If not already defined, we should add it.
+DROP POLICY IF EXISTS "Public can view translations" ON public.bill_translations;
 CREATE POLICY "Public can view translations" ON public.bill_translations
   FOR SELECT TO anon, authenticated
   USING (true);

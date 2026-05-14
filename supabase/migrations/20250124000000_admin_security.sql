@@ -20,10 +20,12 @@ CREATE TABLE IF NOT EXISTS public.admin_audit_log (
 ALTER TABLE public.admin_audit_log ENABLE ROW LEVEL SECURITY;
 
 -- Only service role can read audit logs (for investigations)
+DROP POLICY IF EXISTS "Service role reads audit log" ON public.admin_audit_log;
 CREATE POLICY "Service role reads audit log" ON public.admin_audit_log
   FOR SELECT TO service_role USING (true);
 
 -- Admins can insert their own audit entries
+DROP POLICY IF EXISTS "Admins can log their actions" ON public.admin_audit_log;
 CREATE POLICY "Admins can log their actions" ON public.admin_audit_log
   FOR INSERT TO authenticated
   WITH CHECK (
@@ -119,19 +121,21 @@ ORDER BY u.created_at DESC;
 -- ================================================================
 
 -- Allow admins to UPDATE bills (for panel reviews)
+DROP POLICY IF EXISTS "Admins can update bills" ON public.bills;
 CREATE POLICY "Admins can update bills" ON public.bills
   FOR UPDATE TO authenticated
   USING (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()))
   WITH CHECK (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()));
 
 -- Allow admins to MANAGE translations (Insert/Update/Delete)
+DROP POLICY IF EXISTS "Admins can manage translations" ON public.bill_translations;
 CREATE POLICY "Admins can manage translations" ON public.bill_translations
   FOR ALL TO authenticated
   USING (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()))
   WITH CHECK (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()));
 
 -- Allow admins to VIEW ALL audit logs
+DROP POLICY IF EXISTS "Admins can view all audit logs" ON public.admin_audit_log;
 CREATE POLICY "Admins can view all audit logs" ON public.admin_audit_log
   FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM public.app_admins WHERE user_id = auth.uid()));
-
