@@ -4,6 +4,15 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { corsHeaders } from "../_shared/cors.ts";
+import {
+  buildLocationIqSearchUrl,
+  type CacheType,
+  normalizeQuery,
+  ProviderRequestError,
+  representativesFromCache,
+  shouldServeCachedResults,
+  shouldWriteCacheResults,
+} from "./lookup.ts";
 
 type CacheRow = {
   lookup_key: string;
@@ -14,6 +23,8 @@ type CacheRow = {
 };
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+const LOOKUP_UNAVAILABLE_MESSAGE =
+  "Representative lookup is temporarily unavailable. Please try again later.";
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -23,46 +34,36 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 const badRequest = (message: string) => jsonResponse({ error: message }, 400);
 
-function normalizeQuery(query: string): {
-  cacheable: boolean;
-  cacheType: "zip" | "city" | null;
-  lookupKey: string | null;
-  sanitized: string;
-} {
-  const trimmed = query.trim();
-  const sanitized = trimmed.replace(/\s+/g, " ").trim();
-
-  const isZip = /^[0-9]{5}(?:-[0-9]{4})?$/.test(sanitized);
-  const cityCandidate = sanitized
-    .replace(/,/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const isCity = /^[A-Za-z\s]+$/.test(cityCandidate) && cityCandidate.length > 0;
-
-  if (isZip) {
-    const value = sanitized.replace(/\s+/g, "");
-    return { cacheable: true, cacheType: "zip", lookupKey: `zip:${value}`, sanitized };
+function logLookupError(error: unknown) {
+  if (error instanceof ProviderRequestError) {
+    console.error("find-your-rep provider request failed:", {
+      provider: error.provider,
+      status: error.status ?? "unknown",
+    });
+    return;
   }
 
-  if (isCity) {
-    const value = cityCandidate.toLowerCase();
-    return { cacheable: true, cacheType: "city", lookupKey: `city:${value}`, sanitized };
+  if (error instanceof Error) {
+    console.error("find-your-rep function failed:", {
+      name: error.name,
+      message: error.message,
+    });
+    return;
   }
 
-  return { cacheable: false, cacheType: null, lookupKey: null, sanitized };
+  console.error("find-your-rep function failed with an unknown error.");
 }
 
-async function fetchGeocode(query: string, apiKey: string) {
-  const url = new URL("https://us1.locationiq.com/v1/search");
-  url.searchParams.set("key", apiKey);
-  url.searchParams.set("q", query);
-  url.searchParams.set("format", "json");
-  url.searchParams.set("limit", "1");
+async function fetchGeocode(
+  query: string,
+  apiKey: string,
+  cacheType: CacheType | null,
+) {
+  const url = buildLocationIqSearchUrl(query, apiKey, cacheType);
 
-  const res = await fetch(url.toString());
+  const res = await fetch(url);
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`LocationIQ request failed (${res.status}). ${text || "Try again later."}`);
+    throw new ProviderRequestError("LocationIQ", res.status);
   }
 
   const matches = (await res.json()) as Array<{ lat: string; lon: string }>;
@@ -88,13 +89,12 @@ async function fetchRepresentatives(lat: number, lon: number, apiKey: string) {
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`OpenStates request failed (${res.status}). ${text || "Try again later."}`);
+    throw new ProviderRequestError("OpenStates", res.status);
   }
 
   const payload = await res.json();
   if (payload?.error?.message) {
-    throw new Error(`OpenStates error: ${payload.error.message}`);
+    throw new ProviderRequestError("OpenStates");
   }
 
   const results = Array.isArray(payload?.results) ? payload.results : [];
@@ -126,10 +126,14 @@ serve(async (req) => {
     const openStatesKey = Deno.env.get("OPENSTATES_API_KEY");
 
     if (!locationIqKey || !openStatesKey) {
-      throw new Error("Required LocationIQ/OpenStates API keys are not configured.");
+      throw new Error(
+        "Required LocationIQ/OpenStates API keys are not configured.",
+      );
     }
 
-    const { cacheable, cacheType, lookupKey, sanitized } = normalizeQuery(query);
+    const { cacheable, cacheType, lookupKey, sanitized } = normalizeQuery(
+      query,
+    );
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const nowIso = new Date().toISOString();
     let cachedRow: CacheRow | null = null;
@@ -137,7 +141,9 @@ serve(async (req) => {
     if (cacheable && lookupKey) {
       const { data, error: cacheError } = await supabase
         .from("location_lookup_cache")
-        .select("lookup_key, representatives, expires_at, hit_count, created_at")
+        .select(
+          "lookup_key, representatives, expires_at, hit_count, created_at",
+        )
         .eq("lookup_key", lookupKey)
         .maybeSingle();
 
@@ -145,9 +151,18 @@ serve(async (req) => {
         console.error("Cache lookup failed:", cacheError);
       } else if (data) {
         cachedRow = data as CacheRow;
-        const expiresAt = cachedRow.expires_at ? new Date(cachedRow.expires_at).getTime() : 0;
-        if (expiresAt > Date.now()) {
-          const refreshedExpiry = new Date(Date.now() + CACHE_TTL_MS).toISOString();
+        const expiresAt = cachedRow.expires_at
+          ? new Date(cachedRow.expires_at).getTime()
+          : 0;
+        const cachedRepresentatives = representativesFromCache(
+          cachedRow.representatives,
+        );
+        if (
+          expiresAt > Date.now() &&
+          shouldServeCachedResults(cacheType, cachedRepresentatives)
+        ) {
+          const refreshedExpiry = new Date(Date.now() + CACHE_TTL_MS)
+            .toISOString();
           await supabase
             .from("location_lookup_cache")
             .update({
@@ -159,7 +174,7 @@ serve(async (req) => {
             .eq("lookup_key", lookupKey);
 
           return jsonResponse({
-            results: cachedRow.representatives ?? [],
+            results: cachedRepresentatives,
             cacheable: true,
             source: "cache",
           });
@@ -167,8 +182,16 @@ serve(async (req) => {
       }
     }
 
-    const { lat, lon } = await fetchGeocode(sanitized, locationIqKey);
-    const allRepresentatives = await fetchRepresentatives(lat, lon, openStatesKey);
+    const { lat, lon } = await fetchGeocode(
+      sanitized,
+      locationIqKey,
+      cacheType,
+    );
+    const allRepresentatives = await fetchRepresentatives(
+      lat,
+      lon,
+      openStatesKey,
+    );
 
     // Filter for state-level representatives only (CA Assembly/Senate)
     // OpenStates returns Federal and State. We want to prioritize/restrict to State.
@@ -185,7 +208,10 @@ serve(async (req) => {
       });
     }
 
-    if (cacheable && lookupKey && cacheType) {
+    if (
+      cacheable && lookupKey && cacheType &&
+      shouldWriteCacheResults(cacheType, representatives)
+    ) {
       const expiresAt = new Date(Date.now() + CACHE_TTL_MS).toISOString();
       const payload = {
         lookup_key: lookupKey,
@@ -218,7 +244,7 @@ serve(async (req) => {
       lon,
     });
   } catch (error) {
-    console.error("find-your-rep function failed:", error);
-    return jsonResponse({ error: (error as Error).message ?? "Unexpected error." }, 500);
+    logLookupError(error);
+    return jsonResponse({ error: LOOKUP_UNAVAILABLE_MESSAGE }, 500);
   }
 });
