@@ -96,7 +96,7 @@ Recent migrations (2024-09 through 2025-10) align RLS policies with Supabase gui
 
 - Node.js 20+, Yarn 1.22+, Git, Supabase CLI ≥ 2.48 (upgrade regularly), and Watchman (macOS).
 - Expo tooling (`npm install -g eas-cli` optionally) and either Android Studio, Xcode, or a web browser for the Expo target.
-- Access to required secrets: OpenStates, LocationIQ, LegiScan, OpenAI, Supabase keys.
+- Access to required server-side secrets: OpenStates, LocationIQ, LegiScan, OpenAI, and Supabase service credentials.
 
 ### 2. Clone & install
 
@@ -114,16 +114,18 @@ yarn install
 - `mobile-app/.env`
   - `EXPO_PUBLIC_SUPABASE_URL`
   - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
-  - `EXPO_PUBLIC_OPENSTATES_API_KEY`
-  - `EXPO_PUBLIC_LOCATIONIQ_API_KEY`
   - Optional extras: `EXPO_PUBLIC_LNF_URL`, `EXPO_PUBLIC_RECAPTCHA_SITE_KEY`, Firebase config.
 - `supabase/.env`
   - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-  - `LEGISCAN_API_KEY`, `OPENSTATES_API_KEY`, `OpenAI_GPT_Key`
+  - `LEGISCAN_API_KEY`, `LOCATIONIQ_API_KEY`, `OPENSTATES_API_KEY`, `OpenAI_GPT_Key`
   - `DB_URL` (percent-encode the password when using `--db-url`)
   - Any downstream service secrets (Expo push, Gemini, etc.).
 
-Never commit `.env` files; rely on Supabase Vault or CI secrets.
+Expo `EXPO_PUBLIC_*` values are bundled into client apps. The Supabase URL and anon key are acceptable public client config only with RLS and least-privilege policies. Never store LocationIQ/OpenStates provider keys, Supabase service-role keys, or other server secrets as Expo public variables.
+
+LocationIQ and OpenStates keys belong in Supabase Edge Function secrets as `LOCATIONIQ_API_KEY` and `OPENSTATES_API_KEY`. If provider keys were previously shipped in preview or production app builds, rotate those keys, update the Supabase secrets with the rotated values, redeploy affected Edge Functions, and rebuild/redeploy affected app builds.
+
+Never commit `.env` files; rely on Supabase Vault, Supabase Edge Function secrets, or CI secrets.
 
 ### 4. Start Supabase locally
 
@@ -263,4 +265,3 @@ AIAdvocate/
 ## Support
 
 Questions, bug reports, or feature requests? Reach out to Love Never Fails or open a GitHub issue. Every improvement helps survivors stay informed, empowered, and safe.
-
