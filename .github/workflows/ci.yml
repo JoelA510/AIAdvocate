@@ -22,6 +22,9 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Check public env guardrail
+        run: yarn workspace mobile-app check:public-env
+
       - name: Run tests
         run: yarn workspace mobile-app test --ci --runInBand
 
