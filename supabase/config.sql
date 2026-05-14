@@ -16,10 +16,9 @@ FOR SELECT
 TO authenticated
 USING (true);
 
--- Insert the configuration values
--- Replace the placeholder values with your actual secrets
+-- Insert public client configuration values only.
+-- Do not store LocationIQ/OpenStates provider keys or service-role keys here.
+-- Provider keys belong in Supabase Edge Function secrets.
 INSERT INTO app_config (key, value) VALUES
-  ('EXPO_PUBLIC_OPENSTATES_API_KEY', 'YOUR_OPENSTATES_API_KEY'),
-  ('EXPO_PUBLIC_LOCATIONIQ_API_KEY', 'YOUR_LOCATIONIQ_API_KEY'),
   ('EXPO_PUBLIC_RECAPTCHA_SITE_KEY', 'YOUR_RECAPTCHA_SITE_KEY'),
   ('EXPO_PUBLIC_FIREBASE_WEB_CONFIG', 'YOUR_FIREBASE_WEB_CONFIG');
