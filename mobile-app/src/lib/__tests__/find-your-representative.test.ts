@@ -1,4 +1,7 @@
-import { findYourRep } from "../find-your-representative";
+import {
+  findYourRep,
+  LOOKUP_UNAVAILABLE_MESSAGE as unavailableMessage,
+} from "../find-your-representative";
 import { supabase } from "../supabase";
 
 jest.mock("../supabase", () => ({
@@ -10,8 +13,6 @@ jest.mock("../supabase", () => ({
 }));
 
 const invokeMock = supabase.functions.invoke as jest.Mock;
-const unavailableMessage =
-  "Representative lookup is temporarily unavailable. Please try again later.";
 
 describe("findYourRep", () => {
   beforeEach(() => {

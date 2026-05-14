@@ -2,7 +2,7 @@
 
 import { supabase } from "./supabase";
 
-const LOOKUP_UNAVAILABLE_MESSAGE =
+export const LOOKUP_UNAVAILABLE_MESSAGE =
   "Representative lookup is temporarily unavailable. Please try again later.";
 
 type FunctionResponse =
