@@ -122,10 +122,8 @@ serve(async (req) => {
       throw new Error("Supabase service credentials are not configured.");
     }
 
-    const locationIqKey =
-      Deno.env.get("LOCATIONIQ_API_KEY") ?? Deno.env.get("EXPO_PUBLIC_LOCATIONIQ_API_KEY");
-    const openStatesKey =
-      Deno.env.get("OPENSTATES_API_KEY") ?? Deno.env.get("EXPO_PUBLIC_OPENSTATES_API_KEY");
+    const locationIqKey = Deno.env.get("LOCATIONIQ_API_KEY");
+    const openStatesKey = Deno.env.get("OPENSTATES_API_KEY");
 
     if (!locationIqKey || !openStatesKey) {
       throw new Error("Required LocationIQ/OpenStates API keys are not configured.");
