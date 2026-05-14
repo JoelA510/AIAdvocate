@@ -9,19 +9,12 @@ dotenvFlow.config({ path: path.resolve(__dirname), default_node_env: "developmen
 type PublicEnv = {
   supabaseUrl: string;
   supabaseAnonKey: string;
-  openstatesApiKey: string;
-  locationIqApiKey: string;
   recaptchaSiteKey?: string;
   firebaseWebConfigJson?: string;
   lnfUrl?: string;
 };
 
-const REQUIRED_KEYS = [
-  "EXPO_PUBLIC_SUPABASE_URL",
-  "EXPO_PUBLIC_SUPABASE_ANON_KEY",
-  "EXPO_PUBLIC_OPENSTATES_API_KEY",
-  "EXPO_PUBLIC_LOCATIONIQ_API_KEY",
-] as const;
+const REQUIRED_KEYS = ["EXPO_PUBLIC_SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_ANON_KEY"] as const;
 
 function collectPublicEnv(): PublicEnv {
   const missing = REQUIRED_KEYS.filter(
@@ -37,8 +30,6 @@ function collectPublicEnv(): PublicEnv {
   return {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL!.trim(),
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!.trim(),
-    openstatesApiKey: process.env.EXPO_PUBLIC_OPENSTATES_API_KEY!.trim(),
-    locationIqApiKey: process.env.EXPO_PUBLIC_LOCATIONIQ_API_KEY!.trim(),
     recaptchaSiteKey: process.env.EXPO_PUBLIC_RECAPTCHA_SITE_KEY?.trim(),
     firebaseWebConfigJson: process.env.EXPO_PUBLIC_FIREBASE_WEB_CONFIG?.trim(),
     lnfUrl: process.env.EXPO_PUBLIC_LNF_URL?.trim(),

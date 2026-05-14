@@ -11,8 +11,6 @@ import * as Updates from "expo-updates";
 export type AppConfig = {
   supabaseUrl: string;
   supabaseAnonKey: string;
-  openstatesApiKey: string;
-  locationIqApiKey: string;
   recaptchaSiteKey?: string;
   firebaseWebConfigJson?: string;
   lnfUrl?: string;
@@ -22,12 +20,7 @@ type PublicEnvPayload = Partial<AppConfig> & {
   lnfUrl?: string;
 };
 
-const REQUIRED_FIELDS: (keyof AppConfig)[] = [
-  "supabaseUrl",
-  "supabaseAnonKey",
-  "openstatesApiKey",
-  "locationIqApiKey",
-];
+const REQUIRED_FIELDS: (keyof AppConfig)[] = ["supabaseUrl", "supabaseAnonKey"];
 
 let config: AppConfig | null = null;
 
@@ -68,8 +61,6 @@ function buildConfigFromPublicEnv(): AppConfig {
   return {
     supabaseUrl: String(source.supabaseUrl).trim(),
     supabaseAnonKey: String(source.supabaseAnonKey).trim(),
-    openstatesApiKey: String(source.openstatesApiKey).trim(),
-    locationIqApiKey: String(source.locationIqApiKey).trim(),
     recaptchaSiteKey: source.recaptchaSiteKey?.trim(),
     firebaseWebConfigJson: source.firebaseWebConfigJson?.trim(),
     lnfUrl: source.lnfUrl?.trim(),
