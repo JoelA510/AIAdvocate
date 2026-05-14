@@ -8,6 +8,7 @@ ALTER TABLE public.bill_translations ENABLE ROW LEVEL SECURITY;
 
 -- 2. Drop existing policies to avoid conflicts/duplication
 DROP POLICY IF EXISTS "Service role reads audit log" ON public.admin_audit_log;
+DROP POLICY IF EXISTS "Service role full access audit log" ON public.admin_audit_log;
 DROP POLICY IF EXISTS "Admins can log their actions" ON public.admin_audit_log;
 DROP POLICY IF EXISTS "Admins can view all audit logs" ON public.admin_audit_log;
 DROP POLICY IF EXISTS "Admins can manage translations" ON public.bill_translations;
