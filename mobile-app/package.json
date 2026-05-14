@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "i18n:scan": "i18next-scanner",
     "test": "jest",
-    "check-size": "node scripts/check-bundle-size.js"
+    "check-size": "node scripts/check-bundle-size.js",
+    "check:public-env": "node scripts/check-public-env.js"
   },
   "dependencies": {
     "@hcaptcha/react-native-hcaptcha": "^1.0.2",
