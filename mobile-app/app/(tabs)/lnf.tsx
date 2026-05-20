@@ -74,6 +74,7 @@ export default function LnfScreen() {
             mode="text"
             icon="shield-lock-outline"
             onPress={() => openExternalUrl(PRIVACY_POLICY_URL)}
+            style={styles.adminButton}
             compact
             accessibilityLabel={t("lnf.privacyPolicy", {
               defaultValue: "Privacy Policy",
@@ -113,7 +114,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: 16,
     left: 24,
-    opacity: 0.85,
+    opacity: 0.7,
   },
   adminButtonContainer: {
     position: "absolute",
