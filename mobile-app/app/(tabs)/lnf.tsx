@@ -9,8 +9,17 @@ import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
 import { Card, Button } from "react-native-paper";
 
-const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() ||
-  "https://www.loveneverfailsus.com/") as string;
+const DEFAULT_LNF_URL = "https://www.loveneverfailsus.com/ai-advocate";
+const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() || DEFAULT_LNF_URL) as string;
+const PRIVACY_POLICY_URL = "https://www.loveneverfailsus.com/ai-advocate/privacy-policy";
+
+async function openExternalUrl(url: string): Promise<void> {
+  try {
+    await Linking.openURL(url);
+  } catch (error) {
+    console.warn("Unable to open external URL", error);
+  }
+}
 
 export default function LnfScreen() {
   const { t } = useTranslation();
@@ -34,7 +43,7 @@ export default function LnfScreen() {
       >
         {Platform.OS === "web" ? (
           <Card mode="elevated" style={styles.heroCard}>
-            <Pressable onPress={() => Linking.openURL(FEED_URL)} style={{ flex: 1 }}>
+            <Pressable onPress={() => openExternalUrl(FEED_URL)} style={{ flex: 1 }}>
               <View style={styles.heroBody}>
                 <ThemedText type="title" style={{ marginBottom: 8 }}>
                   {t("lnf.webBestAtSource", { defaultValue: "Best experienced on the website" })}
@@ -45,7 +54,7 @@ export default function LnfScreen() {
                       "This publisher blocks embedding for security. Click below to open the feed directly.",
                   })}
                 </ThemedText>
-                <Button mode="contained" onPress={() => Linking.openURL(FEED_URL)}>
+                <Button mode="contained" onPress={() => openExternalUrl(FEED_URL)}>
                   {t("lnf.open", { defaultValue: "Open Feed" })}
                 </Button>
               </View>
@@ -59,6 +68,20 @@ export default function LnfScreen() {
             style={{ flex: 1 }}
           />
         )}
+
+        <View style={styles.policyButtonContainer}>
+          <Button
+            mode="text"
+            icon="shield-lock-outline"
+            onPress={() => openExternalUrl(PRIVACY_POLICY_URL)}
+            compact
+            accessibilityLabel={t("lnf.privacyPolicy", {
+              defaultValue: "Privacy Policy",
+            })}
+          >
+            {t("lnf.privacyPolicy", { defaultValue: "Privacy Policy" })}
+          </Button>
+        </View>
 
         {/* Admin Access Button */}
         <View style={styles.adminButtonContainer}>
@@ -86,6 +109,12 @@ const styles = StyleSheet.create({
   },
   heroCard: { flex: 1, justifyContent: "center" },
   heroBody: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 8 },
+  policyButtonContainer: {
+    position: "absolute",
+    bottom: 16,
+    left: 24,
+    opacity: 0.85,
+  },
   adminButtonContainer: {
     position: "absolute",
     bottom: 16,
