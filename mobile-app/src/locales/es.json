@@ -80,7 +80,8 @@
     "openSite": "Abrir loveneverfailsus.com",
     "webBestAtSource": "Se disfruta mejor en el sitio web",
     "webCspNote": "Este editor bloquea la incrustación por seguridad. Haz clic abajo para abrir el feed directamente.",
-    "open": "Abrir feed"
+    "open": "Abrir feed",
+    "privacyPolicy": "Política de privacidad"
   },
   "notFound": { "title": "Esta pantalla no existe.", "homeCta": "¡Ir a la pantalla principal!" },
   "party": {

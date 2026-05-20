@@ -77,7 +77,8 @@
     "openSite": "Open loveneverfailsus.com",
     "webBestAtSource": "Best experienced on the website",
     "webCspNote": "This publisher blocks embedding for security. Click below to open the feed directly.",
-    "open": "Open Feed"
+    "open": "Open Feed",
+    "privacyPolicy": "Privacy Policy"
   },
   "notFound": { "title": "This screen does not exist.", "homeCta": "Go to home screen!" },
   "party": {
