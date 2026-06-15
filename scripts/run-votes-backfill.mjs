@@ -76,7 +76,8 @@ async function main() {
     if (!payload) break;
 
     const continuation = payload.continuation ?? {};
-    const errorCount = Array.isArray(payload.errors) ? payload.errors.length : 0;
+    // Prefer the function's authoritative count; payload.errors is a capped preview.
+    const errorCount = payload.errorsCount ?? (Array.isArray(payload.errors) ? payload.errors.length : 0);
     totalProcessed += payload.processedBills ?? 0;
     totalErrors += errorCount;
 

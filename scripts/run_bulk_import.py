@@ -1,21 +1,11 @@
 import asyncio
 import os
-from pathlib import Path
 
 import httpx
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover
-    load_dotenv = None
+from load_env import load_project_env
 
-# Load secrets from .env files (repo root and supabase/.env) when python-dotenv
-# is installed; otherwise fall back to the ambient environment.
-if load_dotenv is not None:
-    ROOT_DIR = Path(__file__).resolve().parent.parent
-    load_dotenv(ROOT_DIR / ".env")
-    load_dotenv(ROOT_DIR / "supabase" / ".env")
-    load_dotenv()
+load_project_env()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")

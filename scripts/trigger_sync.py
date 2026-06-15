@@ -1,31 +1,19 @@
 import os
 import asyncio
-from pathlib import Path
 
 import httpx
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover
-    load_dotenv = None
+from load_env import load_project_env
 
-# Load secrets from .env files (repo root and supabase/.env) when python-dotenv
-# is installed; otherwise fall back to the ambient environment.
-if load_dotenv is not None:
-    ROOT_DIR = Path(__file__).resolve().parent.parent
-    load_dotenv(ROOT_DIR / ".env")
-    load_dotenv(ROOT_DIR / "supabase" / ".env")
-    load_dotenv()
+load_project_env()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-if not all([SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY]):
+if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY]):
     raise SystemExit(
-        "Missing required environment variables. Set SUPABASE_URL, "
-        "SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY in your environment "
-        "or a .env file."
+        "Missing required environment variables. Set SUPABASE_URL and "
+        "SUPABASE_SERVICE_ROLE_KEY in your environment or a .env file."
     )
 
 
@@ -34,8 +22,10 @@ async def sync_bills():
     sync_url = f"{base_url}/rest/v1/rpc/sync_updated_bills"
     vote_url = f"{base_url}/rest/v1/rpc/invoke_edge_function"
 
+    # The service_role key authenticates both the gateway (apikey) and the
+    # PostgREST role (Bearer), matching the other ops scripts.
     headers = {
-        "apikey": SUPABASE_ANON_KEY,
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
         "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
         "Content-Type": "application/json",
     }

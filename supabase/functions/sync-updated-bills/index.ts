@@ -79,6 +79,8 @@ class HttpError extends Error {
 }
 
 // --- Configuration ---
+// Local superset of _shared/cors.ts: this cron/server endpoint also sets
+// preflight Methods/Max-Age/Vary. Keep in sync if the shared headers change.
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -193,6 +195,8 @@ const validSummaryOrNull = (value?: string | null): string | null => {
 const isUsableBillText = (value?: string | null): boolean =>
   Boolean(value && value.trim().length >= MIN_BILL_TEXT_CHARS);
 
+// Mirrors _shared/utils.ts getOpenAiKey() but returns "" instead of throwing,
+// so a missing key is reported per-bill in the loop below rather than aborting.
 const envOpenAiKey = (): string =>
   Deno.env.get("OpenAI_GPT_Key") ?? Deno.env.get("OPENAI_API_KEY") ?? "";
 
