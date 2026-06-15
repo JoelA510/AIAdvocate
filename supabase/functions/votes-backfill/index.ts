@@ -6,6 +6,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { fetchBillVotes } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
+import { corsHeaders } from "../_shared/cors.ts";
 
 type BillRow = {
   id: number;
@@ -22,11 +23,6 @@ type CursorState = {
   completed_at: string | null;
   updated_at: string;
   total_available: number | null;
-};
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 const DEFAULT_PAGE_SIZE = 25;

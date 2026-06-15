@@ -1,34 +1,7 @@
 #!/usr/bin/env node
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { loadEnv } from './loadEnv.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-async function loadEnvFile() {
-  const envPath = path.resolve(__dirname, '..', 'supabase', '.env');
-  try {
-    const content = await fs.readFile(envPath, 'utf8');
-    for (const line of content.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIndex = trimmed.indexOf('=');
-      if (eqIndex === -1) continue;
-      const key = trimmed.slice(0, eqIndex);
-      if (process.env[key]) continue;
-      let value = trimmed.slice(eqIndex + 1);
-      if (value.startsWith('"') && value.endsWith('"')) {
-        value = value.slice(1, -1);
-      }
-      process.env[key] = value;
-    }
-  } catch (err) {
-    console.warn('Warning: unable to load supabase/.env:', err.message);
-  }
-}
-
-await loadEnvFile();
+await loadEnv();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
