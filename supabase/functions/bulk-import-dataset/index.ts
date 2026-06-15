@@ -5,6 +5,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
 import { ensureEnv } from "../_shared/utils.ts";
 
+// Local superset of _shared/cors.ts (adds preflight Methods/Max-Age).
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
