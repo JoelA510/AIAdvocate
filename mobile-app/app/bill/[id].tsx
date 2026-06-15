@@ -1,13 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState, useEffect } from "react";
-import {
-  StyleSheet,
-  View,
-  ScrollView,
-  Share as RNShare,
-  Linking,
-  Platform,
-} from "react-native";
+import { StyleSheet, View, ScrollView, Share as RNShare, Linking, Platform } from "react-native";
 import {
   Text,
   useTheme,

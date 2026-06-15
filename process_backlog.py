@@ -10,6 +10,7 @@ own machine.
 import os
 import time
 import base64
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -30,8 +31,13 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 # --- Step 1: Load Environment Variables ---
-load_dotenv() 
-print("--- Loading environment variables from project root .env file ---")
+# Load from the repo-root .env and supabase/.env (anchored to this file's
+# location so the script works regardless of the current working directory).
+_ROOT_DIR = Path(__file__).resolve().parent
+load_dotenv(_ROOT_DIR / ".env")
+load_dotenv(_ROOT_DIR / "supabase" / ".env")
+load_dotenv()
+print("--- Loading environment variables ---")
 
 LEGISCAN_API_KEY = os.getenv("LEGISCAN_API_KEY")
 LEGISCAN_ACCESS_KEY = os.getenv("LEGISCAN_ACCESS_KEY")
