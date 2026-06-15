@@ -1158,10 +1158,6 @@ serve(async (req) => {
         throw new Error("Generated complex summary invalid or placeholder");
       }
 
-      const englishAllValid = isValidSummary(englishFinal.simple) &&
-        isValidSummary(englishFinal.medium) &&
-        isValidSummary(englishFinal.complex);
-
       const summaryHash = await sha256(englishFinal.complex!);
       const summaryLenSimple = englishFinal.simple!.length;
 
@@ -1251,13 +1247,6 @@ serve(async (req) => {
             },
           );
         }
-      }
-
-      if (!englishAllValid) {
-        console.warn("English summaries flagged as invalid after guard", {
-          bill_id: billData.bill_id,
-          bill_number: billData.bill_number,
-        });
       }
 
       const statusText = billData.status_text ?? null;

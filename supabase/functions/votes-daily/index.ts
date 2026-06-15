@@ -9,22 +9,11 @@ import {
   fetchVotesForBills,
 } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 const JOB_KEY = "votes-daily:last-run";
 const FALLBACK_WINDOW_MS = 1000 * 60 * 60 * 48; // 48 hours
 const PREVIEW_LIMIT = 10;
-
-type BillRow = {
-  id: number;
-  bill_number?: string | null;
-  title?: string | null;
-  openstates_bill_id: string;
-};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {

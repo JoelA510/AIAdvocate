@@ -4,7 +4,6 @@ import {
   StyleSheet,
   View,
   ScrollView,
-  ActivityIndicator,
   Share as RNShare,
   Linking,
   Platform,

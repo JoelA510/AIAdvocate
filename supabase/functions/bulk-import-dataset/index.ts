@@ -3,7 +3,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
-import { ensureEnv, isPlaceholder } from "../_shared/utils.ts";
+import { ensureEnv } from "../_shared/utils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -131,17 +131,6 @@ const parsePositiveInt = (
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
 
   return Math.max(1, Math.min(Math.floor(parsed), max));
-};
-
-const preserveExistingSummary = (value: string | null | undefined): boolean => {
-  if (!value) return false;
-
-  const normalized = value.trim();
-  if (!normalized) return false;
-  if (isPlaceholder(normalized)) return false;
-  if (/^AI_SUMMARY_FAILED/i.test(normalized)) return false;
-
-  return true;
 };
 
 const parseBillId = (value: unknown): number | null => {

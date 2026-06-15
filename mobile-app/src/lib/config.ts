@@ -44,7 +44,7 @@ function resolvePublicEnv(): PublicEnvPayload | null {
 function buildConfigFromPublicEnv(): AppConfig {
   const source =
     resolvePublicEnv() ??
-    Object.fromEntries(Object.values(REQUIRED_FIELDS).map((field) => [field, null]));
+    Object.fromEntries(REQUIRED_FIELDS.map((field) => [field, null]));
 
   const missing = REQUIRED_FIELDS.filter(
     (field) => !source[field] || String(source[field]).trim().length === 0,
