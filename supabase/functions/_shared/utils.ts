@@ -14,7 +14,10 @@ export function isPlaceholder(s: string | null | undefined): boolean {
  * functions). Prefers `OpenAI_GPT_Key` to match `sync-updated-bills`.
  */
 export function getOpenAiKey(): string {
-  const value = Deno.env.get("OpenAI_GPT_Key") ?? Deno.env.get("OPENAI_API_KEY");
+  // Treat an empty/whitespace value as unset so a blank OpenAI_GPT_Key falls
+  // back to OPENAI_API_KEY instead of selecting the unusable value.
+  const value = Deno.env.get("OpenAI_GPT_Key")?.trim() ||
+    Deno.env.get("OPENAI_API_KEY")?.trim();
   if (!value) {
     throw new Error("OpenAI_GPT_Key (or OPENAI_API_KEY) must be set.");
   }

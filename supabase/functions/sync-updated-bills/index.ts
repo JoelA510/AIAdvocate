@@ -198,7 +198,9 @@ const isUsableBillText = (value?: string | null): boolean =>
 // Mirrors _shared/utils.ts getOpenAiKey() but returns "" instead of throwing,
 // so a missing key is reported per-bill in the loop below rather than aborting.
 const envOpenAiKey = (): string =>
-  Deno.env.get("OpenAI_GPT_Key") ?? Deno.env.get("OPENAI_API_KEY") ?? "";
+  Deno.env.get("OpenAI_GPT_Key")?.trim() ||
+  Deno.env.get("OPENAI_API_KEY")?.trim() ||
+  "";
 
 const errorToMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
