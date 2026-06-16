@@ -5,6 +5,9 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
+import { corsHeaders } from "../_shared/cors.ts";
+import { getOptionalOpenAiKey } from "../_shared/utils.ts";
+
 interface SummaryPayload {
   english: {
     simple: string;
@@ -79,17 +82,6 @@ class HttpError extends Error {
 }
 
 // --- Configuration ---
-// Local superset of _shared/cors.ts: this cron/server endpoint also sets
-// preflight Methods/Max-Age/Vary. Keep in sync if the shared headers change.
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Max-Age": "600",
-  Vary: "Origin",
-};
-
 const toJson = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -194,13 +186,6 @@ const validSummaryOrNull = (value?: string | null): string | null => {
 
 const isUsableBillText = (value?: string | null): boolean =>
   Boolean(value && value.trim().length >= MIN_BILL_TEXT_CHARS);
-
-// Mirrors _shared/utils.ts getOpenAiKey() but returns "" instead of throwing,
-// so a missing key is reported per-bill in the loop below rather than aborting.
-const envOpenAiKey = (): string =>
-  Deno.env.get("OpenAI_GPT_Key")?.trim() ||
-  Deno.env.get("OPENAI_API_KEY")?.trim() ||
-  "";
 
 const errorToMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
@@ -774,7 +759,7 @@ serve(async (req) => {
 
     const legiscanApiKey = Deno.env.get("LEGISCAN_API_KEY") ?? "";
     const legiscanDetailsEnabled = useLegiScanForBillDetails();
-    const openAiKey = envOpenAiKey();
+    const openAiKey = getOptionalOpenAiKey();
     if (!openAiKey) {
       throw new Error(
         "OpenAI API key is not set. Expected OpenAI_GPT_Key or OPENAI_API_KEY.",

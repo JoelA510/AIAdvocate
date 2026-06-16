@@ -9,19 +9,36 @@ export function isPlaceholder(s: string | null | undefined): boolean {
 }
 
 /**
- * Read the OpenAI API key, tolerating both naming conventions used across the
- * project (`OpenAI_GPT_Key` in the docs/env.example, `OPENAI_API_KEY` in some
- * functions). Prefers `OpenAI_GPT_Key` to match `sync-updated-bills`.
+ * Resolve the OpenAI API key, tolerating both naming conventions used across
+ * the project (`OpenAI_GPT_Key` in the docs/env.example, `OPENAI_API_KEY` in
+ * some functions) and treating an empty/whitespace value as unset so a blank
+ * `OpenAI_GPT_Key` falls back to `OPENAI_API_KEY`. Returns undefined when no
+ * usable key is configured.
  */
+function resolveOpenAiKey(): string | undefined {
+  return (
+    Deno.env.get("OpenAI_GPT_Key")?.trim() ||
+    Deno.env.get("OPENAI_API_KEY")?.trim() ||
+    undefined
+  );
+}
+
+/** Read the OpenAI API key, throwing if none is configured. */
 export function getOpenAiKey(): string {
-  // Treat an empty/whitespace value as unset so a blank OpenAI_GPT_Key falls
-  // back to OPENAI_API_KEY instead of selecting the unusable value.
-  const value = Deno.env.get("OpenAI_GPT_Key")?.trim() ||
-    Deno.env.get("OPENAI_API_KEY")?.trim();
+  const value = resolveOpenAiKey();
   if (!value) {
     throw new Error("OpenAI_GPT_Key (or OPENAI_API_KEY) must be set.");
   }
   return value;
+}
+
+/**
+ * Non-throwing variant of {@link getOpenAiKey}: returns "" when no key is
+ * configured, for callers that defer the missing-key error (e.g.
+ * `sync-updated-bills` reports it per bill instead of aborting the run).
+ */
+export function getOptionalOpenAiKey(): string {
+  return resolveOpenAiKey() ?? "";
 }
 
 export async function invokeFunction(opts: {

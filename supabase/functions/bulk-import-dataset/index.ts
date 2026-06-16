@@ -4,15 +4,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
 import { ensureEnv } from "../_shared/utils.ts";
-
-// Local superset of _shared/cors.ts (adds preflight Methods/Max-Age).
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Max-Age": "600",
-};
+import { corsHeaders } from "../_shared/cors.ts";
 
 const LEGISCAN_API_HEADERS = {
   Accept: "application/json",
