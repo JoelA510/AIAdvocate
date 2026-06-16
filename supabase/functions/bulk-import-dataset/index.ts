@@ -5,6 +5,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
 import { ensureEnv, getServiceKey } from "../_shared/utils.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 
 const LEGISCAN_API_HEADERS = {
   Accept: "application/json",
@@ -455,6 +456,10 @@ serve(async (req) => {
 
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+
+  if (!(await isAuthorizedCronOrAdmin(req))) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   const startedAt = Date.now();

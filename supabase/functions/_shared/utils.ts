@@ -41,7 +41,7 @@ export function getOptionalOpenAiKey(): string {
   return resolveOpenAiKey() ?? "";
 }
 
-function parseKeyMap(name: string): Record<string, string> {
+export function parseKeyMap(name: string): Record<string, string> {
   try {
     const parsed = JSON.parse(Deno.env.get(name) ?? "{}");
     return parsed && typeof parsed === "object"

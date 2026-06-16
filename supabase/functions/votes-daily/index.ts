@@ -11,6 +11,7 @@ import {
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { resolveServiceKey } from "../_shared/utils.ts";
+import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 
 const JOB_KEY = "votes-daily:last-run";
 const FALLBACK_WINDOW_MS = 1000 * 60 * 60 * 48; // 48 hours
@@ -19,6 +20,13 @@ const PREVIEW_LIMIT = 10;
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (!(await isAuthorizedCronOrAdmin(req))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   try {
