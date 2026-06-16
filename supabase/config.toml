@@ -34,3 +34,18 @@ verify_jwt = false
 
 [functions."summarize-simple-backfill"]
 verify_jwt = false
+
+[functions.votes-backfill]
+# Authorized in code via isAuthorizedCronOrAdmin(): an admin secret/service key
+# (ops scripts) or the scheduler SYNC_SECRET validated against Vault (pg_cron).
+# Required because the new (non-JWT) publishable apikey the cron sends cannot be
+# verified by the platform's verify_jwt check.
+verify_jwt = false
+
+[functions.votes-daily]
+# Authorized in code via isAuthorizedCronOrAdmin() (see votes-backfill).
+verify_jwt = false
+
+[functions.bulk-import-dataset]
+# Authorized in code via isAuthorizedCronOrAdmin() (see votes-backfill).
+verify_jwt = false

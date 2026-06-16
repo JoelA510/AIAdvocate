@@ -8,6 +8,7 @@ import { fetchBillVotes } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { resolveServiceKey } from "../_shared/utils.ts";
+import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 
 type BillRow = {
   id: number;
@@ -100,6 +101,13 @@ async function resolveLegacyOffsetResumeId(
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (!(await isAuthorizedCronOrAdmin(req))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const url = new URL(req.url);
