@@ -4,7 +4,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { corsHeaders } from "../_shared/cors.ts";
-import { getOpenAiKey } from "../_shared/utils.ts";
+import { getOpenAiKey, getServiceKey } from "../_shared/utils.ts";
 
 console.log("🚀 Initializing translate-bill v1.0");
 
@@ -19,7 +19,7 @@ serve(async (req) => {
       throw new Error("Missing required parameters: 'bill_id' and 'language_code'.");
     }
 
-    const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, getServiceKey());
 
     // --- 1. Check for a cached translation first ---
     const { data: cachedTranslation } = await supabaseAdmin

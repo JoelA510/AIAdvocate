@@ -1,8 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { ensureEnv, isPlaceholder, invokeFunction, runConcurrent } from '../_shared/utils.ts'
+import { ensureEnv, getServiceKey, isPlaceholder, invokeFunction, runConcurrent } from '../_shared/utils.ts'
 
 const supabaseUrl = ensureEnv('SUPABASE_URL')
-const serviceKey  = ensureEnv('SUPABASE_SERVICE_ROLE_KEY')
+const serviceKey  = getServiceKey()
 const db = createClient(supabaseUrl, serviceKey)
 
 const CONCURRENCY = Number(Deno.env.get('BACKFILL_CONCURRENCY') ?? '5')

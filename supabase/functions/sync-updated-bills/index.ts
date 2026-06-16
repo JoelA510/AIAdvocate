@@ -6,7 +6,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
-import { getOptionalOpenAiKey } from "../_shared/utils.ts";
+import { getOptionalOpenAiKey, getServiceKey } from "../_shared/utils.ts";
 
 interface SummaryPayload {
   english: {
@@ -750,7 +750,7 @@ serve(async (req) => {
   try {
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      getServiceKey(),
     );
 
     if (!(await isAuthorizedRequest(supplied, AUTH, supabaseAdmin))) {

@@ -41,6 +41,65 @@ export function getOptionalOpenAiKey(): string {
   return resolveOpenAiKey() ?? "";
 }
 
+function parseKeyMap(name: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(Deno.env.get(name) ?? "{}");
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, string>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Resolve the Supabase secret/service key, preferring the new secret key
+ * (`SUPABASE_SECRET_KEYS.default`) and falling back to the legacy
+ * `SUPABASE_SERVICE_ROLE_KEY`. Returns undefined when neither is configured.
+ */
+export function resolveServiceKey(): string | undefined {
+  return (
+    parseKeyMap("SUPABASE_SECRET_KEYS")["default"]?.trim() ||
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() ||
+    undefined
+  );
+}
+
+/** Resolve the Supabase secret/service key, throwing if none is configured. */
+export function getServiceKey(): string {
+  const value = resolveServiceKey();
+  if (!value) {
+    throw new Error(
+      "No Supabase secret key configured (SUPABASE_SECRET_KEYS or SUPABASE_SERVICE_ROLE_KEY).",
+    );
+  }
+  return value;
+}
+
+/**
+ * Resolve the Supabase publishable/anon key, preferring the new publishable key
+ * (`SUPABASE_PUBLISHABLE_KEYS.default`) and falling back to the legacy
+ * `SUPABASE_ANON_KEY`. Returns undefined when neither is configured.
+ */
+export function resolvePublishableKey(): string | undefined {
+  return (
+    parseKeyMap("SUPABASE_PUBLISHABLE_KEYS")["default"]?.trim() ||
+    Deno.env.get("SUPABASE_ANON_KEY")?.trim() ||
+    undefined
+  );
+}
+
+/** Resolve the Supabase publishable/anon key, throwing if none is configured. */
+export function getPublishableKey(): string {
+  const value = resolvePublishableKey();
+  if (!value) {
+    throw new Error(
+      "No Supabase publishable key configured (SUPABASE_PUBLISHABLE_KEYS or SUPABASE_ANON_KEY).",
+    );
+  }
+  return value;
+}
+
 export async function invokeFunction(opts: {
   url: string; token: string; body: unknown;
 }): Promise<Response> {

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { loadEnv } from './loadEnv.mjs';
+import { supabaseAuthHeaders } from './supabaseHeaders.mjs';
 
 await loadEnv();
 
@@ -27,11 +28,7 @@ async function invokeBackfill(startBillId) {
   const url = `${SUPABASE_URL}/functions/v1/votes-backfill?${query.toString()}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
+    headers: supabaseAuthHeaders(SUPABASE_SERVICE_ROLE_KEY, { 'Content-Type': 'application/json' }),
     body: '{}',
   });
   const text = await res.text();

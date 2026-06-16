@@ -10,6 +10,7 @@ import {
 } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { resolveServiceKey } from "../_shared/utils.ts";
 
 const JOB_KEY = "votes-daily:last-run";
 const FALLBACK_WINDOW_MS = 1000 * 60 * 60 * 48; // 48 hours
@@ -22,7 +23,7 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const serviceRoleKey = resolveServiceKey();
     const openStatesKey = Deno.env.get("OPENSTATES_API_KEY");
 
     if (!supabaseUrl || !serviceRoleKey || !openStatesKey) {

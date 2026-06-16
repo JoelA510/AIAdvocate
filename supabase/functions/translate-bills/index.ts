@@ -3,7 +3,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { corsHeaders } from "../_shared/cors.ts";
-import { getOpenAiKey } from "../_shared/utils.ts";
+import { getOpenAiKey, getServiceKey } from "../_shared/utils.ts";
 
 type TranslationRow = {
   bill_id: number;
@@ -27,7 +27,7 @@ serve(async (req) => {
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      getServiceKey()
     );
 
     // Cache-first

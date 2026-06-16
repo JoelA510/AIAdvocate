@@ -7,6 +7,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { fetchBillVotes } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { resolveServiceKey } from "../_shared/utils.ts";
 
 type BillRow = {
   id: number;
@@ -119,7 +120,7 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const serviceRoleKey = resolveServiceKey();
     const openStatesKey = Deno.env.get("OPENSTATES_API_KEY");
 
     if (!supabaseUrl || !serviceRoleKey || !openStatesKey) {
