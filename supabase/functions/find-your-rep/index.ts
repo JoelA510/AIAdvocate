@@ -4,6 +4,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { resolveServiceKey } from "../_shared/utils.ts";
 import {
   buildLocationIqSearchUrl,
   type CacheType,
@@ -117,7 +118,7 @@ serve(async (req) => {
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const serviceRoleKey = resolveServiceKey();
     if (!supabaseUrl || !serviceRoleKey) {
       throw new Error("Supabase service credentials are not configured.");
     }

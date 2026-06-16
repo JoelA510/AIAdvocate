@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { loadEnv } from './loadEnv.mjs';
+import { supabaseAuthHeaders } from './supabaseHeaders.mjs';
 
 await loadEnv();
 
@@ -67,10 +68,7 @@ async function fetchBills(offset = 0) {
   });
   const url = `${SUPABASE_URL}/rest/v1/bills?${params.toString()}`;
   const res = await fetch(url, {
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
+    headers: supabaseAuthHeaders(SUPABASE_SERVICE_ROLE_KEY),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -138,11 +136,7 @@ async function updateBillOpenStatesId(billId, openStatesId) {
   const url = `${SUPABASE_URL}/rest/v1/bills?id=eq.${billId}`;
   const res = await fetch(url, {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
+    headers: supabaseAuthHeaders(SUPABASE_SERVICE_ROLE_KEY, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ openstates_bill_id: openStatesId }),
   });
   if (!res.ok) {

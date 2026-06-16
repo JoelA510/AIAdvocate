@@ -17,18 +17,21 @@ if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY]):
     )
 
 
+def _supabase_headers(key):
+    # New API keys (sb_…) are not JWTs and must go on the apikey header only;
+    # legacy JWT keys (eyJ…) also use Authorization: Bearer.
+    headers = {"apikey": key, "Content-Type": "application/json"}
+    if key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
 async def sync_bills():
     base_url = SUPABASE_URL.rstrip("/")
     sync_url = f"{base_url}/rest/v1/rpc/sync_updated_bills"
     vote_url = f"{base_url}/rest/v1/rpc/invoke_edge_function"
 
-    # The service_role key authenticates both the gateway (apikey) and the
-    # PostgREST role (Bearer), matching the other ops scripts.
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
+    headers = _supabase_headers(SUPABASE_SERVICE_ROLE_KEY)
 
     print("Starting bill synchronization via RPC...")
 

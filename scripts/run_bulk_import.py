@@ -17,13 +17,18 @@ if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY]):
     )
 
 
+def _supabase_headers(key):
+    # New API keys (sb_…) are not JWTs and must go on the apikey header only;
+    # legacy JWT keys (eyJ…) also use Authorization: Bearer.
+    headers = {"apikey": key, "Content-Type": "application/json"}
+    if key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
 async def process_batches():
     url = f"{SUPABASE_URL.rstrip('/')}/functions/v1/bulk-import-dataset"
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
+    headers = _supabase_headers(SUPABASE_SERVICE_ROLE_KEY)
 
     has_more = True
     total_matched = 0

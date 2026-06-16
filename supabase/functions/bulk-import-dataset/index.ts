@@ -3,7 +3,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
-import { ensureEnv } from "../_shared/utils.ts";
+import { ensureEnv, getServiceKey } from "../_shared/utils.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 
 const LEGISCAN_API_HEADERS = {
@@ -469,7 +469,7 @@ serve(async (req) => {
 
     const supabaseAdmin = createClient(
       ensureEnv("SUPABASE_URL"),
-      ensureEnv("SUPABASE_SERVICE_ROLE_KEY"),
+      getServiceKey(),
     );
 
     const state = "CA";

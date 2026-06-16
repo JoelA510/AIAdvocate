@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { loadEnv } from "./loadEnv.mjs";
+import { supabaseAuthHeaders } from "./supabaseHeaders.mjs";
 
 await loadEnv();
 
@@ -53,11 +54,7 @@ function mapProviderOptionToChoice(option) {
 async function supabaseFetch(pathname, { method = "GET", headers = {}, body = undefined } = {}) {
   const res = await fetch(`${SUPABASE_URL}${pathname}`, {
     method,
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      ...headers,
-    },
+    headers: supabaseAuthHeaders(SUPABASE_SERVICE_ROLE_KEY, headers),
     body,
   });
   if (!res.ok) {

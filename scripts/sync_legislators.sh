@@ -25,7 +25,14 @@ if [[ -z "${SUPABASE_URL:-}" ]]; then
   exit 1
 fi
 
+# New API keys (sb_…) are not JWTs and must be sent on the apikey header only;
+# legacy JWT keys (eyJ…) also use Authorization: Bearer.
+auth_args=(-H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}")
+if [[ "${SUPABASE_SERVICE_ROLE_KEY}" == eyJ* ]]; then
+  auth_args+=(-H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
+fi
+
 curl -X POST "${SUPABASE_URL%/}/functions/v1/votes-backfill" \
-  -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+  "${auth_args[@]}" \
   -H "Content-Type: application/json" \
   -d '{"force":true}'
