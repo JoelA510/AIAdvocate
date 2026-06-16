@@ -14,6 +14,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 const PAGE_SIZE = 25;
 const SLEEP_MS = 2000;
 const MAX_ATTEMPTS = 5;
+const MAX_NO_PROGRESS = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -54,6 +55,8 @@ async function main() {
   let startBillId = 0;
   let totalProcessed = 0;
   let totalErrors = 0;
+  let noProgressStreak = 0;
+  let aborted = false;
 
   while (true) {
     let attempt = 0;
@@ -73,7 +76,13 @@ async function main() {
         await sleep(SLEEP_MS * attempt);
       }
     }
-    if (!payload) break;
+    if (!payload) {
+      // Exhausted retries on a transport/5xx error; record it so the summary
+      // doesn't report a clean run, then stop.
+      totalErrors += 1;
+      aborted = true;
+      break;
+    }
 
     const continuation = payload.continuation ?? {};
     // Prefer the function's authoritative count; payload.errors is a capped preview.
@@ -94,21 +103,41 @@ async function main() {
 
     // Advance past the furthest bill the batch reached (last successful or the
     // one that failed) so a failing bill is attempted once then skipped rather
-    // than looped on. Stop if the cursor can't move forward.
+    // than looped on.
     const resumeAfter = Math.max(
       continuation.next_bill_id ?? 0,
       continuation.failed_bill_id ?? 0,
     );
+
     if (resumeAfter <= startBillId) {
-      console.error(`No forward progress past bill ${startBillId}; stopping to avoid an infinite loop.`);
-      break;
+      // No forward progress and no failed bill to skip past — usually the
+      // function hit its runtime deadline mid-bill (e.g. a large vote set).
+      // Retry the same cursor a bounded number of times before giving up,
+      // rather than aborting the whole run on the first stall.
+      noProgressStreak += 1;
+      if (noProgressStreak >= MAX_NO_PROGRESS) {
+        console.error(
+          `No forward progress past bill ${startBillId} after ${noProgressStreak} attempts; stopping.`,
+        );
+        aborted = true;
+        break;
+      }
+      console.warn(
+        `No forward progress past bill ${startBillId} (attempt ${noProgressStreak}/${MAX_NO_PROGRESS}); retrying.`,
+      );
+      await sleep(SLEEP_MS);
+      continue;
     }
 
+    noProgressStreak = 0;
     startBillId = resumeAfter;
     await sleep(SLEEP_MS);
   }
 
-  console.log(`Backfill loop complete. processedBills=${totalProcessed} errors=${totalErrors}`);
+  console.log(
+    `Backfill loop ${aborted ? 'aborted' : 'complete'}. ` +
+      `processedBills=${totalProcessed} errors=${totalErrors}`,
+  );
 }
 
 main().catch((err) => {
