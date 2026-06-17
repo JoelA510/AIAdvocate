@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { MOCK_BILL_DATA, MOCK_SUMMARIES } from "../_shared/mock-data.ts";
+import { getServiceKey } from "../_shared/utils.ts";
 
 console.log(`🚀 Function 'ingest-and-summarize' up and running!`);
 
@@ -11,7 +12,7 @@ serve(async (req) => {
   }
 
   try {
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const serviceRoleKey = getServiceKey();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 

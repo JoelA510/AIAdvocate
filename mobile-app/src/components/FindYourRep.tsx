@@ -167,12 +167,21 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
     const lookupMatches = new Map<string, number>();
     const providerMatches = new Map<string, number>();
 
-    if (providerIds.length) {
-      const { data: providerRows, error: providerError } = await supabase
-        .from("legislators")
-        .select("id, provider_person_id")
-        .eq("provider", "openstates")
-        .in("provider_person_id", providerIds);
+    const [providerResult, lookupResult] = await Promise.all([
+      providerIds.length
+        ? supabase
+            .from("legislators")
+            .select("id, provider_person_id")
+            .eq("provider", "openstates")
+            .in("provider_person_id", providerIds)
+        : Promise.resolve(null),
+      uniqueLookups.length
+        ? supabase.from("legislators").select("id, lookup_key").in("lookup_key", uniqueLookups)
+        : Promise.resolve(null),
+    ]);
+
+    if (providerResult) {
+      const { data: providerRows, error: providerError } = providerResult;
 
       if (providerError) console.error("Failed to match legislators by provider id", providerError);
 
@@ -183,11 +192,8 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
       });
     }
 
-    if (uniqueLookups.length) {
-      const { data: lookupRows, error: lookupError } = await supabase
-        .from("legislators")
-        .select("id, lookup_key")
-        .in("lookup_key", uniqueLookups);
+    if (lookupResult) {
+      const { data: lookupRows, error: lookupError } = lookupResult;
 
       if (lookupError) console.error("Failed to match legislators", lookupError);
 
@@ -218,12 +224,17 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
     const voteEventChambers = new Set<string>();
 
     if (billId && supabaseIdsForBill.length) {
-      const { data: voteRows, error: voteError } = await supabase
-        .from("v_rep_vote_history")
-        .select("legislator_id,vote_choice,vote_result,vote_date,motion")
-        .eq("bill_id", billId)
-        .in("legislator_id", supabaseIdsForBill)
-        .order("vote_date", { ascending: false });
+      const [voteResult, eventResult] = await Promise.all([
+        supabase
+          .from("v_rep_vote_history")
+          .select("legislator_id,vote_choice,vote_result,vote_date,motion")
+          .eq("bill_id", billId)
+          .in("legislator_id", supabaseIdsForBill)
+          .order("vote_date", { ascending: false }),
+        supabase.from("vote_events").select("chamber").eq("bill_id", billId),
+      ]);
+
+      const { data: voteRows, error: voteError } = voteResult;
 
       if (voteError) {
         console.error("Failed to fetch vote summaries", voteError);
@@ -241,10 +252,7 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
         }
       }
 
-      const { data: eventRows, error: eventError } = await supabase
-        .from("vote_events")
-        .select("chamber")
-        .eq("bill_id", billId);
+      const { data: eventRows, error: eventError } = eventResult;
 
       if (eventError) {
         console.error("Failed to fetch vote event chambers", eventError);

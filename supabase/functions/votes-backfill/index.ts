@@ -6,6 +6,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { fetchBillVotes } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
+import { corsHeaders } from "../_shared/cors.ts";
+import { resolveServiceKey } from "../_shared/utils.ts";
+import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 
 type BillRow = {
   id: number;
@@ -22,11 +25,6 @@ type CursorState = {
   completed_at: string | null;
   updated_at: string;
   total_available: number | null;
-};
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -105,6 +103,13 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  if (!(await isAuthorizedCronOrAdmin(req))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const url = new URL(req.url);
   const force = url.searchParams.get("force") === "true";
   const limitRaw = url.searchParams.get("limit");
@@ -123,7 +128,7 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const serviceRoleKey = resolveServiceKey();
     const openStatesKey = Deno.env.get("OPENSTATES_API_KEY");
 
     if (!supabaseUrl || !serviceRoleKey || !openStatesKey) {

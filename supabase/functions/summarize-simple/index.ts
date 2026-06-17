@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import OpenAI from 'https://deno.land/x/openai@v4.24.0/mod.ts'
-import { ensureEnv, isPlaceholder } from '../_shared/utils.ts'
+import { ensureEnv, getOpenAiKey, getServiceKey, isPlaceholder } from '../_shared/utils.ts'
 
 type BillRow = {
   id: number
@@ -13,8 +13,8 @@ type BillRow = {
 }
 
 const supabaseUrl = ensureEnv('SUPABASE_URL')
-const serviceKey  = ensureEnv('SUPABASE_SERVICE_ROLE_KEY')
-const openaiKey   = ensureEnv('OPENAI_API_KEY')
+const serviceKey  = getServiceKey()
+const openaiKey   = getOpenAiKey()
 
 const db = createClient(supabaseUrl, serviceKey)
 const openai = new OpenAI({ apiKey: openaiKey })

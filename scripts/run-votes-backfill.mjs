@@ -1,30 +1,6 @@
 #!/usr/bin/env node
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-async function loadEnv() {
-  const envPath = path.resolve(__dirname, '..', 'supabase', '.env');
-  try {
-    const content = await fs.readFile(envPath, 'utf8');
-    for (const line of content.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIndex = trimmed.indexOf('=');
-      if (eqIndex === -1) continue;
-      const key = trimmed.slice(0, eqIndex);
-      if (process.env[key]) continue;
-      let value = trimmed.slice(eqIndex + 1);
-      if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-      process.env[key] = value;
-    }
-  } catch (err) {
-    console.warn('Warning: unable to read supabase/.env:', err.message);
-  }
-}
+import { loadEnv } from './loadEnv.mjs';
+import { supabaseAuthHeaders } from './supabaseHeaders.mjs';
 
 await loadEnv();
 
@@ -36,43 +12,23 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-const PAGE_SIZE = 1;
+const PAGE_SIZE = 25;
 const SLEEP_MS = 2000;
 const MAX_ATTEMPTS = 5;
+const MAX_NO_PROGRESS = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchBillIds() {
-  const url = `${SUPABASE_URL}/rest/v1/bills?select=id&order=id.asc`;
-  const res = await fetch(url, {
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to load bill IDs (${res.status}): ${text}`);
-  }
-  const rows = await res.json();
-  return rows.map((row) => row.id);
-}
-
-async function invokeBackfill(offset) {
+async function invokeBackfill(startBillId) {
   const query = new URLSearchParams({
-    limit: String(PAGE_SIZE),
     page_size: String(PAGE_SIZE),
-    offset: String(offset),
+    start_bill_id: String(startBillId),
     force: 'true',
   });
   const url = `${SUPABASE_URL}/functions/v1/votes-backfill?${query.toString()}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
+    headers: supabaseAuthHeaders(SUPABASE_SERVICE_ROLE_KEY, { 'Content-Type': 'application/json' }),
     body: '{}',
   });
   const text = await res.text();
@@ -89,38 +45,96 @@ async function invokeBackfill(offset) {
 }
 
 async function main() {
-  const billIds = await fetchBillIds();
-  console.log(`Backfilling votes for ${billIds.length} bills...`);
+  // The votes-backfill function force-processes up to ~30 bills per call,
+  // ordered by ascending id and resuming after `start_bill_id`, then reports
+  // the next cursor in `continuation`. Drive it with that cursor instead of
+  // issuing one HTTP call per bill.
+  let startBillId = 0;
+  let totalProcessed = 0;
+  let totalErrors = 0;
+  let noProgressStreak = 0;
+  let aborted = false;
 
-  for (let index = 0; index < billIds.length; index += 1) {
-    const billId = billIds[index];
+  while (true) {
     let attempt = 0;
+    let payload = null;
     while (attempt < MAX_ATTEMPTS) {
       attempt += 1;
       try {
-        const result = await invokeBackfill(index);
-        const errorCount = Array.isArray(result.errors) ? result.errors.length : 0;
-        const message = `offset=${index} bill=${billId} events=${result.voteEventsUpserted ?? 0} records=${result.voteRecordsUpserted ?? 0} errors=${errorCount}`;
-        if (errorCount) {
-          console.warn(`Backfill completed with ${errorCount} errors for bill ${billId}:`, result.errors);
-        } else {
-          console.log(message);
-        }
+        payload = await invokeBackfill(startBillId);
         break;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`Attempt ${attempt} failed for bill ${billId}: ${message}`);
+        console.warn(`Attempt ${attempt} failed after bill ${startBillId}: ${message}`);
         if (attempt >= MAX_ATTEMPTS) {
-          console.error(`Giving up on bill ${billId} after ${attempt} attempts.`);
+          console.error(`Giving up after ${attempt} attempts past bill ${startBillId}.`);
           break;
         }
         await sleep(SLEEP_MS * attempt);
       }
     }
+    if (!payload) {
+      // Exhausted retries on a transport/5xx error; record it so the summary
+      // doesn't report a clean run, then stop.
+      totalErrors += 1;
+      aborted = true;
+      break;
+    }
+
+    const continuation = payload.continuation ?? {};
+    // Prefer the function's authoritative count; payload.errors is a capped preview.
+    const errorCount = payload.errorsCount ?? (Array.isArray(payload.errors) ? payload.errors.length : 0);
+    totalProcessed += payload.processedBills ?? 0;
+    totalErrors += errorCount;
+
+    console.log(
+      `start_after=${startBillId} processed=${payload.processedBills ?? 0} ` +
+        `events=${payload.voteEventsUpserted ?? 0} records=${payload.voteRecordsUpserted ?? 0} ` +
+        `errors=${errorCount} next=${continuation.next_bill_id ?? '?'} has_more=${continuation.has_more === true}`,
+    );
+    if (errorCount) {
+      console.warn('Errors in this batch:', payload.errors);
+    }
+
+    if (!continuation.has_more) break;
+
+    // Advance past the furthest bill the batch reached (last successful or the
+    // one that failed) so a failing bill is attempted once then skipped rather
+    // than looped on.
+    const resumeAfter = Math.max(
+      continuation.next_bill_id ?? 0,
+      continuation.failed_bill_id ?? 0,
+    );
+
+    if (resumeAfter <= startBillId) {
+      // No forward progress and no failed bill to skip past — usually the
+      // function hit its runtime deadline mid-bill (e.g. a large vote set).
+      // Retry the same cursor a bounded number of times before giving up,
+      // rather than aborting the whole run on the first stall.
+      noProgressStreak += 1;
+      if (noProgressStreak >= MAX_NO_PROGRESS) {
+        console.error(
+          `No forward progress past bill ${startBillId} after ${noProgressStreak} attempts; stopping.`,
+        );
+        aborted = true;
+        break;
+      }
+      console.warn(
+        `No forward progress past bill ${startBillId} (attempt ${noProgressStreak}/${MAX_NO_PROGRESS}); retrying.`,
+      );
+      await sleep(SLEEP_MS);
+      continue;
+    }
+
+    noProgressStreak = 0;
+    startBillId = resumeAfter;
     await sleep(SLEEP_MS);
   }
 
-  console.log('Backfill loop complete.');
+  console.log(
+    `Backfill loop ${aborted ? 'aborted' : 'complete'}. ` +
+      `processedBills=${totalProcessed} errors=${totalErrors}`,
+  );
 }
 
 main().catch((err) => {

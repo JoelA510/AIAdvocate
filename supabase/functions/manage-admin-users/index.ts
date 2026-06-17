@@ -1,10 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { getPublishableKey, getServiceKey } from "../_shared/utils.ts";
 
 serve(async (req) => {
     if (req.method === "OPTIONS") {
@@ -14,7 +12,7 @@ serve(async (req) => {
     try {
         const supabaseClient = createClient(
             Deno.env.get("SUPABASE_URL") ?? "",
-            Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+            getPublishableKey(),
             { global: { headers: { Authorization: req.headers.get("Authorization")! } } }
         );
 
@@ -36,7 +34,7 @@ serve(async (req) => {
         // 2. Initialize Service Role Client for admin actions
         const supabaseAdmin = createClient(
             Deno.env.get("SUPABASE_URL") ?? "",
-            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+            getServiceKey()
         );
 
         const { action, email, password, userId } = await req.json();

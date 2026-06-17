@@ -5,6 +5,9 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
+import { corsHeaders } from "../_shared/cors.ts";
+import { getOptionalOpenAiKey, getServiceKey } from "../_shared/utils.ts";
+
 interface SummaryPayload {
   english: {
     simple: string;
@@ -79,15 +82,6 @@ class HttpError extends Error {
 }
 
 // --- Configuration ---
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Max-Age": "600",
-  Vary: "Origin",
-};
-
 const toJson = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -192,9 +186,6 @@ const validSummaryOrNull = (value?: string | null): string | null => {
 
 const isUsableBillText = (value?: string | null): boolean =>
   Boolean(value && value.trim().length >= MIN_BILL_TEXT_CHARS);
-
-const envOpenAiKey = (): string =>
-  Deno.env.get("OpenAI_GPT_Key") ?? Deno.env.get("OPENAI_API_KEY") ?? "";
 
 const errorToMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
@@ -759,7 +750,7 @@ serve(async (req) => {
   try {
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      getServiceKey(),
     );
 
     if (!(await isAuthorizedRequest(supplied, AUTH, supabaseAdmin))) {
@@ -768,7 +759,7 @@ serve(async (req) => {
 
     const legiscanApiKey = Deno.env.get("LEGISCAN_API_KEY") ?? "";
     const legiscanDetailsEnabled = useLegiScanForBillDetails();
-    const openAiKey = envOpenAiKey();
+    const openAiKey = getOptionalOpenAiKey();
     if (!openAiKey) {
       throw new Error(
         "OpenAI API key is not set. Expected OpenAI_GPT_Key or OPENAI_API_KEY.",
@@ -1158,10 +1149,6 @@ serve(async (req) => {
         throw new Error("Generated complex summary invalid or placeholder");
       }
 
-      const englishAllValid = isValidSummary(englishFinal.simple) &&
-        isValidSummary(englishFinal.medium) &&
-        isValidSummary(englishFinal.complex);
-
       const summaryHash = await sha256(englishFinal.complex!);
       const summaryLenSimple = englishFinal.simple!.length;
 
@@ -1251,13 +1238,6 @@ serve(async (req) => {
             },
           );
         }
-      }
-
-      if (!englishAllValid) {
-        console.warn("English summaries flagged as invalid after guard", {
-          bill_id: billData.bill_id,
-          bill_number: billData.bill_number,
-        });
       }
 
       const statusText = billData.status_text ?? null;

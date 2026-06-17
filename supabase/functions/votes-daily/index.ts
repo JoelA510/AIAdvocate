@@ -9,31 +9,29 @@ import {
   fetchVotesForBills,
 } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { resolveServiceKey } from "../_shared/utils.ts";
+import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 
 const JOB_KEY = "votes-daily:last-run";
 const FALLBACK_WINDOW_MS = 1000 * 60 * 60 * 48; // 48 hours
 const PREVIEW_LIMIT = 10;
-
-type BillRow = {
-  id: number;
-  bill_number?: string | null;
-  title?: string | null;
-  openstates_bill_id: string;
-};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  if (!(await isAuthorizedCronOrAdmin(req))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const serviceRoleKey = resolveServiceKey();
     const openStatesKey = Deno.env.get("OPENSTATES_API_KEY");
 
     if (!supabaseUrl || !serviceRoleKey || !openStatesKey) {
