@@ -38,9 +38,14 @@ export async function safeFetch(
     timeoutMs,
   } = options;
 
-  let lastError: any;
+  // Always make at least one real attempt, even if a caller passes 0, a
+  // negative, or a non-finite retry count.
+  const totalAttempts = Number.isFinite(retries) && retries >= 1 ? Math.floor(retries) : 1;
 
-  for (let attempt = 0; attempt < retries; attempt++) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < totalAttempts; attempt++) {
+    const isLastAttempt = attempt === totalAttempts - 1;
     const controller = timeoutMs ? new AbortController() : undefined;
     const timer = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : null;
 
@@ -51,6 +56,10 @@ export async function safeFetch(
       });
 
       if (response.status === 429) {
+        // Record a meaningful error so an exhausted retry budget surfaces as a
+        // rate-limit failure rather than "Unknown error".
+        lastError = new Error("HTTP 429: Too Many Requests");
+        if (isLastAttempt) break;
         const waitTime = Math.pow(2, attempt) * retryDelayMs;
         const jitter = Math.random() * 0.5 * retryDelayMs;
         const totalWait = waitTime + jitter;
@@ -67,7 +76,6 @@ export async function safeFetch(
       return response;
     } catch (error: any) {
       lastError = error;
-      const isLastAttempt = attempt === retries - 1;
 
       if (error?.name === "AbortError") {
         console.error(`safeFetch: Attempt ${attempt + 1} aborted after ${timeoutMs}ms.`);
@@ -84,6 +92,11 @@ export async function safeFetch(
     }
   }
 
-  const message = lastError?.message ?? "Unknown error";
-  throw new Error(`safeFetch: All ${retries} attempts failed. Last error: ${message}`);
+  const message =
+    lastError instanceof Error
+      ? lastError.message
+      : lastError != null
+        ? String(lastError)
+        : "Unknown error";
+  throw new Error(`safeFetch: All ${totalAttempts} attempts failed. Last error: ${message}`);
 }
