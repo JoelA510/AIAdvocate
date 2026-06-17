@@ -2,6 +2,9 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+import { corsHeaders } from "../_shared/cors.ts";
+import { getOpenAiKey, getServiceKey } from "../_shared/utils.ts";
+
 type TranslationRow = {
   bill_id: number;
   language_code: string;
@@ -14,11 +17,6 @@ type TranslationRow = {
   created_at?: string;
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -29,7 +27,7 @@ serve(async (req) => {
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      getServiceKey()
     );
 
     // Cache-first
@@ -64,8 +62,7 @@ serve(async (req) => {
     }
 
     // Translate in small batches using OpenAI ChatGPT
-    const openAiKey = Deno.env.get("OpenAI_GPT_Key");
-    if (!openAiKey) throw new Error("OpenAI_GPT_Key is not set.");
+    const openAiKey = getOpenAiKey();
 
     const created: TranslationRow[] = [];
     const BATCH = 5;

@@ -1,43 +1,61 @@
-
 import asyncio
-import json
+import os
+
 import httpx
-import sys
+
+from load_env import load_project_env
+
+load_project_env()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY]):
+    raise SystemExit(
+        "Missing required environment variables. Set SUPABASE_URL and "
+        "SUPABASE_SERVICE_ROLE_KEY in your environment or a .env file."
+    )
+
+
+def _supabase_headers(key):
+    # New API keys (sb_…) are not JWTs and must go on the apikey header only;
+    # legacy JWT keys (eyJ…) also use Authorization: Bearer.
+    headers = {"apikey": key, "Content-Type": "application/json"}
+    if key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
 
 async def process_batches():
-    url = "https://klpwiiszmzzfvlbfsjrd.supabase.co/functions/v1/bulk-import-dataset"
-    api_key = "44ad03c38101d1b4a0505f1fa9d71ac3016f56f9541e6b1739209bcaebed3653"
-    headers = {
-        "apikey": api_key,
-        "Content-Type": "application/json"
-    }
-    
+    url = f"{SUPABASE_URL.rstrip('/')}/functions/v1/bulk-import-dataset"
+    headers = _supabase_headers(SUPABASE_SERVICE_ROLE_KEY)
+
     has_more = True
     total_matched = 0
-    
+
     print("Starting batch processing...")
-    
+
     async with httpx.AsyncClient(timeout=60.0) as client:
         while has_more:
             try:
-                # Batch size 25 is optimized for Supabase Free Tier resources
+                # Batch size 25 is optimized for Supabase Free Tier resources.
                 response = await client.post(url, headers=headers, json={"max_files": 25})
                 response.raise_for_status()
                 data = response.json()
-                
+
                 matched = data.get("matched_bills", 0)
                 total_matched += matched
                 continuation = data.get("continuation", {})
                 has_more = continuation.get("has_more", False)
                 next_index = continuation.get("next_index", "N/A")
                 total_files = continuation.get("total_files", "N/A")
-                
+
                 print(f"Batch processed. Matched: {matched}. Total Matched: {total_matched}. Progress: {next_index}/{total_files}")
-                
+
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 500:
                     print(f"Server error 500: {e.response.text}")
-                    print(f"Retrying in 5 seconds...")
+                    print("Retrying in 5 seconds...")
                     await asyncio.sleep(5)
                     continue
                 else:
@@ -47,8 +65,9 @@ async def process_batches():
             except Exception as e:
                 print(f"Unexpected error: {e}")
                 break
-                
+
     print(f"Bulk import finished. Total bills matched: {total_matched}")
+
 
 if __name__ == "__main__":
     asyncio.run(process_batches())

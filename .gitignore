@@ -50,3 +50,7 @@ mobile-app/.env.production
 *.apk
 *.ipa
 *.aab
+
+# Python
+__pycache__/
+*.py[cod]

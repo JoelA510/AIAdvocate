@@ -1,34 +1,8 @@
 #!/usr/bin/env node
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { loadEnv } from './loadEnv.mjs';
+import { supabaseAuthHeaders } from './supabaseHeaders.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-async function loadEnvFile() {
-  const envPath = path.resolve(__dirname, '..', 'supabase', '.env');
-  try {
-    const content = await fs.readFile(envPath, 'utf8');
-    for (const line of content.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIndex = trimmed.indexOf('=');
-      if (eqIndex === -1) continue;
-      const key = trimmed.slice(0, eqIndex);
-      if (process.env[key]) continue;
-      let value = trimmed.slice(eqIndex + 1);
-      if (value.startsWith('"') && value.endsWith('"')) {
-        value = value.slice(1, -1);
-      }
-      process.env[key] = value;
-    }
-  } catch (err) {
-    console.warn('Warning: unable to load supabase/.env:', err.message);
-  }
-}
-
-await loadEnvFile();
+await loadEnv();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -94,10 +68,7 @@ async function fetchBills(offset = 0) {
   });
   const url = `${SUPABASE_URL}/rest/v1/bills?${params.toString()}`;
   const res = await fetch(url, {
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
+    headers: supabaseAuthHeaders(SUPABASE_SERVICE_ROLE_KEY),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -165,11 +136,7 @@ async function updateBillOpenStatesId(billId, openStatesId) {
   const url = `${SUPABASE_URL}/rest/v1/bills?id=eq.${billId}`;
   const res = await fetch(url, {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    },
+    headers: supabaseAuthHeaders(SUPABASE_SERVICE_ROLE_KEY, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ openstates_bill_id: openStatesId }),
   });
   if (!res.ok) {

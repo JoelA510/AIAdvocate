@@ -202,8 +202,7 @@ export default function AdminBillsScreen() {
     setIsVerified(bill.panel_review ? true : false); // 'en' verification is tied to bill verification? Or just assume verified.
     // Actually bills table has is_verified, but let's stick to translations logic for now.
 
-    await fetchTranslations(bill.id);
-    await loadBillLogs(bill.id);
+    await Promise.all([fetchTranslations(bill.id), loadBillLogs(bill.id)]);
   };
 
   // Handle language switch

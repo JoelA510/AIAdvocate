@@ -30,10 +30,18 @@ print("✅ Secrets loaded successfully.")
 
 # --- Step 2: Prepare the Request ---
 FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/sync-updated-bills"
-HEADERS = {
-    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-    "Content-Type": "application/json"
-}
+
+
+def _supabase_headers(key):
+    # New API keys (sb_…) are not JWTs and must go on the apikey header only;
+    # legacy JWT keys (eyJ…) also use Authorization: Bearer.
+    headers = {"apikey": key, "Content-Type": "application/json"}
+    if key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
+HEADERS = _supabase_headers(SUPABASE_SERVICE_KEY)
 BODY = {}
 
 # --- Step 3: Loop until the job is done ---

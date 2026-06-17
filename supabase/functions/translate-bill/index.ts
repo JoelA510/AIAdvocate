@@ -3,10 +3,8 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders } from "../_shared/cors.ts";
+import { getOpenAiKey, getServiceKey } from "../_shared/utils.ts";
 
 console.log("🚀 Initializing translate-bill v1.0");
 
@@ -21,7 +19,7 @@ serve(async (req) => {
       throw new Error("Missing required parameters: 'bill_id' and 'language_code'.");
     }
 
-    const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, getServiceKey());
 
     // --- 1. Check for a cached translation first ---
     const { data: cachedTranslation } = await supabaseAdmin
@@ -51,8 +49,7 @@ serve(async (req) => {
     if (billError) throw billError;
 
     // --- 3. Generate the translation with OpenAI ChatGPT ---
-    const openAiKey = Deno.env.get("OpenAI_GPT_Key");
-    if (!openAiKey) throw new Error("OpenAI_GPT_Key is not set.");
+    const openAiKey = getOpenAiKey();
 
     const prompt = `
       Translate the following legislative bill content into the language with ISO 639-1 code "${language_code}".

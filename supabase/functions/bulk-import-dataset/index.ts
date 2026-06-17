@@ -3,15 +3,9 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip";
-import { ensureEnv, isPlaceholder } from "../_shared/utils.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Max-Age": "600",
-};
+import { ensureEnv, getServiceKey } from "../_shared/utils.ts";
+import { corsHeaders } from "../_shared/cors.ts";
+import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 
 const LEGISCAN_API_HEADERS = {
   Accept: "application/json",
@@ -131,17 +125,6 @@ const parsePositiveInt = (
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
 
   return Math.max(1, Math.min(Math.floor(parsed), max));
-};
-
-const preserveExistingSummary = (value: string | null | undefined): boolean => {
-  if (!value) return false;
-
-  const normalized = value.trim();
-  if (!normalized) return false;
-  if (isPlaceholder(normalized)) return false;
-  if (/^AI_SUMMARY_FAILED/i.test(normalized)) return false;
-
-  return true;
 };
 
 const parseBillId = (value: unknown): number | null => {
@@ -475,6 +458,10 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
+  if (!(await isAuthorizedCronOrAdmin(req))) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
   const startedAt = Date.now();
 
   try {
@@ -487,7 +474,7 @@ serve(async (req) => {
 
     const supabaseAdmin = createClient(
       ensureEnv("SUPABASE_URL"),
-      ensureEnv("SUPABASE_SERVICE_ROLE_KEY"),
+      getServiceKey(),
     );
 
     const state = "CA";

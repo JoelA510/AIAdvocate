@@ -3,10 +3,11 @@
 import { serve } from "std/http/server.ts";
 // **THE FIX:** The import now uses the 'npm:' specifier to match the deno.json
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getServiceKey } from "../_shared/utils.ts";
 
 serve(async (req) => {
   try {
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const serviceRoleKey = getServiceKey();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 

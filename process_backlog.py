@@ -10,6 +10,7 @@ own machine.
 import os
 import time
 import base64
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -30,15 +31,21 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 # --- Step 1: Load Environment Variables ---
-load_dotenv() 
-print("--- Loading environment variables from project root .env file ---")
+# Load from the repo-root .env and supabase/.env (anchored to this file's
+# location so the script works regardless of the current working directory).
+_ROOT_DIR = Path(__file__).resolve().parent
+load_dotenv(_ROOT_DIR / ".env")
+load_dotenv(_ROOT_DIR / "supabase" / ".env")
+load_dotenv()
+print("--- Loading environment variables ---")
 
 LEGISCAN_API_KEY = os.getenv("LEGISCAN_API_KEY")
+LEGISCAN_ACCESS_KEY = os.getenv("LEGISCAN_ACCESS_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 OPENAI_API_KEY = os.getenv("OpenAI_GPT_Key")
 
-if not all([LEGISCAN_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENAI_API_KEY]):
+if not all([LEGISCAN_API_KEY, LEGISCAN_ACCESS_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENAI_API_KEY]):
     print("❌ FATAL ERROR: A required environment variable is missing from your root .env file.")
     exit()
 
@@ -121,7 +128,7 @@ for i, bill_stub in enumerate(bills_to_process):
     try:
         # 1. Fetch from LegiScan
         print(f"  - Fetching details from LegiScan...")
-        bill_url = f"https://api.legiscan.com/?op=getBill&id={bill_id}&key={LEGISCAN_API_KEY}&access_key=xMfz6U5b64iqAwoAsWGY0"
+        bill_url = f"https://api.legiscan.com/?op=getBill&id={bill_id}&key={LEGISCAN_API_KEY}&access_key={LEGISCAN_ACCESS_KEY}"
         bill_res = requests.get(bill_url, headers={'User-Agent': 'Mozilla/5.0'})
         bill_res.raise_for_status()
         bill_data = bill_res.json()['bill']
@@ -132,7 +139,7 @@ for i, bill_stub in enumerate(bills_to_process):
             continue
 
         print(f"  - Fetching bill text (doc_id: {doc_id})...")
-        text_url = f"https://api.legiscan.com/?op=getBillText&id={doc_id}&key={LEGISCAN_API_KEY}&access_key=xMfz6U5b64iqAwoAsWGY0"
+        text_url = f"https://api.legiscan.com/?op=getBillText&id={doc_id}&key={LEGISCAN_API_KEY}&access_key={LEGISCAN_ACCESS_KEY}"
         text_res = requests.get(text_url, headers={'User-Agent': 'Mozilla/5.0'})
         text_res.raise_for_status()
         original_text = base64.b64decode(text_res.json()['text']['doc']).decode('utf-8', 'ignore')
