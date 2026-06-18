@@ -11,6 +11,9 @@ const EXPO_PUSH_BATCH_SIZE = 100;
 // list small enough that a heavily-bookmarked bill cannot overflow the URI
 // length limit (414 Request-URI Too Large).
 const ID_QUERY_CHUNK_SIZE = 100;
+// PostgREST caps a single response (default 1000 rows); page reads so a popular
+// bill's full recipient list is captured rather than silently truncated.
+const BOOKMARK_PAGE_SIZE = 1000;
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -55,18 +58,26 @@ serve(async (req) => {
     if (billError) throw billError;
     if (!bill) throw new Error(`Bill ${billId} not found`);
 
-    // 2. Find the users who bookmarked this bill.
-    const { data: bookmarkRows, error: bookmarksError } = await supabaseAdmin
-      .from("bookmarks")
-      .select("user_id")
-      .eq("bill_id", billId);
-
-    if (bookmarksError) throw bookmarksError;
+    // 2. Find the users who bookmarked this bill. Page through results so a
+    //    bill with more than one PostgREST page of bookmarks (default 1000
+    //    rows) does not silently drop recipients.
+    const bookmarkRows: Array<{ user_id?: string | null }> = [];
+    for (let from = 0; ; from += BOOKMARK_PAGE_SIZE) {
+      const { data, error: bookmarksError } = await supabaseAdmin
+        .from("bookmarks")
+        .select("user_id")
+        .eq("bill_id", billId)
+        .range(from, from + BOOKMARK_PAGE_SIZE - 1);
+      if (bookmarksError) throw bookmarksError;
+      if (!data || data.length === 0) break;
+      bookmarkRows.push(...data);
+      if (data.length < BOOKMARK_PAGE_SIZE) break;
+    }
 
     const userIds = Array.from(
       new Set(
-        (bookmarkRows ?? [])
-          .map((row: { user_id?: string | null }) => row?.user_id)
+        bookmarkRows
+          .map((row) => row?.user_id)
           .filter((id: string | null | undefined): id is string => Boolean(id)),
       ),
     );
