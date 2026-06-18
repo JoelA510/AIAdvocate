@@ -13,8 +13,13 @@ verify_jwt = false
 import_map = "./functions/verify-app-check/deno.json"
 
 [functions.send-push-notifications]
-# This function will be called with a service_role key and requires a valid JWT.
-verify_jwt = true
+# Authorized in code via isAuthorizedCronOrAdmin() (see votes-daily): an admin
+# secret/service key (ops scripts) or the scheduler SYNC_SECRET validated against
+# Vault (pg_cron). verify_jwt is disabled because (1) the cron sends a non-JWT
+# publishable apikey the platform JWT check cannot verify, and (2) this function
+# fans out to every bookmarker with the service-role key, so it must not be
+# triggerable by any anon/JWT-authenticated user — only the cron/ops paths.
+verify_jwt = false
 import_map = "./functions/send-push-notifications/deno.json"
 
 [functions.translate-bill]
