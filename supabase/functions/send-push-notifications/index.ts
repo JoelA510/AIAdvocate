@@ -47,6 +47,17 @@ serve(async (req) => {
     if (billId === undefined || billId === null || billId === "") {
       throw new Error("Missing 'billId'");
     }
+    // Optional context from the upcoming-vote scheduler (notify_upcoming_votes):
+    //  - eventDate: the calendar date (YYYY-MM-DD) this notification is for. When
+    //    present, the dedup ledger row is written only AFTER a confirmed send, so
+    //    a failed/blocked delivery is retried on the scheduler's next run rather
+    //    than being permanently suppressed.
+    //  - eventLabel: the calendar entry's type/description, rendered in the title.
+    const eventDate = typeof body?.eventDate === "string" && body.eventDate.trim()
+      ? body.eventDate.trim()
+      : null;
+    const rawEventLabel = typeof body?.eventLabel === "string" ? body.eventLabel.trim() : "";
+    const eventLabel = (rawEventLabel || "activity").slice(0, 50);
 
     // 1. Get the bill details
     const { data: bill, error: billError } = await supabaseAdmin
@@ -127,7 +138,7 @@ serve(async (req) => {
     const messages = pushTokens.map((token: string) => ({
       to: token,
       sound: "default",
-      title: `Upcoming Vote on ${bill.bill_number ?? "a tracked bill"}`,
+      title: `Upcoming ${eventLabel}: ${bill.bill_number ?? "a tracked bill"}`,
       body: bill.title ?? "",
       data: { billId },
     }));
@@ -168,6 +179,24 @@ serve(async (req) => {
         console.error(
           `send-push-notifications: Expo batch ${batchIndex} threw:`,
           describeError(batchError),
+        );
+      }
+    }
+
+    // Delivery-confirmed dedup: record the ledger row only after at least one
+    // Expo ticket was accepted, and only for scheduler calls that supplied the
+    // event date. If every batch failed (tickets.length === 0), the row is left
+    // absent so notify_upcoming_votes retries on its next run. Per (bill, event
+    // date), so a partially-failed fan-out is not re-sent to everyone.
+    if (eventDate && tickets.length > 0) {
+      const { error: ledgerError } = await supabaseAdmin
+        .from("push_notification_log")
+        .upsert({ bill_id: billId, event_date: eventDate }, { onConflict: "bill_id,event_date" });
+      if (ledgerError) {
+        // Non-fatal: a missing ledger row only risks a duplicate on the next run.
+        console.error(
+          "send-push-notifications: failed recording push_notification_log:",
+          describeError(ledgerError),
         );
       }
     }

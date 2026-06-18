@@ -3,8 +3,13 @@
 -- Wire push notifications: nothing currently invokes the send-push-notifications
 -- Edge Function, so registered Expo tokens never receive anything. This adds a
 -- daily pg_cron job that finds bookmarked bills with an UPCOMING calendar entry
--- and POSTs { billId } to send-push-notifications for each, deduplicating so a
--- given (bill, event date) notifies its bookmarkers at most once.
+-- and POSTs { billId, eventDate, eventLabel } to send-push-notifications for
+-- each. Dedup is delivery-confirmed: the Edge Function records
+-- push_notification_log(bill_id, event_date) only after a successful Expo send,
+-- so a failed/blocked delivery is retried on the next run (within the event
+-- window) instead of being permanently suppressed. eventLabel (the calendar
+-- entry's type/description) lets the push title name the actual event type
+-- rather than always saying "Vote".
 --
 -- Depends on (deploy first): the push-notification auth + RLS hardening PR
 --   - user_push_tokens RLS policy (so tokens are actually stored), and
@@ -66,10 +71,9 @@ DECLARE
   sync_secret TEXT;
   req_headers JSONB;
   request_id  BIGINT;
-  notified    INT := 0;
+  enqueued    INT := 0;
   window_days INT := GREATEST(COALESCE(p_window_days, 1), 0);
   rec         RECORD;
-  v_event_date DATE;
 BEGIN
   -- functions_base_url: Vault first, then app_config (non-secret URL config).
   SELECT v.decrypted_secret INTO base_url
@@ -126,18 +130,32 @@ BEGIN
     'Authorization', 'Bearer ' || sync_secret
   );
 
-  -- Candidate (bill, date string) pairs: bookmarked bills with a calendar entry
-  -- in the [today, today+window] range. Notes on the deliberate hardening:
-  --   * jsonb_array_elements is fed a CASE-guarded value: a set-returning
-  --     function in the FROM/LATERAL is evaluated during the join (before WHERE),
-  --     so a non-array calendar would throw unless guarded here.
-  --   * The range filter uses string comparison (YYYY-MM-DD sorts chronologically),
-  --     so no date cast happens in the query itself.
-  --   * The date cast and the dedup check are done per-row INSIDE the loop's
-  --     BEGIN ... EXCEPTION block, so a single malformed date (e.g. 2026-02-31)
-  --     only skips that bill instead of aborting the whole run.
+  -- Candidate (bill, date, label) rows: bookmarked bills with a calendar entry
+  -- in the [today, today+window] range that have NOT yet been recorded as
+  -- delivered. Hardening notes:
+  --   * jsonb_array_elements is fed a CASE-guarded value (a set-returning
+  --     function in the FROM/LATERAL is evaluated during the join, before WHERE),
+  --     so a non-array calendar cannot throw.
+  --   * The window filter AND the dedup check compare dates AS TEXT (YYYY-MM-DD
+  --     sorts chronologically), so no untrusted calendar value is ever cast to
+  --     date here -- a malformed date string cannot abort the run.
+  --   * The dedup row is written by send-push-notifications AFTER a confirmed
+  --     send (delivery-confirmed dedup), NOT here, so a failed/blocked delivery
+  --     is retried on the next run rather than permanently suppressed.
+  -- DISTINCT ON (bill, date) collapses multiple same-day calendar entries to a
+  -- single notification (one label, chosen deterministically), so a bill with
+  -- e.g. a hearing and a reading on the same day is not pushed twice in one run.
   FOR rec IN
-    SELECT DISTINCT b.id AS bill_id, elem->>'date' AS event_date_str
+    SELECT DISTINCT ON (b.id, elem->>'date')
+      b.id AS bill_id,
+      elem->>'date' AS event_date_str,
+      COALESCE(
+        NULLIF(btrim(elem->>'type'), ''),
+        NULLIF(btrim(elem->>'description'), ''),
+        NULLIF(btrim(elem->>'desc'), ''),
+        NULLIF(btrim(elem->>'event'), ''),
+        'activity'
+      ) AS event_label
     FROM public.bills AS b
     CROSS JOIN LATERAL jsonb_array_elements(
       CASE WHEN jsonb_typeof(b.calendar) = 'array' THEN b.calendar ELSE '[]'::jsonb END
@@ -146,51 +164,47 @@ BEGIN
       AND elem->>'date' >= to_char(current_date, 'YYYY-MM-DD')
       AND elem->>'date' <= to_char(current_date + window_days, 'YYYY-MM-DD')
       AND EXISTS (SELECT 1 FROM public.bookmarks AS bm WHERE bm.bill_id = b.id)
-    ORDER BY event_date_str, b.id
+      AND NOT EXISTS (
+        SELECT 1 FROM public.push_notification_log AS l
+        WHERE l.bill_id = b.id AND l.event_date::text = elem->>'date'
+      )
+    ORDER BY b.id, elem->>'date', event_label
   LOOP
     BEGIN
-      -- Cast inside the handler: a bad value skips this bill, not the whole run.
-      v_event_date := rec.event_date_str::date;
-
-      IF EXISTS (
-        SELECT 1 FROM public.push_notification_log AS l
-        WHERE l.bill_id = rec.bill_id AND l.event_date = v_event_date
-      ) THEN
-        CONTINUE;  -- already notified for this (bill, event date)
-      END IF;
-
+      -- Pass the event date + label so the function can render a per-event title
+      -- and write the dedup ledger only after a confirmed Expo send.
       SELECT net.http_post(
         url     := base_url || '/send-push-notifications',
         headers := req_headers,
-        body    := jsonb_build_object('billId', rec.bill_id)
+        body    := jsonb_build_object(
+          'billId', rec.bill_id,
+          'eventDate', rec.event_date_str,
+          'eventLabel', rec.event_label
+        )
       ) INTO request_id;
 
       IF request_id IS NULL THEN
         INSERT INTO public.cron_job_errors(job_name, error_message)
         VALUES ('notify-upcoming-votes',
                 'Invoke Error: send-push-notifications enqueue returned null for bill ' || rec.bill_id);
-        CONTINUE;  -- leave undedup'd so the next run retries
+        CONTINUE;
       END IF;
 
-      INSERT INTO public.push_notification_log(bill_id, event_date)
-      VALUES (rec.bill_id, v_event_date)
-      ON CONFLICT (bill_id, event_date) DO NOTHING;
-
-      notified := notified + 1;
+      enqueued := enqueued + 1;
     EXCEPTION WHEN OTHERS THEN
       INSERT INTO public.cron_job_errors(job_name, error_message)
       VALUES ('notify-upcoming-votes', 'Invoke Error: bill ' || rec.bill_id || ' failed: ' || SQLERRM);
     END;
   END LOOP;
 
-  RETURN notified;
+  RETURN enqueued;
 
 EXCEPTION WHEN OTHERS THEN
   -- Match invoke_edge_function: record unexpected failures rather than letting
   -- the cron run fail silently.
   INSERT INTO public.cron_job_errors(job_name, error_message)
   VALUES ('notify-upcoming-votes', 'Fatal: ' || SQLERRM);
-  RETURN notified;
+  RETURN enqueued;
 END;
 $$;
 
@@ -199,7 +213,7 @@ REVOKE ALL ON FUNCTION public.notify_upcoming_votes(INT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.notify_upcoming_votes(INT) TO service_role;
 
 COMMENT ON FUNCTION public.notify_upcoming_votes(INT) IS
-  'Daily scheduler hook: POSTs { billId } to send-push-notifications for bookmarked bills with an upcoming calendar entry, deduped via push_notification_log.';
+  'Daily scheduler hook: enqueues send-push-notifications ({ billId, eventDate, eventLabel }) for bookmarked bills with an upcoming calendar entry not yet in push_notification_log. The Edge Function writes the dedup ledger only after a confirmed send, so failed/blocked deliveries retry on the next run. Returns the number enqueued.';
 
 -- ---------- Schedule (mirrors existing cron guard pattern) ----------
 -- 16:00 UTC (~08:00-09:00 America/Los_Angeles): a reasonable morning send.
