@@ -18,8 +18,8 @@ had drifted apart:
 | File | Role |
 | --- | --- |
 | `supabase/migrations/00000000000000_initial.sql` + dated migrations | **Canonical** (applied by the CLI). |
-| `supabase/migrations/schema.sql` | ❌ Removed — a non-timestamped consolidated snapshot that sat *inside* the migrations directory. Because it sorts after the timestamped files, the CLI could apply it **last**, re-running a stale, drifted copy of the schema (e.g. divergent policy names, missing `vote_events`/`vote_records`/`job_state`/`openstates_bill_id`). It defined nothing the timestamped migrations did not already define. |
-| `supabase/schema.sql` (repo root) | ❌ Removed — a hand-maintained full-schema snapshot that was never applied by the CLI but was referenced as "canonical" in docs, competing with the migrations and drifting from them. |
+| `supabase/migrations/schema.sql` | ❌ Removed — a non-timestamped consolidated snapshot that sat *inside* the migrations directory. The CLI only applies files named `<timestamp>_name.sql` and skips the rest, so this was never actually applied or recorded — but sitting in `migrations/` it looked authoritative, invited manual edits, and was a stale, drifted copy (divergent policy names; missing `vote_events`/`vote_records`/`job_state`/`openstates_bill_id`) competing with the real migrations. It defined nothing the timestamped migrations did not already define. |
+| `supabase/schema.sql` (repo root) | ❌ Removed — a hand-maintained full-schema snapshot the CLI never applied. It was nonetheless treated as the authoritative schema (e.g. the generated `project_context.txt` dump labels it the "canonical Postgres schema"), so it competed with the migrations and drifted from them. |
 
 Both `schema.sql` files were deleted so there is a single source of truth.
 They remain in git history if needed.
