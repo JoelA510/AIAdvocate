@@ -719,11 +719,6 @@ BEGIN
     CREATE POLICY "Users can manage their own subscriptions" ON public.subscriptions
       FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
   END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='user_push_tokens' AND policyname='Users manage own push tokens') THEN
-    CREATE POLICY "Users manage own push tokens" ON public.user_push_tokens
-      FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-  END IF;
 END $$;
 
 -- Normalize service_role access to events with a single FOR ALL policy (schema snapshot)
