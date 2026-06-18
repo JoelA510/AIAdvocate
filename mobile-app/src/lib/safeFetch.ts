@@ -47,6 +47,18 @@ export async function safeFetch(
   for (let attempt = 0; attempt < totalAttempts; attempt++) {
     const isLastAttempt = attempt === totalAttempts - 1;
     const controller = timeoutMs ? new AbortController() : undefined;
+
+    // When we own the timeout controller, forward the caller's abort signal so
+    // that either the timeout OR the caller can cancel the request. Without
+    // this, supplying `timeoutMs` would silently ignore `init.signal`.
+    if (controller && init.signal) {
+      if (init.signal.aborted) {
+        controller.abort();
+      } else {
+        init.signal.addEventListener("abort", () => controller.abort(), { once: true });
+      }
+    }
+
     const timer = timeoutMs ? setTimeout(() => controller?.abort(), timeoutMs) : null;
 
     try {

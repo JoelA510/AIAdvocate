@@ -107,6 +107,30 @@ describe("safeFetch", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("forwards the caller's abort signal even when a timeout is set", async () => {
+    const callerController = new AbortController();
+    fetchMock.mockImplementationOnce((_url: string, init: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const err = new Error("Aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      });
+    });
+
+    const promise = safeFetch("https://example.test", {
+      init: { signal: callerController.signal },
+      retries: 1,
+      retryDelayMs: 1,
+      timeoutMs: 10_000, // long enough that only the caller's abort fires
+    });
+    callerController.abort();
+
+    await expect(promise).rejects.toThrow(/All 1 attempts failed/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("supports the legacy (init, retries) positional signature", async () => {
     const ok = makeResponse(200, "ok");
     fetchMock.mockResolvedValueOnce(ok);

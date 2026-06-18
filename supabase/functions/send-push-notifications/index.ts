@@ -7,12 +7,30 @@ import { getServiceKey } from "../_shared/utils.ts";
 
 // Expo rejects push requests with more than 100 messages, so fan out in chunks.
 const EXPO_PUSH_BATCH_SIZE = 100;
+// PostgREST serializes `.in(...)` filters into the request URL, so keep each id
+// list small enough that a heavily-bookmarked bill cannot overflow the URI
+// length limit (414 Request-URI Too Large).
+const ID_QUERY_CHUNK_SIZE = 100;
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
     status,
   });
+
+/**
+ * Extract a human-readable message from an unknown error. PostgREST errors are
+ * plain objects (not `Error` instances) carrying a `message` field, so a bare
+ * `String(error)` would yield "[object Object]". Used for server-side logging
+ * only — never returned to the caller.
+ */
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
 
 serve(async (req) => {
   try {
@@ -57,19 +75,24 @@ serve(async (req) => {
       return jsonResponse({ sent: 0, message: "No bookmarks for this bill." });
     }
 
-    // 3. Look up their Expo push tokens. Tokens live in `user_push_tokens`,
-    //    not on `profiles`, so this requires a second query.
-    const { data: tokenRows, error: tokensError } = await supabaseAdmin
-      .from("user_push_tokens")
-      .select("expo_token")
-      .in("user_id", userIds);
-
-    if (tokensError) throw tokensError;
+    // 3. Look up their Expo push tokens. Tokens live in `user_push_tokens`, not
+    //    on `profiles`. Chunk the id list so the `.in(...)` filter cannot
+    //    overflow the PostgREST request URL for heavily-bookmarked bills.
+    const tokenRows: Array<{ expo_token?: string | null }> = [];
+    for (let i = 0; i < userIds.length; i += ID_QUERY_CHUNK_SIZE) {
+      const chunk = userIds.slice(i, i + ID_QUERY_CHUNK_SIZE);
+      const { data, error: tokensError } = await supabaseAdmin
+        .from("user_push_tokens")
+        .select("expo_token")
+        .in("user_id", chunk);
+      if (tokensError) throw tokensError;
+      if (data) tokenRows.push(...data);
+    }
 
     const pushTokens = Array.from(
       new Set(
-        (tokenRows ?? [])
-          .map((row: { expo_token?: string | null }) => row?.expo_token)
+        tokenRows
+          .map((row) => row?.expo_token)
           .filter((token: string | null | undefined): token is string => Boolean(token)),
       ),
     );
@@ -78,7 +101,9 @@ serve(async (req) => {
       return jsonResponse({ sent: 0, message: "No push tokens registered for recipients." });
     }
 
-    // 4. Build the messages and fan out to Expo in batches of 100.
+    // 4. Build the messages and fan out to Expo in batches of 100. A failure in
+    //    one batch is recorded but does not abort delivery of the others, so a
+    //    single bad token or transient error cannot drop every notification.
     const messages = pushTokens.map((token: string) => ({
       to: token,
       sound: "default",
@@ -88,35 +113,50 @@ serve(async (req) => {
     }));
 
     const tickets: unknown[] = [];
+    let failedBatches = 0;
     for (let i = 0; i < messages.length; i += EXPO_PUSH_BATCH_SIZE) {
+      const batchIndex = i / EXPO_PUSH_BATCH_SIZE;
       const batch = messages.slice(i, i + EXPO_PUSH_BATCH_SIZE);
-      const response = await fetch("https://api.expo.dev/v2/push/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "Accept-Encoding": "gzip, deflate",
-        },
-        body: JSON.stringify(batch),
-      });
+      try {
+        const response = await fetch("https://api.expo.dev/v2/push/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate",
+          },
+          body: JSON.stringify(batch),
+        });
 
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(
-          `Expo push request failed (${response.status}): ${JSON.stringify(payload)}`,
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          failedBatches += 1;
+          console.error(
+            `send-push-notifications: Expo batch ${batchIndex} failed (${response.status}):`,
+            payload,
+          );
+          continue;
+        }
+
+        if (Array.isArray(payload?.data)) {
+          tickets.push(...payload.data);
+        } else if (payload != null) {
+          tickets.push(payload);
+        }
+      } catch (batchError) {
+        failedBatches += 1;
+        console.error(
+          `send-push-notifications: Expo batch ${batchIndex} threw:`,
+          describeError(batchError),
         );
-      }
-
-      if (Array.isArray(payload?.data)) {
-        tickets.push(...payload.data);
-      } else if (payload != null) {
-        tickets.push(payload);
       }
     }
 
-    return jsonResponse({ sent: messages.length, tickets });
+    return jsonResponse({ sent: tickets.length, failedBatches, tickets });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return jsonResponse({ error: message }, 500);
+    // Log details server-side; return a generic message so internal error
+    // details (and any stack information) are not exposed to the caller.
+    console.error("send-push-notifications failed:", describeError(error));
+    return jsonResponse({ error: "Failed to send push notifications." }, 500);
   }
 });
