@@ -4,6 +4,8 @@ import { serve } from "std/http/server.ts";
 // **THE FIX:** The import now uses the 'npm:' specifier to match the deno.json
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getServiceKey } from "../_shared/utils.ts";
+import { corsHeaders } from "../_shared/cors.ts";
+import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 
 // Expo rejects push requests with more than 100 messages, so fan out in chunks.
 const EXPO_PUSH_BATCH_SIZE = 100;
@@ -17,7 +19,7 @@ const BOOKMARK_PAGE_SIZE = 1000;
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
-    headers: { "Content-Type": "application/json" },
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
     status,
   });
 
@@ -36,6 +38,19 @@ function describeError(error: unknown): string {
 }
 
 serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  // This function fans out to every user who bookmarked a bill using the
+  // service-role key, so it must only run for the cron/ops paths. It runs with
+  // verify_jwt = false (the cron's non-JWT apikey cannot satisfy the platform
+  // check), so authorize in code exactly like votes-daily: an admin secret/
+  // service key, or the scheduler SYNC_SECRET validated against Vault.
+  if (!(await isAuthorizedCronOrAdmin(req))) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
   try {
     const serviceRoleKey = getServiceKey();
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
