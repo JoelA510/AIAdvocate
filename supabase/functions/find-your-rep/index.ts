@@ -74,7 +74,12 @@ async function fetchGeocode(
 
   const { lat, lon } = matches[0] ?? {};
   if (!lat || !lon) throw new Error("LocationIQ returned invalid coordinates.");
-  return { lat: parseFloat(lat), lon: parseFloat(lon) };
+  const parsedLat = parseFloat(lat);
+  const parsedLon = parseFloat(lon);
+  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon)) {
+    throw new Error("LocationIQ returned invalid coordinates.");
+  }
+  return { lat: parsedLat, lon: parsedLon };
 }
 
 async function fetchRepresentatives(lat: number, lon: number, apiKey: string) {
