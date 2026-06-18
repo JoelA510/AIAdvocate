@@ -183,12 +183,22 @@ serve(async (req) => {
       }
     }
 
+    // Expo returns HTTP 200 with a push *ticket* per message even when the push
+    // was rejected (status "error", e.g. DeviceNotRegistered / MessageRateExceeded),
+    // so a non-empty `tickets` does not mean anything was delivered. Count only
+    // accepted ("ok") tickets -- the real "delivery confirmed" signal.
+    const acceptedCount = tickets.filter(
+      (ticket) =>
+        !!ticket && typeof ticket === "object" &&
+        (ticket as { status?: unknown }).status === "ok",
+    ).length;
+
     // Delivery-confirmed dedup: record the ledger row only after at least one
-    // Expo ticket was accepted, and only for scheduler calls that supplied the
-    // event date. If every batch failed (tickets.length === 0), the row is left
+    // Expo ticket was accepted (acceptedCount > 0), and only for scheduler calls
+    // that supplied the event date. If nothing was accepted, the row is left
     // absent so notify_upcoming_votes retries on its next run. Per (bill, event
     // date), so a partially-failed fan-out is not re-sent to everyone.
-    if (eventDate && tickets.length > 0) {
+    if (eventDate && acceptedCount > 0) {
       const { error: ledgerError } = await supabaseAdmin
         .from("push_notification_log")
         .upsert({ bill_id: billId, event_date: eventDate }, { onConflict: "bill_id,event_date" });
@@ -201,7 +211,7 @@ serve(async (req) => {
       }
     }
 
-    return jsonResponse({ sent: tickets.length, failedBatches, tickets });
+    return jsonResponse({ sent: acceptedCount, failedBatches, tickets });
   } catch (error) {
     // Log details server-side; return a generic message so internal error
     // details (and any stack information) are not exposed to the caller.

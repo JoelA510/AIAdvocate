@@ -136,9 +136,12 @@ BEGIN
   --   * jsonb_array_elements is fed a CASE-guarded value (a set-returning
   --     function in the FROM/LATERAL is evaluated during the join, before WHERE),
   --     so a non-array calendar cannot throw.
-  --   * The window filter AND the dedup check compare dates AS TEXT (YYYY-MM-DD
-  --     sorts chronologically), so no untrusted calendar value is ever cast to
-  --     date here -- a malformed date string cannot abort the run.
+  --   * The regex rejects out-of-range month/day values; the window filter AND
+  --     the dedup check then compare dates AS TEXT (YYYY-MM-DD sorts
+  --     chronologically), so no untrusted calendar value is ever cast to date
+  --     here -- a malformed date string cannot abort the run. (A rare in-range
+  --     impossible date like 2026-02-30 is harmless: the Edge Function's DATE
+  --     upsert just skips the dedup row, at worst one duplicate while in-window.)
   --   * The dedup row is written by send-push-notifications AFTER a confirmed
   --     send (delivery-confirmed dedup), NOT here, so a failed/blocked delivery
   --     is retried on the next run rather than permanently suppressed.
@@ -160,7 +163,7 @@ BEGIN
     CROSS JOIN LATERAL jsonb_array_elements(
       CASE WHEN jsonb_typeof(b.calendar) = 'array' THEN b.calendar ELSE '[]'::jsonb END
     ) AS elem
-    WHERE elem->>'date' ~ '^\d{4}-\d{2}-\d{2}$'
+    WHERE elem->>'date' ~ '^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$'
       AND elem->>'date' >= to_char(current_date, 'YYYY-MM-DD')
       AND elem->>'date' <= to_char(current_date + window_days, 'YYYY-MM-DD')
       AND EXISTS (SELECT 1 FROM public.bookmarks AS bm WHERE bm.bill_id = b.id)
