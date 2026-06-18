@@ -244,7 +244,7 @@ AIAdvocate/
 │   ├── types/                # Type augmentation (MD3, navigation)
 │   └── assets/               # Images, fonts, icons
 └── supabase/
-    ├── migrations/           # SQL schema, policy, and view migrations
+    ├── migrations/           # Canonical DB schema (timestamped); see supabase/README.md
     ├── verification/         # Post-deploy validation queries
     ├── functions/            # Deno edge functions (bill ingestion, votes, lookup)
     ├── scripts/              # Developer tooling (cron orchestration, diagnostics)
