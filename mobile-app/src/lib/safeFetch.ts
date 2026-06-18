@@ -51,11 +51,13 @@ export async function safeFetch(
     // When we own the timeout controller, forward the caller's abort signal so
     // that either the timeout OR the caller can cancel the request. Without
     // this, supplying `timeoutMs` would silently ignore `init.signal`.
+    let onCallerAbort: (() => void) | undefined;
     if (controller && init.signal) {
       if (init.signal.aborted) {
         controller.abort();
       } else {
-        init.signal.addEventListener("abort", () => controller.abort(), { once: true });
+        onCallerAbort = () => controller.abort();
+        init.signal.addEventListener("abort", onCallerAbort, { once: true });
       }
     }
 
@@ -89,6 +91,13 @@ export async function safeFetch(
     } catch (error: any) {
       lastError = error;
 
+      // A caller-initiated abort cancels the whole operation — stop immediately
+      // rather than burning the remaining retries with backoff delays.
+      if (init.signal?.aborted) {
+        console.error(`safeFetch: Attempt ${attempt + 1} cancelled by caller.`);
+        break;
+      }
+
       if (error?.name === "AbortError") {
         console.error(`safeFetch: Attempt ${attempt + 1} aborted after ${timeoutMs}ms.`);
       } else {
@@ -101,6 +110,7 @@ export async function safeFetch(
       await new Promise((resolve) => setTimeout(resolve, waitTime));
     } finally {
       if (timer) clearTimeout(timer);
+      if (onCallerAbort) init.signal?.removeEventListener("abort", onCallerAbort);
     }
   }
 

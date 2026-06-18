@@ -67,8 +67,17 @@ serve(async (req) => {
         .from("bookmarks")
         .select("user_id")
         .eq("bill_id", billId)
+        // Order so `range()` paging is deterministic; without it a concurrent
+        // insert could shift a row across a page boundary and skip a recipient.
+        .order("user_id", { ascending: true })
         .range(from, from + BOOKMARK_PAGE_SIZE - 1);
-      if (bookmarksError) throw bookmarksError;
+      if (bookmarksError) {
+        // When the bookmark count is an exact multiple of the page size, the
+        // trailing request starts past the last row and PostgREST answers 416
+        // (PGRST103). Treat that as "no more rows" rather than a hard failure.
+        if ((bookmarksError as { code?: string }).code === "PGRST103") break;
+        throw bookmarksError;
+      }
       if (!data || data.length === 0) break;
       bookmarkRows.push(...data);
       if (data.length < BOOKMARK_PAGE_SIZE) break;

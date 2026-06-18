@@ -131,6 +131,31 @@ describe("safeFetch", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("stops retrying immediately when the caller aborts (does not burn the retry budget)", async () => {
+    const callerController = new AbortController();
+    fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const err = new Error("Aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      });
+    });
+
+    const promise = safeFetch("https://example.test", {
+      init: { signal: callerController.signal },
+      retries: 3,
+      retryDelayMs: 1000, // large: a wrongful retry would make the test slow
+      timeoutMs: 10_000,
+    });
+    callerController.abort();
+
+    await expect(promise).rejects.toThrow();
+    // Only the first attempt runs — no retries after the caller cancels.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("supports the legacy (init, retries) positional signature", async () => {
     const ok = makeResponse(200, "ok");
     fetchMock.mockResolvedValueOnce(ok);
