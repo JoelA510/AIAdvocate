@@ -35,7 +35,7 @@ They remain in git history if needed.
   on demand instead of hand-maintaining one:
 
   ```bash
-  supabase db dump --schema public -f supabase/schema.snapshot.sql   # local stack
+  supabase db dump --local --schema public -f supabase/schema.snapshot.sql   # local stack
   # or, against a project:
   supabase db dump --linked --schema public -f supabase/schema.snapshot.sql
   ```
