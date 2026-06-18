@@ -69,6 +69,7 @@ DECLARE
   notified    INT := 0;
   window_days INT := GREATEST(COALESCE(p_window_days, 1), 0);
   rec         RECORD;
+  v_event_date DATE;
 BEGIN
   -- functions_base_url: Vault first, then app_config (non-secret URL config).
   SELECT v.decrypted_secret INTO base_url
@@ -125,33 +126,39 @@ BEGIN
     'Authorization', 'Bearer ' || sync_secret
   );
 
-  -- Bookmarked bills whose calendar has an upcoming entry within the window and
-  -- that have not already been notified for that event date.
-  --
-  -- The event date is parsed inside a LATERAL whose WHERE guards the cast: it
-  -- only runs for fixed-format YYYY-MM-DD strings already constrained to the
-  -- [today, today+window] range (string comparison, since that ordering matches
-  -- chronological order), so an untrusted/malformed calendar value can never
-  -- throw a date-cast error and abort the run.
+  -- Candidate (bill, date string) pairs: bookmarked bills with a calendar entry
+  -- in the [today, today+window] range. Notes on the deliberate hardening:
+  --   * jsonb_array_elements is fed a CASE-guarded value: a set-returning
+  --     function in the FROM/LATERAL is evaluated during the join (before WHERE),
+  --     so a non-array calendar would throw unless guarded here.
+  --   * The range filter uses string comparison (YYYY-MM-DD sorts chronologically),
+  --     so no date cast happens in the query itself.
+  --   * The date cast and the dedup check are done per-row INSIDE the loop's
+  --     BEGIN ... EXCEPTION block, so a single malformed date (e.g. 2026-02-31)
+  --     only skips that bill instead of aborting the whole run.
   FOR rec IN
-    SELECT DISTINCT b.id AS bill_id, ev.event_date
+    SELECT DISTINCT b.id AS bill_id, elem->>'date' AS event_date_str
     FROM public.bills AS b
-    CROSS JOIN LATERAL jsonb_array_elements(b.calendar) AS elem
-    CROSS JOIN LATERAL (
-      SELECT (elem->>'date')::date AS event_date
-      WHERE elem->>'date' ~ '^\d{4}-\d{2}-\d{2}$'
-        AND elem->>'date' >= to_char(current_date, 'YYYY-MM-DD')
-        AND elem->>'date' <= to_char(current_date + window_days, 'YYYY-MM-DD')
-    ) AS ev
-    WHERE jsonb_typeof(b.calendar) = 'array'
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(b.calendar) = 'array' THEN b.calendar ELSE '[]'::jsonb END
+    ) AS elem
+    WHERE elem->>'date' ~ '^\d{4}-\d{2}-\d{2}$'
+      AND elem->>'date' >= to_char(current_date, 'YYYY-MM-DD')
+      AND elem->>'date' <= to_char(current_date + window_days, 'YYYY-MM-DD')
       AND EXISTS (SELECT 1 FROM public.bookmarks AS bm WHERE bm.bill_id = b.id)
-      AND NOT EXISTS (
-        SELECT 1 FROM public.push_notification_log AS l
-        WHERE l.bill_id = b.id AND l.event_date = ev.event_date
-      )
-    ORDER BY ev.event_date, b.id
+    ORDER BY event_date_str, b.id
   LOOP
     BEGIN
+      -- Cast inside the handler: a bad value skips this bill, not the whole run.
+      v_event_date := rec.event_date_str::date;
+
+      IF EXISTS (
+        SELECT 1 FROM public.push_notification_log AS l
+        WHERE l.bill_id = rec.bill_id AND l.event_date = v_event_date
+      ) THEN
+        CONTINUE;  -- already notified for this (bill, event date)
+      END IF;
+
       SELECT net.http_post(
         url     := base_url || '/send-push-notifications',
         headers := req_headers,
@@ -166,7 +173,7 @@ BEGIN
       END IF;
 
       INSERT INTO public.push_notification_log(bill_id, event_date)
-      VALUES (rec.bill_id, rec.event_date)
+      VALUES (rec.bill_id, v_event_date)
       ON CONFLICT (bill_id, event_date) DO NOTHING;
 
       notified := notified + 1;
