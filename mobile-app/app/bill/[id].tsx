@@ -77,6 +77,12 @@ export default function BillDetailsScreen() {
       setTranslatedContent(null);
       return;
     }
+    // translate-bill requires a valid session JWT (verify_jwt=true). On cold
+    // start this effect can otherwise fire before anonymous sign-in
+    // completes, 401ing silently with no retry. Wait for a session; adding
+    // it to the dependency array means this effect naturally re-runs (and
+    // retries) once one becomes available.
+    if (!session) return;
     let isMounted = true;
     const fetchTranslation = async () => {
       setIsTranslating(true);
@@ -96,7 +102,7 @@ export default function BillDetailsScreen() {
     return () => {
       isMounted = false;
     };
-  }, [bill, i18n.language]);
+  }, [bill, i18n.language, session]);
 
   const handleShare = async () => {
     if (!bill) return;

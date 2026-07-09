@@ -23,29 +23,38 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     const fetchSession = async () => {
+      let recoveryError: any = null;
+
       try {
         const {
           data: { session },
           error,
         } = await supabase.auth.getSession();
 
-        if (error) throw error;
-
-        setSession(session);
-
-        // If there's no session, we need to sign in anonymously.
-        if (!session) {
-          const { error: signInError } = await supabase.auth.signInAnonymously();
-          if (signInError) throw signInError;
-          // The onAuthStateChange listener will pick up the new session.
+        if (error) {
+          // getSession() failed (e.g. an expired/invalid stored refresh
+          // token) -- still attempt anonymous sign-in as a recovery path
+          // instead of leaving the user with no session forever.
+          captureException(error, { context: "auth_initialization_get_session" });
+          recoveryError = error;
+        } else {
+          setSession(session);
+          if (session) return;
         }
+
+        // No session (either getSession() errored, or it succeeded but
+        // returned null): sign in anonymously. The onAuthStateChange
+        // listener will pick up the new session.
+        const { error: signInError } = await supabase.auth.signInAnonymously();
+        if (signInError) throw signInError;
       } catch (error: any) {
+        const reported = recoveryError ?? error;
         // Send to Sentry for monitoring
-        captureException(error, { context: "auth_initialization" });
+        captureException(reported, { context: "auth_initialization" });
 
         // In development, log full error
         if (__DEV__) {
-          console.error("Auto sign-in failed:", error);
+          console.error("Auto sign-in failed:", reported);
         } else {
           // In production, only log sanitized message
           console.error("Authentication failed");
@@ -54,7 +63,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         Toast.show({
           type: "error",
           text1: "Authentication Failed",
-          text2: __DEV__ ? error.message : "Please try again",
+          text2: __DEV__ ? reported?.message : "Please try again",
         });
       } finally {
         setLoading(false);

@@ -17,14 +17,46 @@ type TranslationRow = {
   created_at?: string;
 };
 
+const jsonError = (message: string, status: number) =>
+  new Response(JSON.stringify({ error: message }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    status,
+  });
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  let bill_ids;
+  let language_code;
   try {
-    const { bill_ids, language_code } = await req.json();
-    if (!Array.isArray(bill_ids) || !bill_ids.length) throw new Error("Missing or empty 'bill_ids'.");
-    if (!language_code) throw new Error("Missing 'language_code'.");
+    ({ bill_ids, language_code } = await req.json());
+  } catch {
+    return jsonError("Invalid JSON body.", 400);
+  }
 
+  // Validation errors return immediately with a hardcoded literal message --
+  // never anything derived from a caught exception -- so there is no code
+  // path where upstream/internal error detail can reach the HTTP response
+  // (CodeQL: information exposure through a stack trace).
+  if (!Array.isArray(bill_ids) || !bill_ids.length) {
+    return jsonError("Missing or empty 'bill_ids'.", 400);
+  }
+  if (!language_code) {
+    return jsonError("Missing 'language_code'.", 400);
+  }
+  // Bound the per-request OpenAI fan-out. Each bill's prompt includes the
+  // full original_text (potentially large), so even a modest count risks
+  // OpenAI context limits, the Edge Function's wall-clock timeout, and
+  // large API bills. Kept low and deliberately small -- callers (see
+  // mobile-app/src/lib/translation.ts) are expected to chunk larger id
+  // lists into requests at or under this size rather than send everything
+  // in one call.
+  const MAX_BILL_IDS = 10;
+  if (bill_ids.length > MAX_BILL_IDS) {
+    return jsonError(`Too many bill_ids (max ${MAX_BILL_IDS}).`, 400);
+  }
+
+  try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       getServiceKey()
@@ -154,10 +186,11 @@ ${JSON.stringify({
       status: 200,
     });
   } catch (err: any) {
-    console.error("translate-bills failed:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 500,
-    });
+    // Log full detail server-side only. The response body is always this
+    // fixed literal -- never any part of `err` -- so upstream OpenAI error
+    // text or internal detail can never reach the client.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("translate-bills failed:", message);
+    return jsonError("Failed to translate bills.", 500);
   }
 });

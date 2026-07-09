@@ -11,11 +11,14 @@ import BillSkeleton from "@/components/BillSkeleton";
 import EmptyState from "@/components/EmptyState";
 import { fetchTranslationsForBills } from "@/lib/translation";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/providers/AuthProvider";
 import { ThemedView } from "../../components/ThemedView";
 
 const SESSION_FILTER_ENABLED = false; // Flip once the next legislative cycle should be exposed to users.
 const SESSION_ALL = "all";
 const MAX_Q_LEN = 200;
+const BILL_LIST_COLUMNS =
+  "id, bill_number, title, description, status, status_text, status_date, state_link, is_curated, summary_simple, summary_medium, summary_complex, original_text, created_at, change_hash, progress, calendar, history, openstates_bill_id, panel_review";
 
 const normalizeQuery = (value: string): string =>
   value.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
@@ -105,6 +108,7 @@ type TranslationPatch = Partial<
 
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
+  const { session } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const { q: rawQueryParam } = useLocalSearchParams<{ q?: string | string[] }>();
@@ -185,7 +189,7 @@ export default function BillsHomeScreen() {
         if (!query) {
           const { data: rows, error: queryError } = await supabase
             .from("bills")
-            .select("*")
+            .select(BILL_LIST_COLUMNS)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
             .order("id", { ascending: false });
@@ -197,7 +201,7 @@ export default function BillsHomeScreen() {
           const processed = query.replace(/\s/g, "");
           const { data: rows, error: queryError } = await supabase
             .from("bills")
-            .select("*")
+            .select(BILL_LIST_COLUMNS)
             .ilike("bill_number", `%${processed}%`)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
@@ -222,7 +226,7 @@ export default function BillsHomeScreen() {
           const orFilter = buildOrIlikeFilter(["bill_number", "title", "description"], query);
           const { data: fallbackData, error: fallbackError } = await supabase
             .from("bills")
-            .select("*")
+            .select(BILL_LIST_COLUMNS)
             .or(orFilter)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
@@ -286,6 +290,12 @@ export default function BillsHomeScreen() {
       setTranslations({});
       return;
     }
+    // translate-bill/translate-bills require a valid session JWT
+    // (verify_jwt=true). On cold start this effect can otherwise fire
+    // before anonymous sign-in completes, 401ing silently with no retry.
+    // Wait for a session; adding it to the dependency array means this
+    // effect naturally re-runs (and retries) once one becomes available.
+    if (!session) return;
 
     let alive = true;
     (async () => {
@@ -323,7 +333,7 @@ export default function BillsHomeScreen() {
     return () => {
       alive = false;
     };
-  }, [i18n.language, idsKey, ids]);
+  }, [i18n.language, idsKey, ids, session]);
 
   useEffect(() => {
     if (sessionFilter !== SESSION_ALL && !availableSessions.includes(sessionFilter)) {
@@ -366,6 +376,11 @@ export default function BillsHomeScreen() {
       };
     });
   }, [sortedBills, translations]);
+
+  const renderBillItem = useCallback(
+    ({ item }: { item: Bill }) => <BillComponent bill={item} />,
+    [],
+  );
 
   const renderContent = () => {
     if (isInitialLoading) {
@@ -412,7 +427,7 @@ export default function BillsHomeScreen() {
         ref={listRef}
         data={displayBills}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <BillComponent bill={item} />}
+        renderItem={renderBillItem}
         contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
       />

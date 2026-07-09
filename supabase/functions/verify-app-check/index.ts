@@ -2,31 +2,21 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
 
-console.log("🚀 verify-app-check function running (INSECURE DEBUG MODE) 🚀");
-
+// Retired: this endpoint previously bypassed all verification and always
+// returned success ("INSECURE DEBUG MODE"). No client code calls it (a repo
+// search found zero references to verify-app-check outside a stale
+// generated dump), and @react-native-firebase/app-check is not wired up
+// anywhere in the client either. Real Firebase App Check server-side
+// verification requires Firebase Admin credentials this project has not
+// provisioned; until that is built as a deliberate feature, fail closed
+// rather than lie about verification.
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  try {
-    const body = await req.json();
-    console.log("Received request to verify app. Body:", body);
-    
-    // --- BYPASSING ALL VERIFICATION ---
-    // In this debug mode, we automatically return success.
-    console.log("Bypassing token verification and returning success.");
-
-    return new Response(JSON.stringify({ success: true, message: "Verification bypassed for development." }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
-  } catch (error) {
-    console.error("Error in verify-app-check function:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 400,
-    });
-  }
+  return new Response(
+    JSON.stringify({ error: "Not implemented. App Check verification is not active." }),
+    { status: 501, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
 });

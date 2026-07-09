@@ -1,5 +1,4 @@
 // mobile-app/src/lib/analytics.ts
-import { Platform } from "react-native";
 import { supabase } from "./supabase";
 
 /**
@@ -8,9 +7,10 @@ import { supabase } from "./supabase";
  * - Never throws (swallows RLS/HTTP errors)
  * - Safe to call on web and native
  *
- * NOTE: With RLS on `events`, direct inserts may 403 on the client.
- * This function intentionally swallows those failures.
- * Later we can switch this to an Edge Function (service role) and keep the API intact.
+ * public.events only has columns (id, ts, user_id, type, bill_id) -- there is
+ * no payload/platform column, so only bill_id (when present in payload) is
+ * persisted. An RLS policy permits authenticated inserts where
+ * auth.uid() = user_id.
  */
 
 export type AnalyticsPayload = Record<string, unknown>;
@@ -24,18 +24,18 @@ export async function trackEvent(
     // If there is no user (anon or not yet available), just no-op.
     if (!userId) return;
 
-    // Attempt a direct insert; RLS may block this (expected in dev).
+    const billId = typeof payload?.bill_id === "number" ? payload.bill_id : null;
+
     const { error } = await supabase.from("events").insert([
       {
         type,
         user_id: userId,
-        payload: payload ?? {},
-        platform: Platform.OS,
+        bill_id: billId,
       },
     ]);
 
     if (error) {
-      // Don’t throw—just log at debug level to avoid noisy consoles.
+      // Don't throw—just log at debug level to avoid noisy consoles.
       if (__DEV__) {
         // eslint-disable-next-line no-console
         console.debug("trackEvent suppressed error:", error.message);

@@ -45,7 +45,9 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
 
         if (data && data.length && !cancelled) {
           const overrides = data.reduce<Partial<AppConfig>>((acc, { key, value }) => {
-            (acc as Record<string, string | undefined>)[key] = value;
+            if (typeof value === "string" && value.trim().length > 0) {
+              (acc as Record<string, string | undefined>)[key] = value;
+            }
             return acc;
           }, {});
 

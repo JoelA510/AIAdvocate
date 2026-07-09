@@ -27,9 +27,7 @@ export default function AdvocacyScreen() {
       try {
         const { data, error } = await supabase
           .from("bills")
-          .select(
-            "id, bill_number, title, slug, status, status_text, status_date, calendar, progress",
-          )
+          .select("id, bill_number, title, status, status_text, status_date, calendar, progress")
           .order("id", { ascending: false })
           .limit(20);
         if (!error && data && isMounted) setBills(data as unknown as Bill[]);
