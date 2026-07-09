@@ -38,6 +38,7 @@
   "submit": {
     "production": {
       "ios": {
+        "ascAppId": "6749104204",
         "metadataPath": "./store.config.json"
       },
       "android": {
