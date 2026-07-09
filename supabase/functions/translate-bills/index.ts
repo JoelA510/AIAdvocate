@@ -44,10 +44,14 @@ serve(async (req) => {
   if (!language_code) {
     return jsonError("Missing 'language_code'.", 400);
   }
-  // Bound the per-request OpenAI fan-out: without a cap, one request could
-  // trigger an unlimited number of paid completions (cost blowout / DoS),
-  // even now that a caller must be an authenticated session.
-  const MAX_BILL_IDS = 50;
+  // Bound the per-request OpenAI fan-out. Each bill's prompt includes the
+  // full original_text (potentially large), so even a modest count risks
+  // OpenAI context limits, the Edge Function's wall-clock timeout, and
+  // large API bills. Kept low and deliberately small -- callers (see
+  // mobile-app/src/lib/translation.ts) are expected to chunk larger id
+  // lists into requests at or under this size rather than send everything
+  // in one call.
+  const MAX_BILL_IDS = 10;
   if (bill_ids.length > MAX_BILL_IDS) {
     return jsonError(`Too many bill_ids (max ${MAX_BILL_IDS}).`, 400);
   }

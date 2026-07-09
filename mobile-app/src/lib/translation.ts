@@ -51,27 +51,41 @@ export async function fetchTranslationsForBills(
     return map;
   }
 
-  // 2) Ask the bulk translation edge function for any gaps.
-  try {
-    const { data, error } = await supabase.functions.invoke("translate-bills", {
-      body: { bill_ids: missing, language_code: language },
-    });
-    if (!error && Array.isArray(data)) {
-      (data as TranslationRecord[]).forEach((record) => {
-        if (record?.bill_id != null) {
-          map[Number(record.bill_id)] = record;
-        }
+  // 2) Ask the bulk translation edge function for any gaps, chunked to stay
+  // at or under translate-bills' MAX_BILL_IDS cap (each bill's prompt
+  // includes its full original_text, so one oversized request risks OpenAI
+  // context/timeout limits). Each chunk is independent and sequential; a
+  // failed chunk's ids simply stay unresolved and fall through to the
+  // single-bill fallback below.
+  const BULK_CHUNK_SIZE = 10;
+  for (let i = 0; i < missing.length; i += BULK_CHUNK_SIZE) {
+    const chunk = missing.slice(i, i + BULK_CHUNK_SIZE);
+    try {
+      const { data, error } = await supabase.functions.invoke("translate-bills", {
+        body: { bill_ids: chunk, language_code: language },
       });
-      return map;
+      if (!error && Array.isArray(data)) {
+        (data as TranslationRecord[]).forEach((record) => {
+          if (record?.bill_id != null) {
+            map[Number(record.bill_id)] = record;
+          }
+        });
+      }
+    } catch {
+      // ignore; unresolved ids in this chunk fall through to the
+      // single-bill fallback below.
     }
-  } catch {
-    // ignore and try fallback
   }
 
-  // 2) Fallback: call single-bill function concurrently (in small batches)
+  const stillMissing = normalizedIds.filter((id) => !map[id]);
+  if (!stillMissing.length) {
+    return map;
+  }
+
+  // 3) Fallback: call single-bill function concurrently (in small batches)
   const batch = 5;
-  for (let i = 0; i < missing.length; i += batch) {
-    const slice = missing.slice(i, i + batch);
+  for (let i = 0; i < stillMissing.length; i += batch) {
+    const slice = stillMissing.slice(i, i + batch);
     const results = await Promise.allSettled(
       slice.map((id) =>
         supabase.functions.invoke("translate-bill", {

@@ -11,6 +11,7 @@ import BillSkeleton from "@/components/BillSkeleton";
 import EmptyState from "@/components/EmptyState";
 import { fetchTranslationsForBills } from "@/lib/translation";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/providers/AuthProvider";
 import { ThemedView } from "../../components/ThemedView";
 
 const SESSION_FILTER_ENABLED = false; // Flip once the next legislative cycle should be exposed to users.
@@ -107,6 +108,7 @@ type TranslationPatch = Partial<
 
 export default function BillsHomeScreen() {
   const { t, i18n } = useTranslation();
+  const { session } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const { q: rawQueryParam } = useLocalSearchParams<{ q?: string | string[] }>();
@@ -288,6 +290,12 @@ export default function BillsHomeScreen() {
       setTranslations({});
       return;
     }
+    // translate-bill/translate-bills require a valid session JWT
+    // (verify_jwt=true). On cold start this effect can otherwise fire
+    // before anonymous sign-in completes, 401ing silently with no retry.
+    // Wait for a session; adding it to the dependency array means this
+    // effect naturally re-runs (and retries) once one becomes available.
+    if (!session) return;
 
     let alive = true;
     (async () => {
@@ -325,7 +333,7 @@ export default function BillsHomeScreen() {
     return () => {
       alive = false;
     };
-  }, [i18n.language, idsKey, ids]);
+  }, [i18n.language, idsKey, ids, session]);
 
   useEffect(() => {
     if (sessionFilter !== SESSION_ALL && !availableSessions.includes(sessionFilter)) {
