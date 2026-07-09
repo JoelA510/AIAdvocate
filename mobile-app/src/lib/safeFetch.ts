@@ -84,7 +84,14 @@ export async function safeFetch(
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        const httpError = new Error(`HTTP ${response.status}: ${errorText}`) as Error & {
+          nonRetryable?: boolean;
+        };
+        // 4xx other than 408 (Request Timeout) are permanent client errors --
+        // retrying cannot succeed. 5xx and 408 stay retryable (transient).
+        httpError.nonRetryable =
+          response.status >= 400 && response.status < 500 && response.status !== 408;
+        throw httpError;
       }
 
       return response;
@@ -95,6 +102,16 @@ export async function safeFetch(
       // rather than burning the remaining retries with backoff delays.
       if (init.signal?.aborted) {
         console.error(`safeFetch: Attempt ${attempt + 1} cancelled by caller.`);
+        break;
+      }
+
+      // A permanent 4xx client error cannot succeed on retry -- stop
+      // immediately instead of burning the remaining attempts.
+      if (error?.nonRetryable) {
+        console.error(
+          `safeFetch: Attempt ${attempt + 1} failed with a non-retryable client error.`,
+          error,
+        );
         break;
       }
 

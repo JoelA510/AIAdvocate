@@ -64,7 +64,7 @@ type BillProgressEntry = {
   progress_event?: string | null;
 };
 
-export default function BillComponent({ bill }: { bill: Bill }) {
+function BillComponent({ bill }: { bill: Bill }) {
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
   const router = useRouter();
@@ -467,3 +467,5 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
 });
+
+export default React.memo(BillComponent);

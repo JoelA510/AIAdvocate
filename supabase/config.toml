@@ -8,8 +8,11 @@ verify_jwt = false
 import_map = "./functions/sync-updated-bills/deno.json"
 
 [functions.verify-app-check]
-# This function is called by the app for security and must not require a JWT.
-verify_jwt = false
+# Retired (fail-closed 501 stub): no client code calls this, and the
+# always-succeeds "INSECURE DEBUG MODE" bypass it used to run was an active
+# vulnerability if anything were ever wired to trust it. verify_jwt=true now
+# that it no longer needs custom in-code authorization.
+verify_jwt = true
 import_map = "./functions/verify-app-check/deno.json"
 
 [functions.send-push-notifications]
@@ -23,22 +26,37 @@ verify_jwt = false
 import_map = "./functions/send-push-notifications/deno.json"
 
 [functions.translate-bill]
-verify_jwt = false
+# Called by the mobile client with the user's Supabase session JWT (never by
+# pg_cron), so the platform's own JWT check is sufficient authorization --
+# previously verify_jwt=false with NO in-code auth check at all, so anyone
+# holding just the public anon key could trigger unlimited paid OpenAI
+# translation calls. Anonymous sign-in sessions still carry a real JWT, so
+# this does not block logged-out-but-anon-signed-in app users.
+verify_jwt = true
 import_map = "./functions/translate-bill/deno.json"
 
 [functions.translate-bills]
-verify_jwt = false
+# See functions.translate-bill: same fix, same reasoning.
+verify_jwt = true
 import_map = "./functions/translate-bills/deno.json"
 
 [functions.find-your-rep]
-verify_jwt = false
+# Called by the mobile client with the user's Supabase session JWT (never by
+# pg_cron). Previously verify_jwt=false with NO in-code auth check, so anyone
+# holding just the public anon key could trigger unlimited paid LocationIQ/
+# OpenStates lookups.
+verify_jwt = true
 import_map = "./functions/find-your-rep/deno.json"
 
 [functions."summarize-simple"]
 verify_jwt = false
 
 [functions."summarize-simple-backfill"]
-verify_jwt = false
+# Retired (fail-closed 410 stub): ran with no in-code auth, looping the
+# entire bills table with service-role writes triggerable by anyone. Nothing
+# invokes it (confirmed by repo search). verify_jwt=true now that it no
+# longer needs custom authorization.
+verify_jwt = true
 
 [functions.votes-backfill]
 # Authorized in code via isAuthorizedCronOrAdmin(): an admin secret/service key

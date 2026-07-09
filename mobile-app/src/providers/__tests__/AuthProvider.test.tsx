@@ -103,11 +103,40 @@ describe("AuthProvider", () => {
     expect(supabase.auth.signInAnonymously).toHaveBeenCalled();
   });
 
-  it("captures errors and shows toast", async () => {
+  it("recovers via anonymous sign-in when getSession errors", async () => {
+    // Regression test: getSession() failing (e.g. an expired/invalid stored
+    // refresh token) must NOT skip the anonymous sign-in fallback. Since
+    // signInAnonymously succeeds here (the default mock), the user should
+    // recover silently -- no toast, no unrecoverable-error report -- rather
+    // than being left with no session forever.
     const err = new Error("boom");
     (supabase.auth.getSession as jest.Mock).mockResolvedValue({
       data: { session: null },
       error: err,
+    });
+    const { getByTestId } = render(
+      <AuthProvider>
+        <TestComponent />
+      </AuthProvider>,
+    );
+    await waitFor(() => expect(getByTestId("loading").children[0]).toBe("ready"));
+    expect(supabase.auth.signInAnonymously).toHaveBeenCalled();
+    expect(captureException).toHaveBeenCalledWith(err, {
+      context: "auth_initialization_get_session",
+    });
+    expect(Toast.show).not.toHaveBeenCalled();
+  });
+
+  it("captures errors and shows toast when recovery also fails", async () => {
+    const err = new Error("boom");
+    const signInErr = new Error("sign-in also failed");
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({
+      data: { session: null },
+      error: err,
+    });
+    (supabase.auth.signInAnonymously as jest.Mock).mockResolvedValue({
+      data: { session: null },
+      error: signInErr,
     });
     const { getByTestId } = render(
       <AuthProvider>

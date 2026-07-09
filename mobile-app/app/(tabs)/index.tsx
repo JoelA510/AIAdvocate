@@ -16,6 +16,8 @@ import { ThemedView } from "../../components/ThemedView";
 const SESSION_FILTER_ENABLED = false; // Flip once the next legislative cycle should be exposed to users.
 const SESSION_ALL = "all";
 const MAX_Q_LEN = 200;
+const BILL_LIST_COLUMNS =
+  "id, bill_number, title, description, status, status_text, status_date, state_link, is_curated, summary_simple, summary_medium, summary_complex, original_text, created_at, change_hash, progress, calendar, history, openstates_bill_id, panel_review";
 
 const normalizeQuery = (value: string): string =>
   value.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
@@ -185,7 +187,7 @@ export default function BillsHomeScreen() {
         if (!query) {
           const { data: rows, error: queryError } = await supabase
             .from("bills")
-            .select("*")
+            .select(BILL_LIST_COLUMNS)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
             .order("id", { ascending: false });
@@ -197,7 +199,7 @@ export default function BillsHomeScreen() {
           const processed = query.replace(/\s/g, "");
           const { data: rows, error: queryError } = await supabase
             .from("bills")
-            .select("*")
+            .select(BILL_LIST_COLUMNS)
             .ilike("bill_number", `%${processed}%`)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
@@ -222,7 +224,7 @@ export default function BillsHomeScreen() {
           const orFilter = buildOrIlikeFilter(["bill_number", "title", "description"], query);
           const { data: fallbackData, error: fallbackError } = await supabase
             .from("bills")
-            .select("*")
+            .select(BILL_LIST_COLUMNS)
             .or(orFilter)
             .order("is_curated", { ascending: false })
             .order("status_date", { ascending: false })
@@ -367,6 +369,11 @@ export default function BillsHomeScreen() {
     });
   }, [sortedBills, translations]);
 
+  const renderBillItem = useCallback(
+    ({ item }: { item: Bill }) => <BillComponent bill={item} />,
+    [],
+  );
+
   const renderContent = () => {
     if (isInitialLoading) {
       return (
@@ -412,7 +419,7 @@ export default function BillsHomeScreen() {
         ref={listRef}
         data={displayBills}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <BillComponent bill={item} />}
+        renderItem={renderBillItem}
         contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
       />

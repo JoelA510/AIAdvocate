@@ -113,10 +113,18 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    console.error("Function failed:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // Log full detail server-side; only a specific input-validation error is
+    // safe to echo to the client. Anything else (including upstream OpenAI
+    // error bodies) previously leaked verbatim -- return a generic message.
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("translate-bill failed:", message);
+    const isValidationError = message.startsWith("Missing required parameters");
+    return new Response(
+      JSON.stringify({ error: isValidationError ? message : "Failed to translate bill." }),
+      {
+        status: isValidationError ? 400 : 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 });

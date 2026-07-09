@@ -208,12 +208,15 @@ serve(async (req) => {
         (ticket as { status?: unknown }).status === "ok",
     ).length;
 
-    // Delivery-confirmed dedup: record the ledger row only after at least one
-    // Expo ticket was accepted (acceptedCount > 0), and only for scheduler calls
-    // that supplied the event date. If nothing was accepted, the row is left
-    // absent so notify_upcoming_votes retries on its next run. Per (bill, event
-    // date), so a partially-failed fan-out is not re-sent to everyone.
-    if (eventDate && acceptedCount > 0) {
+    // Delivery-confirmed dedup: record the ledger row only after EVERY batch
+    // succeeded (failedBatches === 0) and at least one ticket was accepted,
+    // and only for scheduler calls that supplied the event date. A partial
+    // failure (some batches ok, one Expo batch errored) previously still
+    // wrote the ledger row as soon as acceptedCount > 0, permanently
+    // suppressing retry for the recipients in the failed batch. Now a
+    // partial failure leaves the row absent so notify_upcoming_votes retries
+    // the whole bill on its next run.
+    if (eventDate && acceptedCount > 0 && failedBatches === 0) {
       const { error: ledgerError } = await supabaseAdmin
         .from("push_notification_log")
         .upsert({ bill_id: billId, event_date: eventDate }, { onConflict: "bill_id,event_date" });

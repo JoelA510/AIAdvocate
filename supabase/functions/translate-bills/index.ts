@@ -24,6 +24,13 @@ serve(async (req) => {
     const { bill_ids, language_code } = await req.json();
     if (!Array.isArray(bill_ids) || !bill_ids.length) throw new Error("Missing or empty 'bill_ids'.");
     if (!language_code) throw new Error("Missing 'language_code'.");
+    // Bound the per-request OpenAI fan-out: without a cap, one request could
+    // trigger an unlimited number of paid completions (cost blowout / DoS),
+    // even now that a caller must be an authenticated session.
+    const MAX_BILL_IDS = 50;
+    if (bill_ids.length > MAX_BILL_IDS) {
+      throw new Error(`Too many bill_ids (max ${MAX_BILL_IDS}).`);
+    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -154,10 +161,19 @@ ${JSON.stringify({
       status: 200,
     });
   } catch (err: any) {
-    console.error("translate-bills failed:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 500,
-    });
+    // Log full detail server-side; only known input-validation errors are
+    // safe to echo to the client. Anything else (including upstream OpenAI
+    // error bodies) previously leaked verbatim -- return a generic message.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("translate-bills failed:", message);
+    const isValidationError =
+      message.startsWith("Missing") || message.startsWith("Too many bill_ids");
+    return new Response(
+      JSON.stringify({ error: isValidationError ? message : "Failed to translate bills." }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: isValidationError ? 400 : 500,
+      },
+    );
   }
 });

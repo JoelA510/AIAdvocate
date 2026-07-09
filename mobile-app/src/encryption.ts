@@ -1,6 +1,7 @@
 // mobile-app/src/lib/encryption.ts
 
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 import * as Crypto from "expo-crypto";
 
 const ENCRYPTION_KEY_NAME = "user_notes_encryption_key";
@@ -11,6 +12,21 @@ const ENCRYPTION_KEY_NAME = "user_notes_encryption_key";
  * @returns A promise that resolves to the encryption key string.
  */
 async function getEncryptionKey(): Promise<string> {
+  // expo-secure-store is not supported on web; fall back to localStorage
+  // there so encryptNote/decryptNote don't throw an unhandled rejection.
+  if (Platform.OS === "web") {
+    const hasLocalStorage = typeof localStorage !== "undefined";
+    let webKey = hasLocalStorage ? localStorage.getItem(ENCRYPTION_KEY_NAME) : null;
+    if (!webKey) {
+      const randomBytes = await Crypto.getRandomBytesAsync(32);
+      webKey = Array.from(randomBytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      if (hasLocalStorage) localStorage.setItem(ENCRYPTION_KEY_NAME, webKey);
+    }
+    return webKey;
+  }
+
   let key = await SecureStore.getItemAsync(ENCRYPTION_KEY_NAME);
 
   if (!key) {
@@ -47,8 +63,15 @@ export async function encryptNote(plaintext: string): Promise<string> {
     encrypted[i] = plainBytes[i] ^ keyBytes[i % keyBytes.length];
   }
 
-  // Convert to base64
-  return btoa(String.fromCharCode(...Array.from(encrypted)));
+  // Convert to base64. Chunk the conversion -- spreading one call argument
+  // per byte (String.fromCharCode(...bytes)) overflows the call stack for
+  // large notes.
+  const CHUNK_SIZE = 0x8000;
+  let binary = "";
+  for (let i = 0; i < encrypted.length; i += CHUNK_SIZE) {
+    binary += String.fromCharCode(...encrypted.subarray(i, i + CHUNK_SIZE));
+  }
+  return btoa(binary);
 }
 
 /**

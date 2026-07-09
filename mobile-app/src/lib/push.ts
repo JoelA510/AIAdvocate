@@ -35,13 +35,13 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
   // 4. Get the Expo push token
   try {
     const token = (await Notifications.getExpoPushTokenAsync()).data;
-    console.log("Expo Push Token:", token);
+    if (__DEV__) console.log("Expo Push Token:", token);
 
     // 5. Save the token to your database, associated with the user
     if (token) {
       const { error } = await supabase
         .from("user_push_tokens")
-        .upsert({ user_id: userId, expo_token: token }, { onConflict: "user_id" });
+        .upsert({ user_id: userId, expo_token: token }, { onConflict: "user_id,expo_token" });
 
       if (error) {
         console.error("Error saving push token to Supabase:", error);
