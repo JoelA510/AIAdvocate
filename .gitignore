@@ -43,7 +43,7 @@ mobile-app/.env.production
 
 # Re-include example files so they CAN be committed
 !supabase/.env.example
-!supabase/functions/.env.local
+!supabase/functions/.env.local.example
 !mobile-app/.env.example
 
 # Build artifacts and binaries
@@ -54,3 +54,14 @@ mobile-app/.env.production
 # Python
 __pycache__/
 *.py[cod]
+
+# Scratch/generated artifacts that should never be committed (previously
+# tracked by mistake): dependency-audit dumps, ad hoc session notes, and a
+# generated full-source-tree dump (mobile-app/project_context.txt, produced
+# by mobile-app/create_context.sh) that went stale immediately and repeatedly
+# surfaced deleted/superseded code in searches.
+npm-audit.json
+yarn-audit.json
+hot-cache.md
+mobile-app/project_context.txt
+mobile-app/create_context.sh

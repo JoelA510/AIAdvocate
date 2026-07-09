@@ -49,7 +49,9 @@ export default function ActiveScreen() {
 
         let query = supabase
           .from("bills")
-          .select("*")
+          .select(
+            "id, bill_number, title, description, status, status_text, status_date, state_link, is_curated, summary_simple, summary_medium, summary_complex, original_text, created_at, change_hash, progress, calendar, history, openstates_bill_id, panel_review",
+          )
           .or(openFilter)
           .order("status_date", { ascending: false })
           .order("created_at", { ascending: false });

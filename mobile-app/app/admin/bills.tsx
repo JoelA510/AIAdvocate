@@ -255,7 +255,7 @@ export default function AdminBillsScreen() {
 
       // 2. Save Summaries based on selected language
       if (selectedLanguage === "en") {
-        // Use RPC for secure update (Deep Debug Version)
+        // Use RPC for secure update
         const { data: updatedData, error: billError } = await supabase.rpc("update_bill_summary", {
           p_bill_id: selectedBill.id,
           p_title: editTitle,
@@ -265,8 +265,6 @@ export default function AdminBillsScreen() {
         });
 
         if (billError) throw billError;
-
-        console.log("RPC Returned Data:", updatedData);
 
         // Update local state with the data returned from DB
         const updatedBill = {

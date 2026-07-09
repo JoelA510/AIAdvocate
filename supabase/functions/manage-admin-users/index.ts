@@ -149,8 +149,37 @@ serve(async (req) => {
             throw new Error("Invalid action");
         }
     } catch (error: any) {
-        return new Response(JSON.stringify({ error: error.message }), {
-            status: 400,
+        // Map known errors to correct status codes and avoid leaking raw
+        // DB/Auth error detail (e.g. constraint names) to the client; log
+        // full detail server-side instead.
+        const message = typeof error?.message === "string" ? error.message : "Unknown error";
+        console.error("manage-admin-users failed:", message);
+
+        if (message === "Unauthorized") {
+            return new Response(JSON.stringify({ error: message }), {
+                status: 401,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+        }
+        if (message === "Unauthorized: Not an admin") {
+            return new Response(JSON.stringify({ error: message }), {
+                status: 403,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+        }
+        const KNOWN_VALIDATION_ERRORS = new Set([
+            "Email and password required",
+            "User ID required",
+            "Invalid action",
+        ]);
+        if (KNOWN_VALIDATION_ERRORS.has(message)) {
+            return new Response(JSON.stringify({ error: message }), {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+        }
+        return new Response(JSON.stringify({ error: "Request failed." }), {
+            status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
     }
