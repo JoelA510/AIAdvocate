@@ -66,7 +66,10 @@ export async function encryptNote(plaintext: string): Promise<string> {
   // Convert to base64. Chunk the conversion -- spreading one call argument
   // per byte (String.fromCharCode(...bytes)) overflows the call stack for
   // large notes.
-  const CHUNK_SIZE = 0x8000;
+  // 32,768 (0x8000) can still exceed the call-stack argument limit on some
+  // mobile JS engines (iOS JavaScriptCore, older Hermes); 4096 eliminates
+  // that risk with no meaningful performance cost.
+  const CHUNK_SIZE = 4096;
   let binary = "";
   for (let i = 0; i < encrypted.length; i += CHUNK_SIZE) {
     binary += String.fromCharCode(...encrypted.subarray(i, i + CHUNK_SIZE));

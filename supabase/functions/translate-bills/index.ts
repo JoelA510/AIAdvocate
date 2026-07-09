@@ -17,21 +17,42 @@ type TranslationRow = {
   created_at?: string;
 };
 
+const jsonError = (message: string, status: number) =>
+  new Response(JSON.stringify({ error: message }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    status,
+  });
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  let bill_ids;
+  let language_code;
   try {
-    const { bill_ids, language_code } = await req.json();
-    if (!Array.isArray(bill_ids) || !bill_ids.length) throw new Error("Missing or empty 'bill_ids'.");
-    if (!language_code) throw new Error("Missing 'language_code'.");
-    // Bound the per-request OpenAI fan-out: without a cap, one request could
-    // trigger an unlimited number of paid completions (cost blowout / DoS),
-    // even now that a caller must be an authenticated session.
-    const MAX_BILL_IDS = 50;
-    if (bill_ids.length > MAX_BILL_IDS) {
-      throw new Error(`Too many bill_ids (max ${MAX_BILL_IDS}).`);
-    }
+    ({ bill_ids, language_code } = await req.json());
+  } catch {
+    return jsonError("Invalid JSON body.", 400);
+  }
 
+  // Validation errors return immediately with a hardcoded literal message --
+  // never anything derived from a caught exception -- so there is no code
+  // path where upstream/internal error detail can reach the HTTP response
+  // (CodeQL: information exposure through a stack trace).
+  if (!Array.isArray(bill_ids) || !bill_ids.length) {
+    return jsonError("Missing or empty 'bill_ids'.", 400);
+  }
+  if (!language_code) {
+    return jsonError("Missing 'language_code'.", 400);
+  }
+  // Bound the per-request OpenAI fan-out: without a cap, one request could
+  // trigger an unlimited number of paid completions (cost blowout / DoS),
+  // even now that a caller must be an authenticated session.
+  const MAX_BILL_IDS = 50;
+  if (bill_ids.length > MAX_BILL_IDS) {
+    return jsonError(`Too many bill_ids (max ${MAX_BILL_IDS}).`, 400);
+  }
+
+  try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       getServiceKey()
@@ -161,19 +182,11 @@ ${JSON.stringify({
       status: 200,
     });
   } catch (err: any) {
-    // Log full detail server-side; only known input-validation errors are
-    // safe to echo to the client. Anything else (including upstream OpenAI
-    // error bodies) previously leaked verbatim -- return a generic message.
+    // Log full detail server-side only. The response body is always this
+    // fixed literal -- never any part of `err` -- so upstream OpenAI error
+    // text or internal detail can never reach the client.
     const message = err instanceof Error ? err.message : String(err);
     console.error("translate-bills failed:", message);
-    const isValidationError =
-      message.startsWith("Missing") || message.startsWith("Too many bill_ids");
-    return new Response(
-      JSON.stringify({ error: isValidationError ? message : "Failed to translate bills." }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: isValidationError ? 400 : 500,
-      },
-    );
+    return jsonError("Failed to translate bills.", 500);
   }
 });

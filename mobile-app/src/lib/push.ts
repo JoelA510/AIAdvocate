@@ -39,6 +39,17 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
 
     // 5. Save the token to your database, associated with the user
     if (token) {
+      // Prevent cross-user notification leakage on a shared device: with the
+      // composite (user_id, expo_token) primary key, if this device's token
+      // was previously claimed by a DIFFERENT user (e.g. user A logged out,
+      // user B logged in on the same device), that stale row would otherwise
+      // persist forever and both users would receive each other's pushes.
+      await supabase
+        .from("user_push_tokens")
+        .delete()
+        .eq("expo_token", token)
+        .neq("user_id", userId);
+
       const { error } = await supabase
         .from("user_push_tokens")
         .upsert({ user_id: userId, expo_token: token }, { onConflict: "user_id,expo_token" });

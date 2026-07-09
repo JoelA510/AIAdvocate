@@ -13,12 +13,29 @@ serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  let bill_id;
+  let language_code;
   try {
-    const { bill_id, language_code } = await req.json();
-    if (!bill_id || !language_code) {
-      throw new Error("Missing required parameters: 'bill_id' and 'language_code'.");
-    }
+    ({ bill_id, language_code } = await req.json());
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON body." }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
+  // Validation errors return immediately with a hardcoded literal message --
+  // never anything derived from a caught exception -- so there is no code
+  // path where upstream/internal error detail can reach the HTTP response
+  // (CodeQL: information exposure through a stack trace).
+  if (!bill_id || !language_code) {
+    return new Response(
+      JSON.stringify({ error: "Missing required parameters: 'bill_id' and 'language_code'." }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  try {
     const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, getServiceKey());
 
     // --- 1. Check for a cached translation first ---
@@ -113,18 +130,14 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    // Log full detail server-side; only a specific input-validation error is
-    // safe to echo to the client. Anything else (including upstream OpenAI
-    // error bodies) previously leaked verbatim -- return a generic message.
+    // Log full detail server-side only. The response body is always this
+    // fixed literal -- never any part of `error` -- so upstream OpenAI error
+    // text or internal detail can never reach the client.
     const message = error instanceof Error ? error.message : String(error);
     console.error("translate-bill failed:", message);
-    const isValidationError = message.startsWith("Missing required parameters");
-    return new Response(
-      JSON.stringify({ error: isValidationError ? message : "Failed to translate bill." }),
-      {
-        status: isValidationError ? 400 : 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
+    return new Response(JSON.stringify({ error: "Failed to translate bill." }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
