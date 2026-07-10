@@ -56,6 +56,16 @@
             "enableShrinkResourcesInReleaseBuilds": true
           }
         }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "secureyourtech",
+          "project": "ai-advocate",
+          "experimental_android": {
+            "enableAndroidGradlePlugin": true
+          }
+        }
       ]
     ],
     "experiments": {
