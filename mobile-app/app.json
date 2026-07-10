@@ -3,7 +3,7 @@
     "name": "AI Advocate",
     "slug": "ai-advocate",
     "owner": "joela510",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mobileapp",
@@ -54,6 +54,16 @@
           "android": {
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "secureyourtech",
+          "project": "ai-advocate",
+          "experimental_android": {
+            "enableAndroidGradlePlugin": true
           }
         }
       ]

@@ -220,7 +220,7 @@ Schedule through pg_cron if needed.
 
 ## Release Process
 
-1. **Versioning** – bump `app.json` (`version`, `buildNumber`, `android.versionCode`) and update any in-app version banners.
+1. **Versioning** – bump `version` in `mobile-app/app.json` (the user-facing version string) and update any in-app version banners. Do **not** add `buildNumber`/`android.versionCode` — EAS manages build counters remotely (`cli.appVersionSource: "remote"` + `autoIncrement` in `eas.json`).
 2. **Changelog** – summarise user-facing changes and note database migrations applied.
 3. **Quality gates** – run the commands listed in [Testing & Quality Gates](#testing--quality-gates).
 4. **Supabase schema** – `supabase db push --include-all` to ensure the remote project matches migrations. Run verification scripts.
