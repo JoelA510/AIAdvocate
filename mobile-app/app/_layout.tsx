@@ -132,7 +132,7 @@ function AppScaffold() {
           <FooterNav />
         </View>
       </RouterErrorBoundary>
-      <Toast topOffset={insets.top + 16} />
+      <Toast topOffset={Math.max(40, insets.top + 16)} />
     </>
   );
 }
