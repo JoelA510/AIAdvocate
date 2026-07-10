@@ -26,13 +26,10 @@ export const initSentry = () => {
     // Environment
     environment: __DEV__ ? "development" : "production",
 
-    // Release version
-    release: Constants.expoConfig?.version,
-
-    // Distribution (build number)
-    dist:
-      Constants.expoConfig?.ios?.buildNumber ||
-      Constants.expoConfig?.android?.versionCode?.toString(),
+    // release/dist deliberately omitted: the SDK derives both from native
+    // build info (bundleId@version+build), which stays correct across EAS
+    // remote version bumps and OTA updates. expoConfig no longer carries
+    // buildNumber/versionCode (EAS manages them remotely).
 
     // Before send - sanitize sensitive data
     beforeSend(event, hint) {
