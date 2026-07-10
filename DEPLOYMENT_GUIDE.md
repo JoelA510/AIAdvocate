@@ -14,6 +14,9 @@ This guide details the steps to build and submit the **AI Advocate** mobile appl
     ```bash
     npm install -g eas-cli
     ```
+5.  **Environment variables (local CLI builds/updates only)**: evaluating the app config throws unless `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` are set — copy `mobile-app/.env.example` to `mobile-app/.env` and fill them in. Dashboard-triggered EAS builds use the EAS **Environment variables** store (Production environment) instead and need no local `.env`.
+
+> **Note**: Builds and submits can also be run entirely from the [EAS dashboard](https://expo.dev) (Builds → Create a build, with the GitHub-linked repo and Root Directory `mobile-app`) — no terminal required. The CLI commands below are the equivalent local workflow.
 
 ---
 
@@ -50,6 +53,8 @@ Once the first build is manually uploaded, you can automate future submissions:
 eas submit -p android
 ```
 
+> **Important**: `eas submit` uploads to the **Internal testing** track (`submit.production.android.track: "internal"` in `eas.json`) — it does **not** go live. After smoke-testing the internal build, promote it in Play Console: **Testing > Internal testing > Promote release > Production**. The first R8-minified build (Proguard/shrinking enabled since v1.5) especially deserves that internal pass: check push notifications, sign-in, hCaptcha, popup menus, toasts, and the admin login keyboard before promoting.
+
 ---
 
 ## 🍎 iOS (Apple App Store)
@@ -69,39 +74,48 @@ eas build --platform ios --profile production
 ### 2. Submit to App Store Connect
 
 #### Automated Submission (Recommended)
-You can submit directly from the CLI after the build (or separately):
+You can submit directly from the CLI after the build, from the EAS dashboard, or separately:
 
 ```bash
 eas submit -p ios
 ```
 
-1.  Select the build you just created.
-2.  EAS will upload the binary to **TestFlight** in App Store Connect.
+Submission is non-interactive: `eas.json` pins the App Store Connect app via `ascAppId` and sources store metadata from `mobile-app/store.config.json` (`metadataPath`). Treat `store.config.json` as the source of truth for title/subtitle/description/keywords — edit it in the repo rather than hand-editing App Store Connect, or the two will diverge. EAS uploads the binary to **TestFlight** in App Store Connect.
 
 #### Finalize in App Store Connect
 1.  Go to [App Store Connect](https://appstoreconnect.apple.com/).
 2.  Navigate to **My Apps > AI Advocate**.
 3.  Go to **TestFlight** to verify the build is processing.
-4.  Once processed, go to the **App Store** tab.
-5.  Select the build you uploaded.
-6.  Update screenshots and metadata if needed.
-7.  Click **Submit for Review**.
+4.  Once processed, go to the **App Store** tab and select the build.
+5.  Update screenshots if needed (screenshots are not managed by `store.config.json`).
+6.  Click **Submit for Review**.
 
 ---
 
 ## 🔄 OTA Updates (Over-The-Air)
 
-For small JavaScript/asset changes (like the ones we made today), you don't need a full store build! You can push an update instantly to users who already have the app.
+For small JavaScript/asset-only changes, you can push an update to users without a full store build:
 
 ```bash
 eas update --branch production --message "Fix: summary persistence and UI refinements"
 ```
 
-*   **Note**: This only works for JS/CSS/Asset changes. If you add new native libraries (change `package.json` dependencies that require native code), you **MUST** do a full build (Steps 1 & 2 above).
+**How targeting works (important):** an update only reaches binaries whose **runtime version** matches. This project uses the `fingerprint` runtime policy (`app.json`) — the runtime version is a hash of everything native-relevant (dependencies, config plugins, native-affecting `app.json` fields). Practical rules:
+
+*   **JS/asset-only change** → fingerprint unchanged → `eas update` reaches current builds. ✅
+*   **Any native-affecting change** (add/upgrade a dependency with native code, change plugins or native `app.json` fields) → new fingerprint → existing installs **cannot** receive the update; ship a store build first (Steps 1 & 2 above), then OTA works again for the new builds.
+*   Run `npx expo-updates fingerprint:generate --platform android` before/after a change (or `eas fingerprint:compare`) if you're unsure whether it re-segmented.
+*   `fingerprint.config.js` excludes `extra` (env-injected values) and the `version` string from the hash, so env differences and marketing-version bumps do **not** break OTA targeting. Publish updates from an environment where the config evaluates (`.env` present), or the command fails.
+
+> **Migration note (v1.5.0 and earlier)**: builds shipped before the fingerprint policy embed the static runtime `"1.0.0"`. Updates published from current `main` can never reach them. To hotfix that fleet, check out the last `runtimeVersion: "1.0.0"` commit (`ea377ec` or earlier) and publish from there; otherwise just ship the next store build.
 
 ---
 
 ## 🛠 Troubleshooting
 
 *   **Build Fails?** Check the logs provided in the Expo dashboard link.
-*   **Version Code Error?** Versions are managed remotely by EAS (`cli.appVersionSource: "remote"` in `eas.json`), and production builds auto-increment `versionCode`/`buildNumber` on every build. Do not add these fields to `app.json` — adjust the user-facing version from the EAS dashboard (or `eas build:version:set`) instead.
+*   **Version Code Error?** The two version concepts live in different places:
+    *   **Build counters** (`versionCode`/`buildNumber`) are managed remotely by EAS (`cli.appVersionSource: "remote"` in `eas.json`) and auto-increment on every production build. Do not add these fields to `app.json`; if a counter ever needs manual correction, use `eas build:version:set`.
+    *   **User-facing version** (e.g. `1.5.0`) is `expo.version` in `mobile-app/app.json` — bump it there for each release.
+*   **Sentry symbolication for minified builds**: release builds are R8-minified (since v1.5), so native crash frames in Sentry are obfuscated until a mapping upload is configured. To fix: create a Sentry auth token, add it as `SENTRY_AUTH_TOKEN` in EAS project secrets, then add the `@sentry/react-native/expo` plugin to `app.json` with `experimental_android: { enableAndroidGradlePlugin: true }` for R8 mapping upload (the plugin alone only uploads JS source maps). Do **not** add the plugin before the token exists — release builds fail without it. Play Console crash reports are unaffected (the mapping is embedded in the AAB).
+*   **Before the SDK 54 upgrade** (required for Play's API 36 deadline, ~Aug 2026): audit tablet/foldable layouts — Android 16 ignores the portrait orientation lock on large screens, so every screen must tolerate landscape/resized windows.

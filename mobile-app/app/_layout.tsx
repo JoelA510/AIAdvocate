@@ -10,7 +10,7 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "react-native-paper";
 import Toast from "react-native-toast-message";
 import i18next from "i18next";
@@ -116,6 +116,9 @@ export default function RootLayout() {
 
 function AppScaffold() {
   const theme = useTheme();
+  // Edge-to-edge puts the root view under the status bar; toast-message's
+  // default 40dp offset is measured from the root view top and ignores insets.
+  const insets = useSafeAreaInsets();
 
   return (
     <>
@@ -129,7 +132,7 @@ function AppScaffold() {
           <FooterNav />
         </View>
       </RouterErrorBoundary>
-      <Toast />
+      <Toast topOffset={insets.top + 16} />
     </>
   );
 }
