@@ -104,4 +104,4 @@ eas update --branch production --message "Fix: summary persistence and UI refine
 ## 🛠 Troubleshooting
 
 *   **Build Fails?** Check the logs provided in the Expo dashboard link.
-*   **Version Code Error?** Versions are managed remotely by EAS (`appVersionSource: "remote"` in `eas.json`), and production builds auto-increment `versionCode`/`buildNumber` on every build. Do not add these fields to `app.json` — adjust the user-facing version from the EAS dashboard (or `eas build:version:set`) instead.
+*   **Version Code Error?** Versions are managed remotely by EAS (`cli.appVersionSource: "remote"` in `eas.json`), and production builds auto-increment `versionCode`/`buildNumber` on every build. Do not add these fields to `app.json` — adjust the user-facing version from the EAS dashboard (or `eas build:version:set`) instead.
