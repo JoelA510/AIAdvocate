@@ -3,10 +3,16 @@
 // By default @expo/fingerprint hashes the fully-evaluated Expo config, which
 // for this app includes two things that must NOT affect OTA compatibility:
 //
-//   - extra.publicEnv — injected from EXPO_PUBLIC_* env vars in app.config.ts,
-//     so the hash would differ between environments (EAS build workers vs a
-//     laptop running `eas update`), silently publishing updates under a
-//     runtime version no shipped binary embeds
+//   - the entire `extra` object (ExpoConfigExtraSection skips all of it, not
+//     just the field below — currently that's extra.publicEnv, extra.eas,
+//     and extra.router). extra.publicEnv is injected from EXPO_PUBLIC_* env
+//     vars in app.config.ts, so the hash would differ between environments
+//     (EAS build workers vs a laptop running `eas update`), silently
+//     publishing updates under a runtime version no shipped binary embeds.
+//     extra.eas/extra.router are static identifiers, not native-relevant —
+//     if that ever changes (e.g. a genuine EAS project migration), treat it
+//     as a native change and ship a full build rather than relying on the
+//     fingerprint to catch it.
 //   - version — the user-facing version string, which is bumped with zero
 //     native changes and must not sever update compatibility
 //
