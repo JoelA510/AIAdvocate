@@ -104,8 +104,4 @@ eas update --branch production --message "Fix: summary persistence and UI refine
 ## 🛠 Troubleshooting
 
 *   **Build Fails?** Check the logs provided in the Expo dashboard link.
-*   **Version Code Error?** Increment the `versionCode` (Android) or `buildNumber` (iOS) in `app.json` before building.
-    ```json
-    "android": { "versionCode": 2 },
-    "ios": { "buildNumber": "2" }
-    ```
+*   **Version Code Error?** Versions are managed remotely by EAS (`cli.appVersionSource: "remote"` in `eas.json`), and production builds auto-increment `versionCode`/`buildNumber` on every build. Do not add these fields to `app.json` — adjust the user-facing version from the EAS dashboard (or `eas build:version:set`) instead.
