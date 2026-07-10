@@ -16,7 +16,8 @@
         "backgroundColor": "#151718"
       },
       "package": "com.loveneverfails.aiadvocate",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "edgeToEdgeEnabled": true
     },
     "ios": {
       "supportsTablet": true,
@@ -49,6 +50,10 @@
         {
           "ios": {
             "useFrameworks": "static"
+          },
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
           }
         }
       ]
@@ -67,6 +72,8 @@
     "updates": {
       "url": "https://u.expo.dev/2815e517-2761-4f1b-a1d9-57dc978c3b0c"
     },
-    "runtimeVersion": "1.0.0"
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    }
   }
 }
