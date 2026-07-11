@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
+import { View, StyleSheet } from "react-native";
 import { Text, TextInput, Button, Card, useTheme } from "react-native-paper";
 import { useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
@@ -78,10 +78,7 @@ export default function AdminLoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: theme.colors.background }]}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <View style={styles.content}>
         <Card style={styles.card}>
           <Card.Title title="Admin Login" subtitle="Enter your credentials" />
@@ -124,7 +121,7 @@ export default function AdminLoginScreen() {
           </Card.Content>
         </Card>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

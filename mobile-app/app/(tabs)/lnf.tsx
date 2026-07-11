@@ -84,18 +84,20 @@ export default function LnfScreen() {
           </Button>
         </View>
 
-        {/* Admin Access Button */}
-        <View style={styles.adminButtonContainer}>
-          <Button
-            mode="text"
-            icon="shield-account"
-            onPress={() => router.push("/admin/login")}
-            style={styles.adminButton}
-            compact
-          >
-            Admin
-          </Button>
-        </View>
+        {/* Admin Access Button — web only; native builds ship a stub admin route */}
+        {Platform.OS === "web" && (
+          <View style={styles.adminButtonContainer}>
+            <Button
+              mode="text"
+              icon="shield-account"
+              onPress={() => router.push("/admin/login")}
+              style={styles.adminButton}
+              compact
+            >
+              Admin
+            </Button>
+          </View>
+        )}
       </View>
     </ThemedView>
   );

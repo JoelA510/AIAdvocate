@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, StyleSheet, FlatList, Alert, Platform } from "react-native";
+import { View, StyleSheet, FlatList } from "react-native";
 import {
   Text,
   Button,
@@ -54,7 +54,7 @@ export default function AdminUsersScreen() {
 
       if (error) throw error;
 
-      setAdmins(data.admins);
+      setAdmins(data?.admins ?? []);
     } catch (err: any) {
       console.error("Load admins error:", err);
       if (err.message?.includes("Failed to send a request")) {
@@ -97,26 +97,12 @@ export default function AdminUsersScreen() {
   };
 
   const handleRemoveAdmin = async (userId: string) => {
-    if (Platform.OS === "web") {
-      const confirmed = window.confirm(
-        "Are you sure you want to remove this admin? This will delete their account.",
-      );
-      if (confirmed) {
-        await removeAdmin(userId);
-      }
-    } else {
-      Alert.alert(
-        "Remove Admin",
-        "Are you sure you want to remove this admin? This will delete their account.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Remove",
-            style: "destructive",
-            onPress: () => removeAdmin(userId),
-          },
-        ],
-      );
+    // Web-only file: window.confirm is always available here.
+    const confirmed = window.confirm(
+      "Are you sure you want to remove this admin? This will delete their account.",
+    );
+    if (confirmed) {
+      await removeAdmin(userId);
     }
   };
 

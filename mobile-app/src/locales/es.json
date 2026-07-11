@@ -1,4 +1,8 @@
 {
+  "admin": {
+    "title": "Administración",
+    "webOnly": "Las herramientas de administración están disponibles en la versión web de AI Advocate."
+  },
   "bill": {
     "attribution": { "legiscan": "Texto original proporcionado por LegiScan" },
     "missing": "Proyecto no encontrado",

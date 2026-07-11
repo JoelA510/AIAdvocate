@@ -1,6 +1,7 @@
 // mobile-app/src/providers/AuthProvider.tsx
 
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { Platform } from "react-native";
 import { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Toast from "react-native-toast-message";
@@ -37,6 +38,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           // instead of leaving the user with no session forever.
           captureException(error, { context: "auth_initialization_get_session" });
           recoveryError = error;
+        } else if (session && session.user.is_anonymous === false && Platform.OS !== "web") {
+          // Staff email/password sessions belong to the web admin surface
+          // only. A session persisted from a build that still had native
+          // admin login would otherwise keep an email-bearing token on the
+          // device forever (no native sign-out path exists anymore), so
+          // replace it with the anonymous session every public user gets.
+          await supabase.auth.signOut();
+          // fall through to anonymous sign-in below
         } else {
           setSession(session);
           if (session) return;
