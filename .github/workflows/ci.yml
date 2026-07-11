@@ -25,6 +25,9 @@ jobs:
       - name: Check public env guardrail
         run: yarn workspace mobile-app check:public-env
 
+      - name: Check admin web-only guardrail
+        run: yarn workspace mobile-app check:admin-web-only
+
       - name: Run tests
         run: yarn workspace mobile-app test --ci --runInBand
 
