@@ -94,7 +94,7 @@ export default function LnfScreen() {
               style={styles.adminButton}
               compact
             >
-              Admin
+              {t("admin.title", { defaultValue: "Admin" })}
             </Button>
           </View>
         )}

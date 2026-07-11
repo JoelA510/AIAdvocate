@@ -44,6 +44,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           // admin login would otherwise keep an email-bearing token on the
           // device forever (no native sign-out path exists anymore), so
           // replace it with the anonymous session every public user gets.
+          //
+          // `=== false` (not `!== true`) is deliberate: a session whose user
+          // lacks the is_anonymous flag must be KEPT — signing out an
+          // anonymous user permanently orphans their bookmarks/reactions,
+          // while a missed staff session is only deferred cleanup (the flag
+          // arrives with the next token refresh and this check re-runs).
           await supabase.auth.signOut();
           // fall through to anonymous sign-in below
         } else {
