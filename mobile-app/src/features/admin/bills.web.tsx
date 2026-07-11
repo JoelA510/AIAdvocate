@@ -23,12 +23,16 @@ import { ThemedView } from "../../../components/ThemedView";
 // Helper function for audit logging
 const logAdminAction = async (userId: string, action: string, billId?: number, details?: any) => {
   try {
-    await supabase.from("admin_audit_log").insert({
+    // insert() resolves with { error } instead of throwing on DB failures
+    const { error } = await supabase.from("admin_audit_log").insert({
       user_id: userId,
       action,
       bill_id: billId,
       details: details ? JSON.stringify(details) : null,
     });
+    if (error) {
+      console.warn("Failed to log admin action:", error);
+    }
   } catch (err) {
     console.warn("Failed to log admin action:", err);
   }

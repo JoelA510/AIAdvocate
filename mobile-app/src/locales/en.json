@@ -1,4 +1,8 @@
 {
+  "admin": {
+    "title": "Admin",
+    "webOnly": "Admin tools are available in the web version of AI Advocate."
+  },
   "bill": {
     "attribution": { "legiscan": "Original text provided by LegiScan" },
     "missing": "Bill Not Found",

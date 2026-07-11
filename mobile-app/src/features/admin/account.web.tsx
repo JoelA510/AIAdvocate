@@ -122,13 +122,20 @@ export default function AdminAccountScreen() {
   };
 
   const performPasswordChange = async () => {
+    // Session can be invalidated between the mount-time guard and this click
+    const email = session?.user?.email;
+    if (!email) {
+      Toast.show({ type: "error", text1: "Session expired", text2: "Please sign in again" });
+      router.replace("/admin/login");
+      return;
+    }
     setChangingPassword(true);
     try {
       // Only re-auth with password if MFA is NOT enabled
       // If MFA is enabled, we rely on the AAL2 upgrade we just did
       if (!mfaEnabled) {
         const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: session!.user.email!,
+          email,
           password: currentPassword,
         });
 
@@ -250,7 +257,7 @@ export default function AdminAccountScreen() {
       const { data, error } = await supabase.auth.mfa.enroll({
         factorType: "totp",
         issuer: "AIAdvocate",
-        friendlyName: session!.user.email,
+        friendlyName: session?.user?.email ?? "AIAdvocate Admin",
       });
 
       if (error) throw error;
