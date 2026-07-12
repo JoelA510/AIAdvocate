@@ -50,10 +50,6 @@
         {
           "ios": {
             "useFrameworks": "static"
-          },
-          "android": {
-            "enableProguardInReleaseBuilds": true,
-            "enableShrinkResourcesInReleaseBuilds": true
           }
         }
       ],
@@ -61,10 +57,7 @@
         "@sentry/react-native/expo",
         {
           "organization": "secureyourtech",
-          "project": "ai-advocate",
-          "experimental_android": {
-            "enableAndroidGradlePlugin": true
-          }
+          "project": "ai-advocate"
         }
       ]
     ],
