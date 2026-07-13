@@ -43,6 +43,9 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 // via the effect below in well under a second; this only fires if startup
 // stalls, revealing the app's actual state (and proving JS executed at all —
 // if a device still shows the splash past ~8s, the JS bundle never ran).
+// Deliberately module-scope, NOT a useEffect: it must fire even when React
+// never mounts, which is exactly the stall it exists to reveal. Late firing
+// is an idempotent no-op (hideAsync on an already-hidden splash).
 setTimeout(() => {
   SplashScreen.hideAsync().catch(() => {});
 }, 8000);
