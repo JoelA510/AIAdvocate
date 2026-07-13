@@ -39,6 +39,17 @@ initSentry();
 // Prevent splash auto-hide until assets/config load.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+// Failsafe: never trap users on the native splash. Healthy launches hide it
+// via the effect below in well under a second; this only fires if startup
+// stalls, revealing the app's actual state (and proving JS executed at all —
+// if a device still shows the splash past ~8s, the JS bundle never ran).
+// Deliberately module-scope, NOT a useEffect: it must fire even when React
+// never mounts, which is exactly the stall it exists to reveal. Late firing
+// is an idempotent no-op (hideAsync on an already-hidden splash).
+setTimeout(() => {
+  SplashScreen.hideAsync().catch(() => {});
+}, 8000);
+
 export default function RootLayout() {
   const [configError, setConfigError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
