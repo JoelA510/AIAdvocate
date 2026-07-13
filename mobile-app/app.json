@@ -16,8 +16,7 @@
         "backgroundColor": "#151718"
       },
       "package": "com.loveneverfails.aiadvocate",
-      "googleServicesFile": "./google-services.json",
-      "edgeToEdgeEnabled": true
+      "googleServicesFile": "./google-services.json"
     },
     "ios": {
       "supportsTablet": true,
