@@ -41,28 +41,40 @@ function resolvePublicEnv(): PublicEnvPayload | null {
   return null;
 }
 
+// An unexpanded "${VAR}" placeholder is as fatal as a missing value (it is
+// not a URL/key, and supabase-js throws on it at module scope) but passes a
+// plain truthiness check. This shipped v1.6–1.7 as an app that died before
+// first render: eas.json build-profile env used "${EXPO_PUBLIC_*}" syntax,
+// which EAS does NOT interpolate — the literal text reached the bundle.
+function isUnresolved(value: unknown): boolean {
+  return typeof value !== "string" || value.trim().length === 0 || value.includes("${");
+}
+
+function optionalValue(value?: string | null): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && !trimmed.includes("${") ? trimmed : undefined;
+}
+
 function buildConfigFromPublicEnv(): AppConfig {
   const source =
     resolvePublicEnv() ?? Object.fromEntries(REQUIRED_FIELDS.map((field) => [field, null]));
 
-  const missing = REQUIRED_FIELDS.filter(
-    (field) => !source[field] || String(source[field]).trim().length === 0,
-  );
+  const missing = REQUIRED_FIELDS.filter((field) => isUnresolved(source[field]));
 
   if (missing.length > 0) {
     throw new Error(
-      `Missing environment variables: ${missing.join(
+      `Missing or unexpanded environment variables: ${missing.join(
         ", ",
-      )}. Ensure EXPO_PUBLIC_* values are defined in app.config.ts at build time.`,
+      )}. Ensure EXPO_PUBLIC_* values are defined at build time (EAS environment variables for EAS builds, mobile-app/.env for local dev) and never written as "\${VAR}" references in eas.json — EAS does not interpolate those.`,
     );
   }
 
   return {
     supabaseUrl: String(source.supabaseUrl).trim(),
     supabaseAnonKey: String(source.supabaseAnonKey).trim(),
-    recaptchaSiteKey: source.recaptchaSiteKey?.trim(),
-    firebaseWebConfigJson: source.firebaseWebConfigJson?.trim(),
-    lnfUrl: source.lnfUrl?.trim(),
+    recaptchaSiteKey: optionalValue(source.recaptchaSiteKey),
+    firebaseWebConfigJson: optionalValue(source.firebaseWebConfigJson),
+    lnfUrl: optionalValue(source.lnfUrl),
   };
 }
 

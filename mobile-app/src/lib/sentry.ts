@@ -3,9 +3,18 @@ import Constants from "expo-constants";
 
 // Initialize Sentry
 // NOTE: Replace 'YOUR_SENTRY_DSN' with your actual Sentry DSN from https://sentry.io
+// An unexpanded "${...}" placeholder (from eas.json env misconfiguration)
+// must not reach Sentry.init — pass undefined so the SDK disables cleanly
+// instead of failing on an invalid DSN during app boot.
+function resolveDsn(): string | undefined {
+  const raw = process.env.EXPO_PUBLIC_SENTRY_DSN || Constants.expoConfig?.extra?.sentryDsn;
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  return trimmed && !trimmed.includes("${") ? trimmed : undefined;
+}
+
 export const initSentry = () => {
   Sentry.init({
-    dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || Constants.expoConfig?.extra?.sentryDsn,
+    dsn: resolveDsn(),
 
     // Set tracesSampleRate to 1.0 to capture 100% of transactions for performance monitoring
     // Reduce in production (e.g., 0.1 for 10% sampling)
