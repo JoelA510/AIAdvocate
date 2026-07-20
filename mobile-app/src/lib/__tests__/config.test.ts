@@ -62,6 +62,18 @@ describe("config", () => {
     expect(getConfig().recaptchaSiteKey).toBeUndefined();
   });
 
+  it("drops non-string optional values instead of crashing on trim()", () => {
+    const { getConfig } = loadConfig({
+      supabaseUrl: "https://test.supabase.co",
+      supabaseAnonKey: "anon-test-key",
+      recaptchaSiteKey: 12345,
+      lnfUrl: { nested: true },
+    });
+
+    expect(getConfig().recaptchaSiteKey).toBeUndefined();
+    expect(getConfig().lnfUrl).toBeUndefined();
+  });
+
   it("keeps missing-env errors scoped to current public client config", () => {
     const { getConfig } = loadConfig({
       supabaseUrl: "https://test.supabase.co",

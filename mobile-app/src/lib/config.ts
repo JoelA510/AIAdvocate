@@ -50,8 +50,9 @@ function isUnresolved(value: unknown): boolean {
   return typeof value !== "string" || value.trim().length === 0 || value.includes("${");
 }
 
-function optionalValue(value?: string | null): string | undefined {
-  const trimmed = value?.trim();
+function optionalValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
   return trimmed && !trimmed.includes("${") ? trimmed : undefined;
 }
 
