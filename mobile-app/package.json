@@ -2,7 +2,7 @@
   "name": "mobile-app",
   "version": "1.7.0",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -16,7 +16,7 @@
     "i18n:scan": "i18next-scanner",
     "test": "jest",
     "check-size": "node scripts/check-bundle-size.js",
-    "check:public-env": "node scripts/check-public-env.js",
+    "check:public-env": "node scripts/check-public-env.js --self-test && node scripts/check-public-env.js",
     "check:admin-web-only": "node scripts/check-admin-web-only.js"
   },
   "dependencies": {
