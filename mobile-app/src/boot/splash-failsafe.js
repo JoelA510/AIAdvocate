@@ -1,30 +1,42 @@
 // mobile-app/src/boot/splash-failsafe.js
 //
-// Imported FIRST from the app entry (index.js), before expo-router/entry
-// evaluates the application module graph. Runs at module scope on purpose:
-// if any module throws during initial evaluation (the failure mode that
-// shipped v1.6–1.7 as an eternal native splash on Android and a launch
-// crash on iOS), React never mounts, so no component-level code can save
-// us — but this timer still fires and lifts the native splash so the
-// failure becomes visible instead of an infinite hang.
+// Imported FIRST from the app entry (index.js), before anything else pulls in
+// the application module graph. If any module throws during initial require
+// (the failure mode that shipped v1.6–1.7 as an eternal native splash on
+// Android and a launch crash on iOS), React never mounts and no component-
+// level code can help — this timer still fires and lifts the native splash so
+// the failure becomes visible instead of an infinite hang.
 //
-// require() inside try/catch so nothing here can itself break boot, and the
-// callback body is guarded too — the outer try only covers scheduling. The
-// timer is skipped under Jest so an incidental import can't hold the process
-// open for 8 seconds.
+// Order is load-bearing INSIDE this file too: the timer is armed BEFORE any
+// require, so a broken module graph (even a broken expo package) cannot
+// disarm it. All requires happen inside the callback, each behind its own
+// guard; the expo-modules-core path keeps the graph this file can pull in to
+// the bare native-module bridge. The timer is skipped under Jest so an
+// incidental import can't hold the process open for 8 seconds.
 /* global setTimeout */
 try {
-  const SplashScreen = require("expo-splash-screen");
-  const canHide = SplashScreen && typeof SplashScreen.hideAsync === "function";
-  if (canHide && process.env.NODE_ENV !== "test") {
+  if (process.env.NODE_ENV !== "test") {
     setTimeout(() => {
       try {
-        SplashScreen.hideAsync().catch(() => {});
+        const { requireOptionalNativeModule } = require("expo-modules-core");
+        const native = requireOptionalNativeModule("ExpoSplashScreen");
+        if (native && typeof native.hide === "function") {
+          native.hide();
+          return;
+        }
       } catch {
-        // never let the failsafe itself throw
+        // fall through to the high-level module
+      }
+      try {
+        const SplashScreen = require("expo-splash-screen");
+        if (SplashScreen && typeof SplashScreen.hideAsync === "function") {
+          SplashScreen.hideAsync().catch(() => {});
+        }
+      } catch {
+        // splash module unavailable (e.g. web static export) — nothing to hide.
       }
     }, 8000);
   }
 } catch {
-  // expo-splash-screen unavailable (e.g. web static export) — nothing to do.
+  // Never let the failsafe itself break boot.
 }

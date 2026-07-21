@@ -55,6 +55,35 @@ const ALLOWED_MARKDOWN_PATTERNS = [
   /\b(must not|should not|do not|don't|never)\s+(?:be\s+)?(?:use|used|set|store|stored|add|added|configure|configured|require|required|expose|exposed)\b/i,
 ];
 
+// EAS does NOT interpolate ${VAR} references in eas.json env blocks — the
+// literal text becomes the value and overrides the real EAS environment
+// variable of the same name. That mistake shipped v1.6–1.7 as binaries that
+// died before first render (see DEPLOYMENT_GUIDE.md postmortem), so forbid
+// it statically here.
+const EAS_JSON_PATH = "mobile-app/eas.json";
+
+function findEnvPlaceholders(easConfig) {
+  const findings = [];
+  const profiles = (easConfig && easConfig.build) || {};
+  for (const [profileName, profile] of Object.entries(profiles)) {
+    const env = (profile && profile.env) || {};
+    for (const [key, value] of Object.entries(env)) {
+      if (typeof value === "string" && value.includes("${")) {
+        findings.push({ profileName, key, value });
+      }
+    }
+  }
+  return findings;
+}
+
+function checkEasJsonEnvPlaceholders(rootDir) {
+  const easJsonPath = path.join(rootDir, EAS_JSON_PATH);
+  if (!fs.existsSync(easJsonPath)) {
+    return [];
+  }
+  return findEnvPlaceholders(JSON.parse(fs.readFileSync(easJsonPath, "utf8")));
+}
+
 function repoRoot() {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], {
     encoding: "utf8",
@@ -71,9 +100,7 @@ function trackedFiles(rootDir) {
 }
 
 function hasIgnoredSegment(filePath) {
-  return filePath
-    .split(path.posix.sep)
-    .some((segment) => IGNORED_PATH_SEGMENTS.has(segment));
+  return filePath.split(path.posix.sep).some((segment) => IGNORED_PATH_SEGMENTS.has(segment));
 }
 
 function isBinaryFile(filePath) {
@@ -81,11 +108,7 @@ function isBinaryFile(filePath) {
 }
 
 function shouldScan(filePath) {
-  return (
-    !IGNORED_PATHS.has(filePath) &&
-    !hasIgnoredSegment(filePath) &&
-    !isBinaryFile(filePath)
-  );
+  return !IGNORED_PATHS.has(filePath) && !hasIgnoredSegment(filePath) && !isBinaryFile(filePath);
 }
 
 function isMarkdown(filePath) {
@@ -103,10 +126,7 @@ function scanText(filePath, text) {
 
   lines.forEach((line, index) => {
     FORBIDDEN_PATTERNS.forEach((pattern) => {
-      if (
-        line.includes(pattern) &&
-        !(markdown && isAllowedMarkdownLine(line))
-      ) {
+      if (line.includes(pattern) && !(markdown && isAllowedMarkdownLine(line))) {
         findings.push({
           filePath,
           line: index + 1,
@@ -161,10 +181,7 @@ function runSelfTest() {
     "docs/setup.md",
     `Set ${secondPattern} before building the app.`,
   );
-  const failingEnvTemplateResult = scanText(
-    "mobile-app/.env.example",
-    `${firstPattern}=`,
-  );
+  const failingEnvTemplateResult = scanText("mobile-app/.env.example", `${firstPattern}=`);
   const envTemplateIsScanned = shouldScan("mobile-app/.env.example");
   const trackedEnvIsScanned = shouldScan("mobile-app/.env.production");
   const binaryAssetIsIgnored = !shouldScan("mobile-app/assets/icon.png");
@@ -209,6 +226,17 @@ function runSelfTest() {
     throw new Error("Self-test failed: stale reminder wording was not detected.");
   }
 
+  const placeholderHits = findEnvPlaceholders({
+    build: {
+      production: { env: { EXPO_PUBLIC_SUPABASE_URL: "${EXPO_PUBLIC_SUPABASE_URL}" } },
+      preview: { env: { EXPO_PUBLIC_LNF_URL: "https://example.com" } },
+      development: {},
+    },
+  });
+  if (placeholderHits.length !== 1 || placeholderHits[0].key !== "EXPO_PUBLIC_SUPABASE_URL") {
+    throw new Error("Self-test failed: eas.json ${} env placeholder was not detected.");
+  }
+
   console.log("Public env guardrail self-test passed.");
 }
 
@@ -220,16 +248,26 @@ function main() {
 
   const rootDir = repoRoot();
   const { findings, readFailures } = scanFiles(rootDir, trackedFiles(rootDir));
+  const placeholderFindings = checkEasJsonEnvPlaceholders(rootDir);
 
-  if (findings.length === 0 && readFailures.length === 0) {
+  if (findings.length === 0 && readFailures.length === 0 && placeholderFindings.length === 0) {
     console.log("Public env guardrail passed.");
     return;
   }
 
-  if (findings.length > 0) {
+  if (placeholderFindings.length > 0) {
     console.error(
-      "Forbidden public provider env names were found in tracked files:",
+      'eas.json env values must not contain "${" — EAS does not interpolate ${VAR} ' +
+        "references; the literal text ships in the binary and overrides the real EAS " +
+        "environment variable (see DEPLOYMENT_GUIDE.md postmortem):",
     );
+    placeholderFindings.forEach(({ profileName, key, value }) => {
+      console.error(`  build.${profileName}.env.${key} = ${value}`);
+    });
+  }
+
+  if (findings.length > 0) {
+    console.error("Forbidden public provider env names were found in tracked files:");
     findings.forEach((finding) => {
       console.error(`${finding.filePath}:${finding.line} ${finding.pattern}`);
     });
@@ -251,6 +289,7 @@ if (require.main === module) {
 
 module.exports = {
   FORBIDDEN_PATTERNS,
+  findEnvPlaceholders,
   isAllowedMarkdownLine,
   scanText,
   shouldScan,

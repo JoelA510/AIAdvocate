@@ -10,7 +10,10 @@ import { ThemedText } from "../../components/ThemedText";
 import { Card, Button } from "react-native-paper";
 
 const DEFAULT_LNF_URL = "https://www.loveneverfailsus.com/ai-advocate";
-const FEED_URL = (process.env.EXPO_PUBLIC_LNF_URL?.trim() || DEFAULT_LNF_URL) as string;
+// An unexpanded "${VAR}" placeholder is truthy, so a plain `||` fallback
+// would ship it as the feed URL (see DEPLOYMENT_GUIDE.md postmortem).
+const RAW_LNF_URL = process.env.EXPO_PUBLIC_LNF_URL?.trim();
+const FEED_URL = RAW_LNF_URL && !RAW_LNF_URL.includes("${") ? RAW_LNF_URL : DEFAULT_LNF_URL;
 const PRIVACY_POLICY_URL = "https://www.loveneverfailsus.com/ai-advocate/privacy-policy";
 
 async function openExternalUrl(url: string): Promise<void> {

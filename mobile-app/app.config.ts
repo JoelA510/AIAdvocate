@@ -16,23 +16,37 @@ type PublicEnv = {
 
 const REQUIRED_KEYS = ["EXPO_PUBLIC_SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_ANON_KEY"] as const;
 
+// An unexpanded "${VAR}" placeholder is as fatal as a missing value: EAS does
+// NOT interpolate ${} references in eas.json env blocks — the literal text
+// arrives here and would be baked into the binary (the v1.6–1.7 incident).
+// Rejecting it at config-eval time fails the BUILD on the EAS builder instead
+// of shipping a dead app.
+function isUnusable(value: string | undefined): boolean {
+  return !value || value.trim() === "" || value.includes("${");
+}
+
+function optionalEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && !trimmed.includes("${") ? trimmed : undefined;
+}
+
 function collectPublicEnv(): PublicEnv {
-  const missing = REQUIRED_KEYS.filter(
-    (key) => !process.env[key] || process.env[key]?.trim() === "",
-  );
+  const missing = REQUIRED_KEYS.filter((key) => isUnusable(process.env[key]));
   if (missing.length) {
     throw new Error(
-      `Missing environment variables for build: ${missing.join(", ")}. ` +
-        `Populate them in mobile-app/.env or your CI environment before building.`,
+      `Missing or unexpanded environment variables for build: ${missing.join(", ")}. ` +
+        `EAS builds read these from EAS environment variables (the "production" ` +
+        `environment); local dev reads mobile-app/.env. A value containing "\${" means ` +
+        `an eas.json env block is using \${VAR} references — EAS does not expand those.`,
     );
   }
 
   return {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL!.trim(),
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!.trim(),
-    recaptchaSiteKey: process.env.EXPO_PUBLIC_RECAPTCHA_SITE_KEY?.trim(),
-    firebaseWebConfigJson: process.env.EXPO_PUBLIC_FIREBASE_WEB_CONFIG?.trim(),
-    lnfUrl: process.env.EXPO_PUBLIC_LNF_URL?.trim(),
+    recaptchaSiteKey: optionalEnv(process.env.EXPO_PUBLIC_RECAPTCHA_SITE_KEY),
+    firebaseWebConfigJson: optionalEnv(process.env.EXPO_PUBLIC_FIREBASE_WEB_CONFIG),
+    lnfUrl: optionalEnv(process.env.EXPO_PUBLIC_LNF_URL),
   };
 }
 
