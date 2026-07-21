@@ -1,11 +1,33 @@
 import * as Sentry from "@sentry/react-native";
-import Constants from "expo-constants";
 
-// Initialize Sentry
-// NOTE: Replace 'YOUR_SENTRY_DSN' with your actual Sentry DSN from https://sentry.io
+// The DSN's only live source is Metro's build-time inlining of
+// EXPO_PUBLIC_SENTRY_DSN (EAS production environment for store builds, .env
+// for local dev). The old Constants.expoConfig fallback was dead code —
+// app.config.ts never bakes extra.sentryDsn. Kept import-free on purpose:
+// this module is required from the boot entry BEFORE the app graph, so it
+// must not drag expo-constants (or anything else avoidable) into that window.
+//
+// An unexpanded "${...}" placeholder (eas.json env misconfiguration — same
+// rule as isUnresolved() in ./config.ts, duplicated here to keep the boot
+// graph lean) must not reach Sentry.init — pass undefined so the SDK
+// disables cleanly instead of failing during boot.
+function resolveDsn(): string | undefined {
+  const raw = process.env.EXPO_PUBLIC_SENTRY_DSN;
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  if (trimmed && !trimmed.includes("${")) {
+    return trimmed;
+  }
+  if (!__DEV__) {
+    // Loud breadcrumb in logcat/console: a production binary without crash
+    // reporting is the blind spot that hid the v1.6–1.7 incident for weeks.
+    console.warn("Sentry disabled: EXPO_PUBLIC_SENTRY_DSN missing or unexpanded at build time.");
+  }
+  return undefined;
+}
+
 export const initSentry = () => {
   Sentry.init({
-    dsn: process.env.EXPO_PUBLIC_SENTRY_DSN || Constants.expoConfig?.extra?.sentryDsn,
+    dsn: resolveDsn(),
 
     // Set tracesSampleRate to 1.0 to capture 100% of transactions for performance monitoring
     // Reduce in production (e.g., 0.1 for 10% sampling)
