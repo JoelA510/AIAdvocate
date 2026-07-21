@@ -16,7 +16,7 @@
     "i18n:scan": "i18next-scanner",
     "test": "jest",
     "check-size": "node scripts/check-bundle-size.js",
-    "check:public-env": "node scripts/check-public-env.js",
+    "check:public-env": "node scripts/check-public-env.js --self-test && node scripts/check-public-env.js",
     "check:admin-web-only": "node scripts/check-admin-web-only.js"
   },
   "dependencies": {

@@ -39,4 +39,30 @@ describe("lib/supabase with broken config", () => {
     expect(typeof mod?.supabase.auth.getSession).toBe("function");
     expect(consoleError).toHaveBeenCalled();
   });
+
+  it("web variant (supabase.ts) also survives a getConfig() throw", () => {
+    jest.resetModules();
+    jest.doMock("../config", () => ({
+      __esModule: true,
+      getConfig: () => {
+        throw new Error("Missing or unexpanded environment variables: supabaseUrl");
+      },
+      initConfig: () => {
+        throw new Error("Missing or unexpanded environment variables: supabaseUrl");
+      },
+    }));
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    let mod: typeof import("../supabase") | undefined;
+    expect(() => {
+      // Explicit extension pins the web file — a bare "../supabase" resolves
+      // to supabase.native.ts under jest-expo's platform extensions.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      mod = require("../supabase.ts");
+    }).not.toThrow();
+
+    expect(mod?.supabase).toBeDefined();
+    expect(typeof mod?.supabase.auth.getSession).toBe("function");
+    expect(consoleError).toHaveBeenCalled();
+  });
 });

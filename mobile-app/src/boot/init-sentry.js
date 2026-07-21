@@ -10,6 +10,8 @@
 try {
   const { initSentry } = require("../lib/sentry");
   initSentry();
-} catch {
-  // Sentry unavailable — boot continues without crash reporting.
+} catch (error) {
+  // Boot must continue — but leave a breadcrumb. A silently disabled Sentry
+  // is the postmortem's observability blind spot (weeks of "zero sessions").
+  console.warn("Sentry failed to initialize at boot; continuing without crash reporting.", error);
 }

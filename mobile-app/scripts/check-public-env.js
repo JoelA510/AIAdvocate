@@ -66,10 +66,21 @@ function findEnvPlaceholders(easConfig) {
   const findings = [];
   const profiles = (easConfig && easConfig.build) || {};
   for (const [profileName, profile] of Object.entries(profiles)) {
-    const env = (profile && profile.env) || {};
-    for (const [key, value] of Object.entries(env)) {
-      if (typeof value === "string" && value.includes("${")) {
-        findings.push({ profileName, key, value });
+    // env can live at the profile root AND inside per-platform blocks —
+    // EAS merges platform config over common config, so all three are live.
+    const envBlocks = [
+      [`build.${profileName}.env`, (profile && profile.env) || {}],
+      [
+        `build.${profileName}.android.env`,
+        (profile && profile.android && profile.android.env) || {},
+      ],
+      [`build.${profileName}.ios.env`, (profile && profile.ios && profile.ios.env) || {}],
+    ];
+    for (const [blockPath, env] of envBlocks) {
+      for (const [key, value] of Object.entries(env)) {
+        if (typeof value === "string" && value.includes("${")) {
+          findings.push({ location: `${blockPath}.${key}`, value });
+        }
       }
     }
   }
@@ -81,7 +92,14 @@ function checkEasJsonEnvPlaceholders(rootDir) {
   if (!fs.existsSync(easJsonPath)) {
     return [];
   }
-  return findEnvPlaceholders(JSON.parse(fs.readFileSync(easJsonPath, "utf8")));
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(easJsonPath, "utf8"));
+  } catch (error) {
+    // Fail closed, but point the finger at eas.json — not at this script.
+    return [{ location: EAS_JSON_PATH, value: `unparseable JSON (${error.message})` }];
+  }
+  return findEnvPlaceholders(parsed);
 }
 
 function repoRoot() {
@@ -228,13 +246,23 @@ function runSelfTest() {
 
   const placeholderHits = findEnvPlaceholders({
     build: {
-      production: { env: { EXPO_PUBLIC_SUPABASE_URL: "${EXPO_PUBLIC_SUPABASE_URL}" } },
-      preview: { env: { EXPO_PUBLIC_LNF_URL: "https://example.com" } },
+      production: {
+        env: { EXPO_PUBLIC_SUPABASE_URL: "${EXPO_PUBLIC_SUPABASE_URL}" },
+        android: { env: { EXPO_PUBLIC_SENTRY_DSN: "${EXPO_PUBLIC_SENTRY_DSN}" } },
+      },
+      preview: { env: { EXPO_PUBLIC_LNF_URL: "https://example.com" }, ios: {} },
       development: {},
     },
   });
-  if (placeholderHits.length !== 1 || placeholderHits[0].key !== "EXPO_PUBLIC_SUPABASE_URL") {
-    throw new Error("Self-test failed: eas.json ${} env placeholder was not detected.");
+  const placeholderLocations = placeholderHits.map((hit) => hit.location).sort();
+  if (
+    placeholderHits.length !== 2 ||
+    placeholderLocations[0] !== "build.production.android.env.EXPO_PUBLIC_SENTRY_DSN" ||
+    placeholderLocations[1] !== "build.production.env.EXPO_PUBLIC_SUPABASE_URL"
+  ) {
+    throw new Error(
+      "Self-test failed: eas.json ${} env placeholders (root and platform blocks) were not detected.",
+    );
   }
 
   console.log("Public env guardrail self-test passed.");
@@ -261,8 +289,8 @@ function main() {
         "references; the literal text ships in the binary and overrides the real EAS " +
         "environment variable (see DEPLOYMENT_GUIDE.md postmortem):",
     );
-    placeholderFindings.forEach(({ profileName, key, value }) => {
-      console.error(`  build.${profileName}.env.${key} = ${value}`);
+    placeholderFindings.forEach(({ location, value }) => {
+      console.error(`  ${location} = ${value}`);
     });
   }
 
