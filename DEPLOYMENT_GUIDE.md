@@ -58,13 +58,27 @@ eas submit -p android
 
 > **Important**: `eas submit` uploads to the **Internal testing** track (`submit.production.android.track: "internal"` in `eas.json`) — it does **not** go live. After smoke-testing the internal build, promote it in Play Console: **Testing > Internal testing > Promote release > Production**. Smoke-test every internal build before promoting: launch past the splash screen, push notifications, sign-in, hCaptcha, popup menus, toasts, and the admin login keyboard.
 >
-> **R8/Proguard is currently DISABLED** (expo-build-properties android block removed) and **edge-to-edge is currently DISABLED** (`android.edgeToEdgeEnabled` removed): the 1.7.0 builds hung on the native splash screen on-device. The hang's root cause turned out to be none of the native suspects — it was the `eas.json` `${}` placeholder incident (see postmortem below), so R8, Sentry AGP, and edge-to-edge are all **exonerated**; they remain disabled only because each re-enable should ride its own build+device-test cycle (follow-ups below). Startup diagnostics now work like this: the 8s splash failsafe lives at the **entry** (`mobile-app/index.js` → `src/boot/splash-failsafe.js`, armed before any other module evaluates) and Sentry initializes from the entry **before** the app graph. **If the splash hides at ~8s but the screen is blank/dead**, the JS graph threw during module evaluation — check Sentry (the crash now reaches it) or `adb logcat`. **If the splash persists past ~10s**, JS never started at all — suspect the native side (bad bundle packaging, native module init crash).
+> **Startup diagnostics**: the 1.7.0 builds hung on the native splash screen on-device, and none of the native suspects were to blame — the cause was the `eas.json` `${}` placeholder incident (see postmortem below). That bug was present in _every_ bisect build, which is why flipping native flags never produced a signal: each trial was "fatally broken config + one flag off", so the flag under test could never matter. R8, the Sentry AGP, edge-to-edge, and expo-updates are therefore **exonerated as the cause of that incident**. Note the precise claim: the bisect withdrew the evidence _against_ these flags, it did not produce evidence _for_ them. No build of this app has ever been observed launching on a device with them on — every binary of that era was poisoned — so the ladder below is an experiment with a strong prior, not a restoration of verified-good settings.
 >
-> **Post-launch follow-ups, in order, each as its own build+device-test cycle, and all BEFORE the SDK 54 upgrade** (piling them onto the upgrade makes any regression unattributable):
+> Diagnostics now work like this: the 8s splash failsafe lives at the **entry** (`mobile-app/index.js` → `src/boot/splash-failsafe.js`, armed before any other module evaluates) and Sentry initializes from the entry **before** the app graph. **If the splash hides at ~8s but the screen is blank/dead**, the JS graph threw during module evaluation — check Sentry (the crash now reaches it) or `adb logcat`. **If the splash persists past ~10s**, JS never started at all — suspect the native side (bad bundle packaging, native module init crash). A config fault specifically renders the localized **Configuration Error** screen rather than hanging.
 >
-> 1. Re-add `enableProguardInReleaseBuilds`/`enableShrinkResourcesInReleaseBuilds` (R8), splash-check on a device.
-> 2. Re-add `experimental_android.enableAndroidGradlePlugin` (Sentry Android Gradle Plugin), splash-check again.
-> 3. Remove `ios.useFrameworks: "static"` from expo-build-properties — it existed for `@react-native-firebase`, which PR #65 removed; no remaining dependency needs it.
+> **Re-enable ladder (all BEFORE the SDK 54 upgrade** — piling them onto the upgrade makes any regression unattributable):
+>
+> 1. **Batch A** — _implemented, not device-verified_: expo-updates re-enabled, edge-to-edge re-enabled, Sentry Android Gradle Plugin re-enabled, and the vestigial `ios.useFrameworks: "static"` dropped (it existed for `@react-native-firebase`, removed in PR #65; only `expo-notifications` remains, and it does not need static frameworks).
+> 2. **Batch B** — _implemented, not device-verified_: R8/Proguard + `shrinkResources`. Kept **solo** because it is the only one that can break the app subtly at _runtime_ while the build stays green (R8 strips/renames anything reached reflectively). Needs a full smoke test, not a launch check: every tab, bill detail, rep lookup, share, TTS, push, language switch.
+>
+> **Honest accounting of the batching risk.** An earlier draft of this section claimed "none of these can cause a boot hang" and that "Sentry AGP fails the build loudly". **Both are false**:
+>
+> - **expo-updates can hang boot.** `UpdatesPackage.kt` calls `UpdatesController.instance.launchAssetFile`, which is `runBlocking { startupFinishedDeferred.await() }` — it blocks the **native** launch before JS starts, and `launchWaitMs` bounds only the remote fetch, not the whole startup procedure. PR #70's own commit message said exactly this. The entry splash failsafe **cannot** cover it, because that failsafe is JS and JS has not started yet. This is the one Batch A item with a real boot-hang failure mode.
+> - **Sentry AGP can fail silently.** `withSentry.js` wraps the AGP wiring in `try/catch` and only `warnOnce()`s, and `withSentryAndroidGradlePlugin.js` warns and returns the file unmodified if its `dependencies {` regex misses. A green build does **not** prove the AGP was injected — confirm by watching native frames symbolicate in Sentry.
+>
+> So Batch A ships three native-affecting changes plus an iOS linkage change with no per-item device gate. That is a deliberate speed/attribution tradeoff, not a safety proof. **If a Batch A build hangs on the splash, set `updates.enabled` back to `false` first** — it is the only item that produces that symptom.
+>
+> **Expected visual change to verify on device (edge-to-edge).** The scaffold already consumes safe-area insets (`HeaderBanner` uses `insets.top + 24`, `FooterNav` uses `Math.max(bottom, 12)`) **and** most screens add `insets.top`/`insets.bottom` again inside it (`app/(tabs)/index.tsx`, `lnf.tsx`, `active.tsx`, `saved.tsx`, `advocacy.tsx`, `legislator/[id].tsx`). On Android those insets were `0` before edge-to-edge, so the duplication was invisible; now it is real. **Expect extra blank bands under the header and above the footer — fix by removing the per-screen inset padding, not by reverting edge-to-edge.** Also check the two pre-provider screens in `_layout.tsx` (Configuration Error, pre-ready logo): they render outside `SafeAreaProvider` with a hardcoded `paddingTop: 64` and no `<StatusBar>`, so verify them on a large-cutout device.
+>
+> **Edge-to-edge is not optional long-term**: Android 16 / `targetSdkVersion` 36 removes the opt-out entirely (on API 35 it is still opt-out-able via `android:windowOptOutEdgeToEdgeEnforcement`), and Play's API 36 deadline lands with SDK 54 — see the deadline note in Troubleshooting.
+>
+> **Sentry AGP requires `SENTRY_AUTH_TOKEN`** in the EAS environment used by the build, or the upload task fails the build. It is present in the **production** environment (which `production` and `internal-apk` both pin); `development`/`preview` set `SENTRY_DISABLE_AUTO_UPLOAD=true` in `eas.json`, which the plugin's `shouldSentryAutoUpload()` gate respects. **Local release builds** (`npx expo run:android --variant release`) set neither, so export `SENTRY_DISABLE_AUTO_UPLOAD=true` first or Gradle fails on an unauthenticated upload. `internal-apk` sets `SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD=true` so throwaway diagnostic builds don't push hundreds of MB of `.so` symbols.
 
 ---
 
@@ -111,8 +125,30 @@ Submission is non-interactive: `eas.json` pins the App Store Connect app via `as
 For small JavaScript/asset-only changes, you can push an update to users without a full store build:
 
 ```bash
-eas update --branch production --message "Fix: summary persistence and UI refinements"
+eas update --branch production --environment production --message "Fix: summary persistence and UI refinements"
 ```
+
+> ### ⚠️ `--environment production` is mandatory, not optional
+>
+> An OTA update carries its own `extra.publicEnv` — the **Supabase URL, anon key and Sentry DSN baked from whatever environment the publish ran in** — and `expo-constants` resolves `Constants.expoConfig` from the _update's_ manifest, which `src/lib/config.ts` reads first. Two things make a mistake here fleet-wide and silent:
+>
+> - `fingerprint.config.js` deliberately skips `ExpoConfigExtraSection`, so changed credentials do **not** re-segment the runtime version — a wrong-environment update targets every install.
+> - `app.config.ts`'s crash-blind guard keys on `EAS_BUILD_PROFILE`, which `eas update` never sets, so it does **not** fire on this path.
+>
+> Publishing from a laptop whose `.env` points at staging therefore silently repoints the entire production fleet to staging on next cold start, and can disable Sentry with only a `console.warn`. `--environment production` makes EAS supply the same values the production builder uses. Verify after publishing: `eas update:list --branch production`, and confirm the published `extra.publicEnv` carries the production Supabase host.
+>
+> ### Rolling back a bad update
+>
+> expo-updates' automatic `ErrorRecovery` only triggers on a **fatal JS error at launch** — a bundle that renders blank, breaks a screen, or points at the wrong backend will **not** self-revert. Roll back explicitly:
+>
+> ```bash
+> eas update:list --branch production          # find the last-good update group
+> eas update:republish --group <GROUP_ID>      # re-publish it as the newest update
+> ```
+>
+> Users pick the rollback up on their next cold start. Note the two-cold-start latency in both directions: nothing in this app calls `Updates.reloadAsync()`, so a downloaded update is applied on the _following_ launch.
+>
+> **Known gap — updates are not code-signed.** No `codeSigningCertificate` is configured, so anyone who can run `eas update` against this project can execute arbitrary JS on every install with no store review and no on-device signature check. Given this app's users, treat EAS account access as production-credential-grade, and consider `expo-updates` code signing before widening publish access.
 
 **How targeting works (important):** an update only reaches binaries whose **runtime version** matches. This project uses the `fingerprint` runtime policy (`app.json`) — the runtime version is a hash of everything native-relevant (dependencies, config plugins, native-affecting `app.json` fields). Practical rules:
 
@@ -122,6 +158,10 @@ eas update --branch production --message "Fix: summary persistence and UI refine
 - `fingerprint.config.js` excludes the whole `extra` config section (env-injected values plus the static EAS project/router identifiers) and the `version` string from the hash, so env differences and marketing-version bumps do **not** break OTA targeting. A genuine EAS project migration (changing `extra.eas.projectId`) is _not_ caught by the fingerprint either — treat that as a native change and ship a full build. Publish updates from an environment where the config evaluates (`.env` present), or the command fails.
 
 > **Migration note (v1.5.0 and earlier)**: builds shipped before the fingerprint policy embed the static runtime `"1.0.0"`. Updates published from current `main` can never reach them. To hotfix that fleet, check out the last `runtimeVersion: "1.0.0"` commit (`ea377ec` or earlier) and publish from there; otherwise just ship the next store build.
+>
+> **Migration note (the broken-era fleet)**: `updates.enabled: false` was introduced only in `578a79f` (2026-07-16, PR #70) — **not** across the whole broken era. Binaries built before that commit shipped with updates _enabled_ (the key was absent and defaults to `true`), so the era splits into three targeting classes: builds before `e124e29` (2026-07-09) embed the static runtime `"1.0.0"` (see the note above); builds between `e124e29` and `578a79f` have fingerprint runtime versions and are OTA-capable from their matching commit; only builds from `578a79f` onward — which includes **vc13, currently live in production** — have OTA switched off entirely and cannot be reached at all.
+>
+> Do not trust this paragraph over the tooling: `eas.json` sets `appVersionSource: "remote"`, so versionCodes live on EAS, not in the repo. Resolve the actual mapping with `eas build:list --platform android`, `eas channel:view production`, and `eas update:list`.
 
 ---
 
@@ -155,6 +195,6 @@ It went unnoticed because local dev (`expo start`) loads real values from `.env`
 - **Version Code Error?** The two version concepts live in different places:
   - **Build counters** (`versionCode`/`buildNumber`) are managed remotely by EAS (`cli.appVersionSource: "remote"` in `eas.json`) and auto-increment on every production build. Do not add these fields to `app.json`; if a counter ever needs manual correction, use `eas build:version:set`.
   - **User-facing version** (e.g. `1.7.0`) is `expo.version` in `mobile-app/app.json` — bump it there for each release, and keep `mobile-app/package.json`'s `version` in sync. Do **not** "simplify" by deriving `expo.version` from `package.json` in `app.config.ts`: the raw `package.json` file is itself a fingerprint source (only the _evaluated config's_ version field is skipped), so bumps would change the runtime fingerprint and orphan OTA targeting — measured, not theoretical.
-- **Sentry**: `EXPO_PUBLIC_SENTRY_DSN` (EAS Environment Variables, Production, Plain text) enables error/crash reporting; `SENTRY_AUTH_TOKEN` (EAS project secret) authorizes the `@sentry/react-native/expo` plugin's build-time JS source-map upload. **Both must exist as EAS values before building** — a production build with the plugin present but no `SENTRY_AUTH_TOKEN` fails outright (the upload is a build-graph-finalizing step on both platforms, not an optional best-effort step). `development`/`preview` profiles set `SENTRY_DISABLE_AUTO_UPLOAD=true` in `eas.json` since they have no token. With R8 disabled (see above), Java/Kotlin frames are unobfuscated, so no `mapping.txt` upload is needed. Note the removed `experimental_android.enableAndroidGradlePlugin` flag gated **more than mapping upload** — it also uploaded native `.so` debug symbols (C++/Hermes frames). Until it's restored, native-layer crash frames in Sentry may be unsymbolicated regardless of R8; restoring the flag (follow-up step 2 above) brings back both uploads.
+- **Sentry**: `EXPO_PUBLIC_SENTRY_DSN` (EAS Environment Variables, Production, Plain text) enables error/crash reporting; `SENTRY_AUTH_TOKEN` (EAS project secret) authorizes the `@sentry/react-native/expo` plugin's build-time JS source-map upload. **Both must exist as EAS values before building** — a production build with the plugin present but no `SENTRY_AUTH_TOKEN` fails outright (the upload is a build-graph-finalizing step on both platforms, not an optional best-effort step). `development`/`preview` profiles set `SENTRY_DISABLE_AUTO_UPLOAD=true` in `eas.json` since they have no token. `experimental_android.enableAndroidGradlePlugin` is **enabled** (Batch A), which uploads native `.so` debug symbols so C++/Hermes frames symbolicate; note that a green build does not prove it was injected (the plugin only `warnOnce()`s on injection failure) — confirm by seeing a native frame symbolicate in Sentry. `SENTRY_AUTH_TOKEN` is stored as an **environment-scoped variable in the EAS `production` environment** (`eas env:list production`), not as a legacy project-wide secret.
 - **Play Data Safety — email collection**: the store binaries collect **no** email addresses. Staff/admin login (Supabase email+password) is web-only: the real screens live in `src/features/admin/*.web.tsx` and Metro bundles the native stubs (`*.tsx` → `AdminWebOnly`) into iOS/Android instead. Keep it that way — moving admin code back into a shared path would re-trigger the Data Safety mismatch flag. Verify after native-facing changes with `npx expo export --platform android` and grep the bundle for `manage-admin-users` (must be absent).
 - **Before the SDK 54 upgrade** (required for Play's API 36 deadline, ~Aug 2026): audit tablet/foldable layouts — Android 16 ignores the portrait orientation lock on large screens, so every screen must tolerate landscape/resized windows.
