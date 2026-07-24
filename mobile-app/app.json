@@ -16,7 +16,8 @@
         "backgroundColor": "#151718"
       },
       "package": "com.loveneverfails.aiadvocate",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "edgeToEdgeEnabled": true
     },
     "ios": {
       "supportsTablet": true,
@@ -45,18 +46,13 @@
       "expo-secure-store",
       "expo-localization",
       [
-        "expo-build-properties",
-        {
-          "ios": {
-            "useFrameworks": "static"
-          }
-        }
-      ],
-      [
         "@sentry/react-native/expo",
         {
           "organization": "secureyourtech",
-          "project": "ai-advocate"
+          "project": "ai-advocate",
+          "experimental_android": {
+            "enableAndroidGradlePlugin": true
+          }
         }
       ]
     ],
@@ -72,7 +68,8 @@
       }
     },
     "updates": {
-      "enabled": false,
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
       "url": "https://u.expo.dev/2815e517-2761-4f1b-a1d9-57dc978c3b0c"
     },
     "runtimeVersion": {

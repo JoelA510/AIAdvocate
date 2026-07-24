@@ -46,6 +46,10 @@
       "distribution": "internal",
       "environment": "production",
       "autoIncrement": false,
+      "channel": "internal-diagnostic",
+      "env": {
+        "SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD": "true"
+      },
       "android": {
         "buildType": "apk"
       }

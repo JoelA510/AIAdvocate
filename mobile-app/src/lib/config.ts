@@ -26,9 +26,14 @@ let config: AppConfig | null = null;
 
 function resolvePublicEnv(): PublicEnvPayload | null {
   const manifest = Updates.manifest as any;
+  // On an expo-updates (manifest2) payload the app config lives at
+  // extra.expoClient.extra — `extra` itself only holds {expoClient, eas,
+  // expoGo}. Reading `manifest.extra.publicEnv` could never match, so this
+  // fallback layer was dead code; with OTA enabled it needs to actually work.
   const extraLayers = [
     Constants.expoConfig?.extra,
     (Constants.manifest as any)?.extra,
+    manifest?.extra?.expoClient?.extra,
     manifest?.extra,
   ];
 
