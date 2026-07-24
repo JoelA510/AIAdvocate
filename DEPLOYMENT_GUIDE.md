@@ -65,7 +65,9 @@ eas submit -p android
 > **Re-enable ladder (all BEFORE the SDK 54 upgrade** — piling them onto the upgrade makes any regression unattributable):
 >
 > 1. **Batch A** — _implemented, not device-verified_: expo-updates re-enabled, edge-to-edge re-enabled, Sentry Android Gradle Plugin re-enabled, and the vestigial `ios.useFrameworks: "static"` dropped (it existed for `@react-native-firebase`, removed in PR #65; only `expo-notifications` remains, and it does not need static frameworks).
-> 2. **Batch B** — _implemented, not device-verified_: R8/Proguard + `shrinkResources`. Kept **solo** because it is the only one that can break the app subtly at _runtime_ while the build stays green (R8 strips/renames anything reached reflectively). Needs a full smoke test, not a launch check: every tab, bill detail, rep lookup, share, TTS, push, language switch.
+> 2. **Batch B** — _implemented, not device-verified_: R8/Proguard + `shrinkResources` restored via `expo-build-properties` (android block only — the iOS `useFrameworks` entry stays dropped). Kept **solo** because it is the only one that can break the app subtly at _runtime_ while the build stays green (R8 strips/renames anything reached reflectively). Needs a full smoke test, not a launch check: every tab, bill detail, rep lookup, share, TTS, push, language switch.
+>
+> No custom `extraProguardRules` were added: every native dependency in this app (React Native, the Expo modules, Sentry, reanimated, gesture-handler, webview, svg, async-storage) ships its own consumer ProGuard rules, and the JS lives in a Hermes bundle that R8 never touches. If the smoke test surfaces a strip-related crash, add a targeted `-keep` via `expo-build-properties.android.extraProguardRules` rather than disabling R8 wholesale. Note that with R8 on, the Sentry AGP's ProGuard **mapping** upload stops being a no-op, so Java/Kotlin frames should symbolicate — that is the signal the AGP was actually injected.
 >
 > **Honest accounting of the batching risk.** An earlier draft of this section claimed "none of these can cause a boot hang" and that "Sentry AGP fails the build loudly". **Both are false**:
 >
