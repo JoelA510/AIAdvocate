@@ -28,6 +28,9 @@ jobs:
       - name: Check admin web-only guardrail
         run: yarn workspace mobile-app check:admin-web-only
 
+      - name: Check external API usage guardrail
+        run: yarn workspace mobile-app check:external-api
+
       - name: Run tests
         run: yarn workspace mobile-app test --ci --runInBand
 

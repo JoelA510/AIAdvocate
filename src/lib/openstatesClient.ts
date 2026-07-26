@@ -136,7 +136,15 @@ async function performQuery<T>(
   });
 
   if (!res.ok) {
-    const message = `OpenStates request failed (${res.status})`;
+    // Always surface the response body. OpenStates answers a query written
+    // against a stale schema with a 400 whose body names the offending field —
+    // and a bare "request failed (400)" hid exactly that for months (the
+    // nightly job queried a root `voteEvents` field that does not exist).
+    const body = await res.text().catch(() => "");
+    const detail = body.slice(0, 500).replace(/\s+/g, " ").trim();
+    const message = detail
+      ? `OpenStates request failed (${res.status}): ${detail}`
+      : `OpenStates request failed (${res.status})`;
     console.error(
       JSON.stringify({
         level: "error",
@@ -144,6 +152,7 @@ async function performQuery<T>(
         msg: "Non-200 response",
         status: res.status,
         statusText: res.statusText,
+        body: detail,
       }),
     );
     if (res.status >= 500 || res.status === 429) {
@@ -210,46 +219,6 @@ function buildCacheKey(billId: string, since?: string | null) {
 }
 
 const BILL_VOTES_QUERY = `
-  query BillVotes($id: String!, $after: String, $since: DateTime) {
-    bill(id: $id) {
-      id
-      identifier
-      title
-      votes(first: 100, after: $after, updatedSince: $since) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-        edges {
-          node {
-            id
-            motionText
-            result
-            startDate
-            updatedAt
-            organization {
-              classification
-              name
-            }
-            bill {
-              id
-              identifier
-            }
-            votes {
-              option
-              voter {
-                id
-                name
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
-const BILL_VOTES_QUERY_LEGACY = `
   query BillVotes($id: String!, $after: String) {
     bill(id: $id) {
       id
@@ -289,11 +258,14 @@ const BILL_VOTES_QUERY_LEGACY = `
   }
 `;
 
-let supportsUpdatedSince: boolean | null = null;
-
-const RECENT_VOTE_EVENTS_QUERY = `
-  query RecentVoteEvents($since: DateTime!, $first: Int!, $after: String) {
-    voteEvents(updatedSince: $since, first: $first, after: $after) {
+// OpenStates exposes no root `voteEvents` field and no `DateTime` scalar — the
+// only root entry points are jurisdictions/jurisdiction/people/person/
+// organization/bill/bills, and `updatedSince` is a plain `String`. Recently
+// changed bills are therefore discovered through `bills`, and their vote
+// events are read per bill via BILL_VOTES_QUERY.
+const RECENT_BILLS_QUERY = `
+  query RecentBills($jurisdiction: String!, $since: String!, $first: Int!, $after: String) {
+    bills(jurisdiction: $jurisdiction, updatedSince: $since, first: $first, after: $after) {
       pageInfo {
         hasNextPage
         endCursor
@@ -301,25 +273,8 @@ const RECENT_VOTE_EVENTS_QUERY = `
       edges {
         node {
           id
-          motionText
-          result
-          startDate
+          identifier
           updatedAt
-          organization {
-            classification
-            name
-          }
-          bill {
-            id
-            identifier
-          }
-          votes {
-            option
-            voter {
-              id
-              name
-            }
-          }
         }
       }
     }
@@ -413,69 +368,69 @@ async function queryBillVotes(
   variables: GraphQLVariables,
   apiKey: string,
 ): Promise<BillVotesQueryResult> {
-  // Decide which query variant to use (and detect support on the fly).
-  const sinceValue = (variables as { since?: unknown }).since;
-  const hasSince = sinceValue !== undefined && sinceValue !== null;
-  const shouldUseLegacy = supportsUpdatedSince === false || !hasSince;
-  const runQuery = (query: string) =>
-    withRetry(() => performQuery<BillVotesQueryResult>(query, variables, apiKey));
-
-  if (shouldUseLegacy) {
-    return runQuery(BILL_VOTES_QUERY_LEGACY);
-  }
-
-  try {
-    const data = await runQuery(BILL_VOTES_QUERY);
-    supportsUpdatedSince = true;
-    return data;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (supportsUpdatedSince !== false && /Unknown argument "updatedSince"/.test(message)) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          context: "openstatesClient",
-          msg: "OpenStates schema missing updatedSince argument; falling back",
-        }),
-      );
-      supportsUpdatedSince = false;
-      const legacyVariables = { ...variables };
-      delete (legacyVariables as { since?: unknown }).since;
-      return runQuery(BILL_VOTES_QUERY_LEGACY);
-    }
-    throw error;
-  }
+  // `bill.votes` takes no updatedSince argument, so the whole vote connection
+  // is fetched and `since` is applied client-side in fetchBillVotes.
+  const billVariables = { ...variables };
+  delete (billVariables as { since?: unknown }).since;
+  return withRetry(() =>
+    performQuery<BillVotesQueryResult>(BILL_VOTES_QUERY, billVariables, apiKey)
+  );
 }
 
-export async function fetchRecentVoteEvents(
+export type OpenStatesBillRef = {
+  id: string;
+  identifier: string | null;
+  updatedAt: string | null;
+};
+
+/**
+ * List bills in a jurisdiction touched since `sinceIso`.
+ *
+ * This replaces a root `voteEvents(updatedSince:)` query that OpenStates does
+ * not implement — it returned HTTP 400 on every nightly run. Callers pair the
+ * returned ids with `fetchVotesForBills` to read the vote payloads.
+ */
+export async function fetchRecentlyUpdatedBills(
   apiKey: string,
   sinceIso: string,
-  pageSize = 200,
-): Promise<OpenStatesVoteEvent[]> {
-  const collected: OpenStatesVoteEvent[] = [];
+  jurisdiction = "California",
+  pageSize = 100,
+  maxPages = 20,
+): Promise<OpenStatesBillRef[]> {
+  const collected: OpenStatesBillRef[] = [];
   let after: string | null = null;
   let hasNextPage = true;
+  let page = 0;
 
-  while (hasNextPage) {
-    const data = await withRetry(() =>
-      performQuery<{
-        voteEvents: {
-          pageInfo: PageInfo;
-          edges: Array<{ node: OpenStatesVoteEvent | null }>;
-        };
-      }>(RECENT_VOTE_EVENTS_QUERY, { since: sinceIso, first: pageSize, after }, apiKey)
+  while (hasNextPage && page < maxPages) {
+    const data: {
+      bills: {
+        pageInfo: PageInfo;
+        edges: Array<{ node: OpenStatesBillRef | null }>;
+      } | null;
+    } = await withRetry(() =>
+      performQuery(
+        RECENT_BILLS_QUERY,
+        { jurisdiction, since: sinceIso, first: pageSize, after },
+        apiKey,
+      )
     );
 
-    const edges = data.voteEvents?.edges ?? [];
-    for (const edge of edges) {
-      if (edge?.node?.id) {
-        collected.push(edge.node);
+    for (const edge of data.bills?.edges ?? []) {
+      const node = edge?.node;
+      if (node?.id) {
+        collected.push({
+          id: node.id,
+          identifier: node.identifier ?? null,
+          updatedAt: node.updatedAt ?? null,
+        });
       }
     }
 
-    hasNextPage = Boolean(data.voteEvents?.pageInfo?.hasNextPage);
-    after = data.voteEvents?.pageInfo?.endCursor ?? null;
-    if (!hasNextPage) break;
+    hasNextPage = Boolean(data.bills?.pageInfo?.hasNextPage);
+    after = data.bills?.pageInfo?.endCursor ?? null;
+    page += 1;
+    if (!hasNextPage || !after) break;
   }
 
   return collected;

@@ -30,7 +30,7 @@ When instructions or facts conflict, use this priority order:
 4. Repo-local docs and config:
    - `README.md`
    - `CONTRIBUTING.md`
-   - `docs/`
+   - `docs/` (`docs/external-api-policy.md` is binding for any LegiScan/OpenStates work)
    - `.github/workflows/`
    - `supabase/`
    - package scripts
@@ -101,6 +101,25 @@ For destructive or high-risk DB work, provide a plan first:
 * known risks
 
 ## 5. Supabase Edge Function and scheduler rules
+
+### External API access — read `docs/external-api-policy.md` first
+
+Before touching any code path that calls LegiScan or OpenStates, read
+`docs/external-api-policy.md`. It is binding, and CI enforces the mechanical
+parts via `yarn workspace mobile-app check:external-api`.
+
+The non-negotiables:
+
+- The LegiScan key is single and irreplaceable. It was locked once already
+  (2026-07-26) for issuing 23 requests in ~20 seconds. **Never register a
+  replacement key** — restoration goes through api@legiscan.com only.
+- Every LegiScan request goes through `public.reserve_legiscan_api_call`, and
+  is skipped when the reservation is not `allowed`.
+- Rate floors: ≥ 1000 ms between calls, ≤ 6 calls per invocation, never
+  concurrent, and abort the whole sweep on the first `status: "ERROR"`.
+- Never point a test loop or ad-hoc script at production LegiScan. Use
+  `dry_run` with a reduced phrase/page set.
+- Prefer free sources (leginfo scraping) over API quota.
 
 This project uses scheduled database wrappers and Edge Functions for ingestion. Treat the database-to-Edge path as a chain:
 
