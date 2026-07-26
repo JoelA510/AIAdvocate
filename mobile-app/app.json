@@ -46,6 +46,15 @@
       "expo-secure-store",
       "expo-localization",
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ],
+      [
         "@sentry/react-native/expo",
         {
           "organization": "secureyourtech",
