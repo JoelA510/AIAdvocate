@@ -16,17 +16,29 @@ CI enforces the mechanical parts via
 
 **2026-07-26: the LegiScan API key was locked.**
 
-A discovery sweep issued **23 `getSearch` calls in roughly 20 seconds** while
-being tested. LegiScan's response:
+A discovery sweep issued **23 `getSearch` calls in 3.2 seconds** — about **7
+requests per second** — while being tested. LegiScan's response:
 
 > API key has been locked because of a violation of the Terms of Service
 > abusing public services, please contact api@legiscan.com to restore access.
 > Creating additional API keys will result in permanent suspension.
 
 The per-call guardrails (`reserve_legiscan_api_call`) were all satisfied — each
-call was individually within its cooldown and quota. What tripped the lock was
-**request rate**, which nothing in the system limited at the time. That is why
-§3 exists as a separate rule from §2.
+call was individually within its cooldown and quota. Monthly usage at the time
+was 29 of the 30,000 allowance, so quota was never a factor. What tripped the
+lock was **request rate**, which nothing in the system limited. That is why §3
+exists as a separate rule from §2.
+
+The rate above is measured, not estimated — `public.legiscan_api_call_log`
+records one row per reserved call, so the true burst window is:
+
+```sql
+select count(*),
+       extract(epoch from (max(created_at) - min(created_at))) as span_seconds
+from public.legiscan_api_call_log
+where endpoint = 'getSearch'
+  and created_at >= timestamptz '2026-07-26 03:00:00+00';
+```
 
 **Never register a replacement key.** Restoration goes through
 api@legiscan.com only.
