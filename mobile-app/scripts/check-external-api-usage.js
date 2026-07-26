@@ -36,8 +36,10 @@ const OPENSTATES_ALLOWLIST = [
   "scripts/backfill-votes.mjs",
 ];
 
-// Directories that may contain server-side external calls.
-const SCAN_ROOTS = ["supabase/functions", "src", "scripts"];
+// Everywhere a provider call could plausibly be added. `mobile-app` is included
+// deliberately: a provider call from the client would also ship the API key to
+// end users, so it must never appear there without review.
+const SCAN_ROOTS = ["supabase/functions", "src", "scripts", "mobile-app"];
 
 const LEGISCAN_HOST_RE = /api\.legiscan\.com/;
 const OPENSTATES_HOST_RE = /openstates\.org\/graphql/;
@@ -62,6 +64,10 @@ const THROTTLE_FLOORS = [
 
 const failures = [];
 
+// This script necessarily contains the host patterns it searches for, so it
+// would otherwise flag itself.
+const SELF_PATH = path.resolve(__filename);
+
 function listFiles(dir) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
@@ -69,7 +75,12 @@ function listFiles(dir) {
     if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...listFiles(full));
-    else if (/\.(ts|tsx|js|mjs|py|sh)$/.test(entry.name)) out.push(full);
+    else if (
+      /\.(ts|tsx|js|mjs|py|sh)$/.test(entry.name) &&
+      path.resolve(full) !== SELF_PATH
+    ) {
+      out.push(full);
+    }
   }
   return out;
 }

@@ -62,10 +62,17 @@ const RELEVANT_SEARCH_PHRASES = [
 // surfaced a groundwater-sustainability act among the results. Every candidate
 // is therefore confirmed against the actual bill text on leginfo (free, no API
 // quota) before it is written to `bills`.
-const VERIFY_PHRASE_REGEX = new RegExp(
-  `(${RELEVANT_SEARCH_PHRASES.join("|")})`,
-  "i",
-);
+//
+// This must be derived from the same phrase list the sweep searches for. When
+// it was pinned to the built-in constant, overriding BULK_IMPORT_SEARCH_PHRASES
+// made discovery search the new terms while verification still only accepted
+// the old ones — every hit failed and was written to the permanent rejection
+// cache.
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildVerifyRegex = (phrases: string[]): RegExp =>
+  new RegExp(`(${phrases.map(escapeRegExp).join("|")})`, "i");
 
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -160,6 +167,7 @@ type SearchDiscoveryStats = {
   verify_attempted: number;
   verified_count: number;
   rejected_count: number;
+  unverifiable_count: number;
   verify_unavailable: number;
   error_count: number;
   errors: string[];
@@ -736,28 +744,39 @@ const setPendingState = async (
 };
 
 /**
- * Fetch a CA bill's text from leginfo and report whether it actually discusses
- * one of the tracked topics. Returns null when the page could not be read, so
- * the caller can retry later instead of rejecting the bill outright.
+ * Outcome of confirming a candidate against the real bill text.
+ *
+ * `unavailable` is distinct from `rejected` so a transient leginfo failure
+ * retries later, while `unverifiable` (no usable link — a condition retrying
+ * can never fix) drops the row instead of parking it in the queue forever.
  */
+type VerifyOutcome = "match" | "rejected" | "unavailable" | "unverifiable";
+
 const billTextMentionsTopic = async (
   stateLink: string | null,
-): Promise<boolean | null> => {
-  if (!stateLink) return null;
+  verifyRegex: RegExp,
+): Promise<VerifyOutcome> => {
+  if (!stateLink) return "unverifiable";
+
+  let billId: string | null;
+  try {
+    billId = new URL(stateLink).searchParams.get("bill_id");
+  } catch {
+    return "unverifiable";
+  }
+  if (!billId) return "unverifiable";
 
   try {
-    const billId = new URL(stateLink).searchParams.get("bill_id");
-    if (!billId) return null;
-
     const response = await fetch(
       `https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${billId}`,
       { headers: BROWSER_HEADERS },
     );
-    if (!response.ok) return null;
+    if (!response.ok) return "unavailable";
 
     const html = await response.text();
     const anchor = html.indexOf('id="bill_all"');
-    if (anchor < 0) return null;
+    // No text published yet (introduced but not printed): worth retrying.
+    if (anchor < 0) return "unavailable";
 
     const text = html
       .slice(anchor)
@@ -765,10 +784,10 @@ const billTextMentionsTopic = async (
       .replace(/&nbsp;/g, " ")
       .replace(/\s+/g, " ");
 
-    return VERIFY_PHRASE_REGEX.test(text);
+    return verifyRegex.test(text) ? "match" : "rejected";
   } catch (error) {
     console.warn("leginfo verification fetch failed", { error: String(error) });
-    return null;
+    return "unavailable";
   }
 };
 
@@ -808,6 +827,7 @@ const runSearchDiscovery = async (
     verify_attempted: 0,
     verified_count: 0,
     rejected_count: 0,
+    unverifiable_count: 0,
     verify_unavailable: 0,
     error_count: 0,
     errors: [],
@@ -980,6 +1000,7 @@ const runSearchDiscovery = async (
   const verifyDelayMs = getVerifyDelayMs();
   const maxNewBills = getSearchMaxNewBills();
 
+  const verifyRegex = buildVerifyRegex(phrases);
   const verified: BillSeedRow[] = [];
   const deferred: BillSeedRow[] = [];
   let index = 0;
@@ -993,22 +1014,26 @@ const runSearchDiscovery = async (
     if (stats.verify_attempted > 0) await delay(verifyDelayMs);
     stats.verify_attempted += 1;
 
-    const mentionsTopic = await billTextMentionsTopic(row.state_link);
+    const outcome = await billTextMentionsTopic(row.state_link, verifyRegex);
 
-    if (mentionsTopic === null) {
-      // Text unavailable (not yet published, transient failure). Keep it queued
+    if (outcome === "unavailable") {
+      // Text not published yet, or a transient leginfo failure. Keep it queued
       // and retry on a later run rather than dropping or wrongly admitting it.
       stats.verify_unavailable += 1;
       deferred.push(row);
       continue;
     }
 
-    if (mentionsTopic) {
+    if (outcome === "match") {
       verified.push(row);
-    } else {
-      stats.rejected_count += 1;
-      rejected.add(row.id);
+      continue;
     }
+
+    // "rejected" (text has none of the phrases) and "unverifiable" (no usable
+    // link, which retrying can never fix) both leave the queue for good.
+    stats.rejected_count += 1;
+    if (outcome === "unverifiable") stats.unverifiable_count += 1;
+    rejected.add(row.id);
   }
 
   stats.verified_count = verified.length;
@@ -1025,7 +1050,11 @@ const runSearchDiscovery = async (
         .upsert(chunk, { onConflict: "id", ignoreDuplicates: true });
 
       if (error) {
+        // Requeue rather than drop: these rows already passed verification, and
+        // the search sweep that found them is on a multi-hour cooldown, so
+        // losing them here would strand them until the phrase is searched again.
         pushError(`insert batch @${i}: ${error.message ?? String(error)}`);
+        deferred.push(...chunk);
         continue;
       }
 

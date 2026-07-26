@@ -296,10 +296,9 @@ export async function fetchBillVotes(
   let lastBillMeta: { identifier: string | null; title: string | null } | null = null;
 
   while (hasNextPage) {
-    const variables: GraphQLVariables = { id: billId, after };
-    if (sinceIso) variables.since = sinceIso;
-
-    const data = await queryBillVotes(variables, apiKey);
+    // `sinceIso` is deliberately not sent: `bill.votes` has no updatedSince
+    // argument. It is applied to the cache key and as a client-side filter.
+    const data = await queryBillVotes({ id: billId, after }, apiKey);
 
     const bill = data.bill;
     if (!bill) {
@@ -364,16 +363,12 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function queryBillVotes(
+function queryBillVotes(
   variables: GraphQLVariables,
   apiKey: string,
 ): Promise<BillVotesQueryResult> {
-  // `bill.votes` takes no updatedSince argument, so the whole vote connection
-  // is fetched and `since` is applied client-side in fetchBillVotes.
-  const billVariables = { ...variables };
-  delete (billVariables as { since?: unknown }).since;
   return withRetry(() =>
-    performQuery<BillVotesQueryResult>(BILL_VOTES_QUERY, billVariables, apiKey)
+    performQuery<BillVotesQueryResult>(BILL_VOTES_QUERY, variables, apiKey)
   );
 }
 
@@ -396,7 +391,7 @@ export async function fetchRecentlyUpdatedBills(
   jurisdiction = "California",
   pageSize = 100,
   maxPages = 20,
-): Promise<OpenStatesBillRef[]> {
+): Promise<{ bills: OpenStatesBillRef[]; truncated: boolean }> {
   const collected: OpenStatesBillRef[] = [];
   let after: string | null = null;
   let hasNextPage = true;
@@ -433,5 +428,22 @@ export async function fetchRecentlyUpdatedBills(
     if (!hasNextPage || !after) break;
   }
 
-  return collected;
+  // Report rather than silently swallow the cap, so a caller that stopped short
+  // of the real window can say so instead of looking like a complete sync.
+  const truncated = hasNextPage && page >= maxPages;
+  if (truncated) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        context: "openstatesClient",
+        msg: "Bill listing truncated at page cap",
+        jurisdiction,
+        sinceIso,
+        maxPages,
+        collected: collected.length,
+      }),
+    );
+  }
+
+  return { bills: collected, truncated };
 }

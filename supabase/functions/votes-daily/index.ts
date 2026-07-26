@@ -52,7 +52,7 @@ serve(async (req) => {
     const sinceIso = await resolveSinceIso(req.url, supabaseAdmin);
     log("info", "Fetching updates", { sinceIso });
 
-    const recentBills = await fetchRecentlyUpdatedBills(
+    const { bills: recentBills, truncated } = await fetchRecentlyUpdatedBills(
       openStatesKey,
       sinceIso,
       JURISDICTION,
@@ -72,6 +72,7 @@ serve(async (req) => {
     log("info", "Recently updated bills fetched", {
       bills: recentBills.length,
       candidateBills: candidateIds.length,
+      truncated,
     });
 
     // Only bills already tracked in Supabase are worth fetching votes for; the
@@ -179,6 +180,7 @@ serve(async (req) => {
       since: sinceIso,
       jurisdiction: JURISDICTION,
       candidateBills: candidateIds.length,
+      candidateBillsTruncated: truncated,
       trackedBills: trackedIds.length,
       processedBills,
       voteEventsUpserted: totalVoteEvents,

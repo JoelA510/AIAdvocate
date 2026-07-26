@@ -67,8 +67,19 @@ immediate (§1). These floors are therefore mandatory and are CI-checked:
   Current default is 1500 ms.
 - **≤ 6 LegiScan calls per function invocation.** Work that needs more is spread
   across days by the per-resource cooldown, not crammed into one run.
-- **No concurrent LegiScan calls.** Never issue LegiScan requests inside
-  `Promise.all`, `runConcurrent`, or any parallel map. Sequential only.
+- **No concurrent LegiScan calls within an invocation.** Never issue LegiScan
+  requests inside `Promise.all`, `runConcurrent`, or any parallel map.
+  Sequential only.
+- **Known gap — cross-invocation concurrency is not enforced.**
+  `invoke_full_legislative_refresh` enqueues five `sync-updated-bills`
+  invocations through `pg_net`, which run in parallel. With
+  `SYNC_USE_LEGISCAN=true` those five workers can call LegiScan simultaneously,
+  and nothing in the code serialises them: `reserve_legiscan_api_call` bounds
+  per-resource cooldowns and daily/monthly totals, not instantaneous rate.
+  Today this is latent because `SYNC_USE_LEGISCAN` defaults to `false` and that
+  path scrapes leginfo instead. **Before enabling it**, either reduce the fan-out
+  or add a shared rate gate. The same caveat applies to leginfo: five parallel
+  workers plus the verification pass can exceed the ≥250 ms spacing in §5.
 - **Abort the whole sweep on the first API-level error.** A LegiScan response of
   `status: "ERROR"` (locked key, exhausted quota, malformed query) will repeat
   for every subsequent call. Stop; do not continue to the next item.
