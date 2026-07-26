@@ -5,7 +5,7 @@ import { serve } from "https://deno.land/std@0.223.0/http/server.ts";
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 import {
-  fetchRecentVoteEvents,
+  fetchRecentlyUpdatedBills,
   fetchVotesForBills,
 } from "../../../src/lib/openstatesClient.ts";
 import { syncBillVoteEvents, type BillContext } from "../_shared/votes/syncVotes.ts";
@@ -16,6 +16,8 @@ import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 const JOB_KEY = "votes-daily:last-run";
 const FALLBACK_WINDOW_MS = 1000 * 60 * 60 * 48; // 48 hours
 const PREVIEW_LIMIT = 10;
+const JURISDICTION = Deno.env.get("OPENSTATES_JURISDICTION") ?? "California";
+const BILL_LOOKUP_CHUNK = 200;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -50,9 +52,14 @@ serve(async (req) => {
     const sinceIso = await resolveSinceIso(req.url, supabaseAdmin);
     log("info", "Fetching updates", { sinceIso });
 
-    const events = await fetchRecentVoteEvents(openStatesKey, sinceIso);
-    if (!events.length) {
-      log("info", "No recent vote events detected");
+    const { bills: recentBills, truncated } = await fetchRecentlyUpdatedBills(
+      openStatesKey,
+      sinceIso,
+      JURISDICTION,
+    );
+
+    if (!recentBills.length) {
+      log("info", "No recently updated bills detected");
       await upsertJobState(supabaseAdmin, new Date().toISOString());
       return new Response(
         JSON.stringify({ message: "No new vote events", since: sinceIso, processedBills: 0 }),
@@ -60,56 +67,59 @@ serve(async (req) => {
       );
     }
 
-    const billIds = new Set<string>();
-    const eventsWithoutBill: string[] = [];
-    for (const event of events) {
-      const billId = event.bill?.id;
-      if (!billId) {
-        eventsWithoutBill.push(event.id);
-        continue;
-      }
-      billIds.add(billId);
-    }
+    const candidateIds = Array.from(new Set(recentBills.map((bill) => bill.id)));
 
-    log("info", "Recent vote events fetched", {
-      events: events.length,
-      candidateBills: billIds.size,
-      eventsWithoutBill,
+    log("info", "Recently updated bills fetched", {
+      bills: recentBills.length,
+      candidateBills: candidateIds.length,
+      truncated,
     });
 
-    if (billIds.size === 0) {
+    // Only bills already tracked in Supabase are worth fetching votes for; the
+    // jurisdiction query returns every bill the state touched in the window,
+    // which after a long gap is thousands of ids. PostgREST puts `.in()` values
+    // in the query string, so the lookup is chunked to keep the URL bounded.
+    const billMap = new Map<string, BillContext>();
+
+    for (let i = 0; i < candidateIds.length; i += BILL_LOOKUP_CHUNK) {
+      const chunk = candidateIds.slice(i, i + BILL_LOOKUP_CHUNK);
+      const { data: billRows, error: billsError } = await supabaseAdmin
+        .from("bills")
+        .select("id,bill_number,title,openstates_bill_id")
+        .in("openstates_bill_id", chunk);
+
+      if (billsError) throw billsError;
+
+      for (const row of billRows ?? []) {
+        if (!row?.openstates_bill_id) continue;
+        billMap.set(row.openstates_bill_id, {
+          id: row.id,
+          openstates_bill_id: row.openstates_bill_id,
+          bill_number: row.bill_number ?? null,
+          title: row.title ?? null,
+        });
+      }
+    }
+
+    const trackedIds = Array.from(billMap.keys());
+
+    if (trackedIds.length === 0) {
+      log("info", "No recently updated bills are tracked in Supabase", {
+        candidateBills: candidateIds.length,
+      });
       await upsertJobState(supabaseAdmin, new Date().toISOString());
       return new Response(
         JSON.stringify({
-          message: "Events lacked bill metadata",
+          message: "No tracked bills changed",
           since: sinceIso,
+          candidateBills: candidateIds.length,
           processedBills: 0,
-          eventsWithoutBill,
         }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 207 },
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    const billIdList = Array.from(billIds);
-    const { data: billRows, error: billsError } = await supabaseAdmin
-      .from("bills")
-      .select("id,bill_number,title,openstates_bill_id")
-      .in("openstates_bill_id", billIdList);
-
-    if (billsError) throw billsError;
-
-    const billMap = new Map<string, BillContext>();
-    for (const row of billRows ?? []) {
-      if (!row?.openstates_bill_id) continue;
-      billMap.set(row.openstates_bill_id, {
-        id: row.id,
-        openstates_bill_id: row.openstates_bill_id,
-        bill_number: row.bill_number ?? null,
-        title: row.title ?? null,
-      });
-    }
-
-    const bundles = await fetchVotesForBills(openStatesKey, billIdList, { sinceIso, batchSize: 3 });
+    const bundles = await fetchVotesForBills(openStatesKey, trackedIds, { sinceIso, batchSize: 3 });
 
     let processedBills = 0;
     let totalVoteEvents = 0;
@@ -117,15 +127,9 @@ serve(async (req) => {
     let skippedBillsCount = 0;
     const skippedBillsPreview: Array<{ provider_bill_id: string; reason: string }> = [];
 
-    for (const billId of billIdList) {
+    for (const billId of trackedIds) {
       const billContext = billMap.get(billId);
-      if (!billContext) {
-        skippedBillsCount += 1;
-        if (skippedBillsPreview.length < PREVIEW_LIMIT) {
-          skippedBillsPreview.push({ provider_bill_id: billId, reason: "No matching bill in Supabase" });
-        }
-        continue;
-      }
+      if (!billContext) continue;
 
       const bundle = bundles.get(billId);
       if (!bundle || !bundle.events.length) {
@@ -154,7 +158,7 @@ serve(async (req) => {
           voteRecordsProcessed,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorToMessage(err);
         log("error", "Failed syncing bill", {
           billId: billContext.id,
           billNumber: billContext.bill_number,
@@ -174,12 +178,15 @@ serve(async (req) => {
 
     const summary = {
       since: sinceIso,
+      jurisdiction: JURISDICTION,
+      candidateBills: candidateIds.length,
+      candidateBillsTruncated: truncated,
+      trackedBills: trackedIds.length,
       processedBills,
       voteEventsUpserted: totalVoteEvents,
       voteRecordsUpserted: totalVoteRecords,
       skippedBillsCount,
       skippedBillsPreview,
-      eventsWithoutBill,
     };
 
     log("info", "Daily sync summary", summary);
@@ -189,7 +196,7 @@ serve(async (req) => {
       status: skippedBillsCount ? 207 : 200,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorToMessage(error);
     log("error", "Fatal daily sync error", { error: message });
     return new Response(JSON.stringify({ error: message }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -237,6 +244,23 @@ async function upsertJobState(
   if (error) {
     log("error", "Failed updating job_state", { error: error.message });
   }
+}
+
+function errorToMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const maybe = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    const parts = [maybe.message, maybe.details, maybe.hint, maybe.code]
+      .filter((part) => typeof part === "string" && part.length > 0);
+    if (parts.length) return parts.join(" | ");
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
 }
 
 function log(

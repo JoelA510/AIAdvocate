@@ -17,7 +17,8 @@
     "test": "jest",
     "check-size": "node scripts/check-bundle-size.js",
     "check:public-env": "node scripts/check-public-env.js --self-test && node scripts/check-public-env.js",
-    "check:admin-web-only": "node scripts/check-admin-web-only.js"
+    "check:admin-web-only": "node scripts/check-admin-web-only.js",
+    "check:external-api": "node scripts/check-external-api-usage.js"
   },
   "dependencies": {
     "@hcaptcha/react-native-hcaptcha": "^1.0.2",
