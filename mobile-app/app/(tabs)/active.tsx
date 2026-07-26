@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "react-native-paper";
 import BillComponent from "../../src/components/Bill";
@@ -34,7 +33,6 @@ export default function ActiveScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
 
@@ -105,14 +103,14 @@ export default function ActiveScreen() {
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       />
     );
   };
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
+    <ThemedView style={[styles.container, { paddingTop: 8 }]}>
       <View
         style={[
           styles.header,
@@ -125,7 +123,7 @@ export default function ActiveScreen() {
       >
         <ThemedText type="title">{t("tabs.active.title", "Active Bills")}</ThemedText>
       </View>
-      <View style={[styles.content, { paddingBottom: insets.bottom + 12 }]}>{renderContent()}</View>
+      <View style={[styles.content, { paddingBottom: 12 }]}>{renderContent()}</View>
     </ThemedView>
   );
 }

@@ -1,6 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { StyleSheet, FlatList, View, RefreshControl } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, Stack } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "react-native-paper";
@@ -14,7 +13,6 @@ import { useAuth } from "../../src/providers/AuthProvider";
 
 export default function SavedBillsScreen() {
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
@@ -119,15 +117,15 @@ export default function SavedBillsScreen() {
         data={bills}
         keyExtractor={(b) => String((b as any).id)}
         renderItem={({ item }) => <BillComponent bill={item} />}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+        contentContainerStyle={{ paddingBottom: 16 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       />
     );
-  }, [loading, bills, insets.bottom, refreshing, onRefresh, t]);
+  }, [loading, bills, refreshing, onRefresh, t]);
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top + 8, paddingHorizontal: 16 }]}>
+    <ThemedView style={[styles.container, { paddingTop: 8, paddingHorizontal: 16 }]}>
       <Stack.Screen
         options={{ title: t("tabs.saved", { defaultValue: "Saved" }), headerShown: false }}
       />

@@ -2,7 +2,6 @@
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView, Linking } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { Card, Text, Button, ActivityIndicator, useTheme } from "react-native-paper";
 import { supabase } from "../../src/lib/supabase";
@@ -63,7 +62,6 @@ export default function LegislatorScreen() {
   const originTabParam = Array.isArray(params.originTab) ? params.originTab[0] : params.originTab;
   const originTab: "bills" | "advocacy" = originTabParam === "bills" ? "bills" : "advocacy";
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   const theme = useTheme();
 
@@ -294,8 +292,6 @@ export default function LegislatorScreen() {
         style={[
           styles.center,
           {
-            paddingTop: insets.top,
-            paddingBottom: insets.bottom,
             backgroundColor: theme.colors.background,
           },
         ]}
@@ -321,8 +317,6 @@ export default function LegislatorScreen() {
         style={[
           styles.errorContainer,
           {
-            paddingTop: insets.top,
-            paddingBottom: insets.bottom,
             backgroundColor: theme.colors.background,
           },
         ]}
@@ -351,8 +345,6 @@ export default function LegislatorScreen() {
       style={[
         styles.screen,
         {
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom,
           backgroundColor: theme.colors.background,
         },
       ]}

@@ -3,7 +3,6 @@ import React from "react";
 import { StyleSheet, View, Platform, Linking, Pressable } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
@@ -26,7 +25,6 @@ async function openExternalUrl(url: string): Promise<void> {
 
 export default function LnfScreen() {
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const router = useRouter();
 
   return (
@@ -34,16 +32,10 @@ export default function LnfScreen() {
       <Stack.Screen
         options={{ title: t("tabs.lnf", { defaultValue: "LNF" }), headerShown: false }}
       />
-      {/* Apply safe-area padding for top/bottom; horizontal padding only on web */}
-      <View
-        style={[
-          styles.content,
-          {
-            paddingTop: insets.top,
-            paddingBottom: insets.bottom,
-          },
-        ]}
-      >
+      {/* Safe-area insets are consumed once by the scaffold (HeaderBanner /
+          FooterNav in app/_layout.tsx); re-applying them here would double the
+          padding. Horizontal padding only on web. */}
+      <View style={styles.content}>
         {Platform.OS === "web" ? (
           <Card mode="elevated" style={styles.heroCard}>
             <Pressable onPress={() => openExternalUrl(FEED_URL)} style={{ flex: 1 }}>

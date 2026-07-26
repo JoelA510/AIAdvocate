@@ -9,7 +9,6 @@ import {
   Card,
   ActivityIndicator as PaperActivityIndicator,
 } from "react-native-paper";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import Toast from "react-native-toast-message";
 
@@ -39,7 +38,6 @@ export default function BillDetailsScreen() {
   const { session } = useAuth();
   const { t, i18n } = useTranslation();
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
 
   const [bill, setBill] = useState<Bill | null>(null);
   const [translatedContent, setTranslatedContent] = useState<TranslatedContent | null>(null);
@@ -178,7 +176,7 @@ export default function BillDetailsScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView
         style={[styles.scrollView]}
-        contentContainerStyle={{ paddingBottom: insets.bottom }}
+        contentContainerStyle={{ paddingBottom: 16 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.container}>
