@@ -88,6 +88,24 @@ eas submit -p android
 >
 > **Edge-to-edge is not optional long-term**: Android 16 / `targetSdkVersion` 36 removes the opt-out entirely (on API 35 it is still opt-out-able via `android:windowOptOutEdgeToEdgeEnforcement`), and Play's API 36 deadline lands with SDK 54 — see the deadline note in Troubleshooting.
 >
+> ### 🚧 Pending release: 1.8.0 (blocked on EAS quota until 2026-08-01)
+>
+> `main` carries the complete ladder and is release-ready. The 1.8.0 production build was **blocked by the EAS free-plan monthly Android build quota**, which resets **2026-08-01**. Nothing is wrong with the code.
+>
+> **Currently live in production:** vc13 / 1.7.0 — the binary that fixed the `${}` placeholder incident. It works; there is no urgency.
+>
+> **What 1.8.0 adds over vc13:** #72 boot hardening, #73 Batch A (OTA, edge-to-edge, Sentry AGP, iOS `useFrameworks` dropped), #74 Batch B (R8 + resource shrinking), #76 safe-area inset fix, #77 version bump.
+>
+> **To pick it up:**
+>
+> 1. `eas build --platform android --profile production` → this will be **vc16** (see the counter-gap note in Troubleshooting).
+> 2. `eas submit -p android` → lands on the Play **internal testing** track.
+> 3. Smoke-test the internal build against the full list at the top of this section. The AAB is a _separate_ R8 + resource-shrinker invocation from the sideloaded APK, so the earlier device pass does not clear it.
+> 4. Promote internal → production in Play Console (or via the Play Developer API).
+> 5. `eas build --platform ios --profile production && eas submit -p ios` → **iOS still has no device pass** since `ios.useFrameworks: "static"` was dropped in Batch A. Verify on TestFlight before submitting for review.
+>
+> **Verification status carried into this release:** Android device-verified for Batch A and Batch B (sideloaded APKs, 2026-07-24). **Not** device-verified: the #76 inset fix (merged after those APKs were built) and everything on iOS.
+>
 > **Sentry AGP requires `SENTRY_AUTH_TOKEN`** in the EAS environment used by the build, or the upload task fails the build. It is present in the **production** environment (which `production` and `internal-apk` both pin); `development`/`preview` set `SENTRY_DISABLE_AUTO_UPLOAD=true` in `eas.json`, which the plugin's `shouldSentryAutoUpload()` gate respects. **Local release builds** (`npx expo run:android --variant release`) set neither, so export `SENTRY_DISABLE_AUTO_UPLOAD=true` first or Gradle fails on an unauthenticated upload. `internal-apk` sets `SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD=true` so throwaway diagnostic builds don't push hundreds of MB of `.so` symbols.
 
 ---
@@ -205,6 +223,7 @@ It went unnoticed because local dev (`expo start`) loads real values from `.env`
 - **Version Code Error?** The two version concepts live in different places:
   - **Build counters** (`versionCode`/`buildNumber`) are managed remotely by EAS (`cli.appVersionSource: "remote"` in `eas.json`) and auto-increment on every production build. Do not add these fields to `app.json`; if a counter ever needs manual correction, use `eas build:version:set`.
   - **User-facing version** (e.g. `1.7.0`) is `expo.version` in `mobile-app/app.json` — bump it there for each release, and keep `mobile-app/package.json`'s `version` in sync. Do **not** "simplify" by deriving `expo.version` from `package.json` in `app.config.ts`: the raw `package.json` file is itself a fingerprint source (only the _evaluated config's_ version field is skipped), so bumps would change the runtime fingerprint and orphan OTA targeting — measured, not theoretical.
+  - **A failed build still burns the counter.** `autoIncrement` bumps the remote `versionCode` _before_ the build is accepted, so a build rejected afterwards (quota, credentials, a Gradle failure) leaves the counter advanced with no artifact. That is why vc14 and vc15 do not exist: two production builds on 2026-07-26 were rejected by the EAS free-plan monthly quota after the increment. Harmless — Play only requires `versionCode` to increase, and gaps are fine — but do not "fix" the gap with `eas build:version:set`, and expect the next Android build to be **vc16**. Check the live value with `eas build:version:get --platform android`.
 - **Sentry**: `EXPO_PUBLIC_SENTRY_DSN` (EAS Environment Variables, Production, Plain text) enables error/crash reporting; `SENTRY_AUTH_TOKEN` authorizes the `@sentry/react-native/expo` plugin's build-time uploads: JS source maps, **and — now that R8 is on (Batch B) — the ProGuard `mapping.txt`**, plus native `.so` debug symbols via the Android Gradle Plugin. **Both must exist as EAS values before building** — a build with the plugin present but no token fails outright. The token is an **environment-scoped variable in the EAS `production` environment** (`eas env:list production`), not a legacy project-wide secret.
   - **Upload gates are ANDed**: `shouldSentryAutoUpload() = shouldSentryAutoUploadGeneral() && shouldSentryAutoUploadNative()`, so `SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD=true` also suppresses the ProGuard mapping upload. `development`/`preview` set `SENTRY_DISABLE_AUTO_UPLOAD=true` (no token); `internal-apk` sets **neither**, deliberately — a minified diagnostic build with unsymbolicatable frames is useless. `preview` is minified but uploads nothing, so chase R8 regressions on `internal-apk`, never `preview`.
   - **AGP injection was verified**, not assumed: `npx expo prebuild -p android` on commit `11975c9` produced `android/build.gradle` with `classpath("io.sentry:sentry-android-gradle-plugin:5.12.2")`, `android/app/build.gradle` with `apply plugin: "io.sentry.android.gradle"` + `autoUploadProguardMapping = shouldSentryAutoUpload()`, and `gradle.properties` with `android.enableProguardInReleaseBuilds=true` / `android.enableShrinkResourcesInReleaseBuilds=true` consumed by the release buildType (`minifyEnabled` / `shrinkResources`). Re-run that one-liner after any plugin change — the plugin only `warnOnce()`s on injection failure, so a green build alone proves nothing.
