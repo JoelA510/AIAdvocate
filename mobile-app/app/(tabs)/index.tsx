@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { StyleSheet, FlatList, View } from "react-native";
 import { Searchbar, SegmentedButtons, useTheme } from "react-native-paper";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { useLocalSearchParams, useRouter, usePathname, type Href } from "expo-router";
 import { keepPreviousData, useQuery, type UseQueryOptions } from "@tanstack/react-query";
@@ -119,7 +118,6 @@ export default function BillsHomeScreen() {
   const [sessionFilter, setSessionFilter] = useState<string>(SESSION_ALL);
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const [translations, setTranslations] = useState<Record<number, TranslationPatch>>({});
-  const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
   const listRef = useRef<FlatList<Bill>>(null);
@@ -390,7 +388,7 @@ export default function BillsHomeScreen() {
           renderItem={() => <BillSkeleton />}
           keyExtractor={(_, index) => `skeleton-${index}`}
           scrollEnabled={false}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+          contentContainerStyle={{ paddingBottom: 40 }}
         />
       );
     }
@@ -428,14 +426,14 @@ export default function BillsHomeScreen() {
         data={displayBills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderBillItem}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       />
     );
   };
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top + 8 }]}>
+    <ThemedView style={[styles.container, { paddingTop: 8 }]}>
       <View
         style={[
           styles.header,
@@ -473,7 +471,7 @@ export default function BillsHomeScreen() {
           />
         )}
       </View>
-      <View style={[styles.content, { paddingBottom: insets.bottom + 12 }]}>{renderContent()}</View>
+      <View style={[styles.content, { paddingBottom: 12 }]}>{renderContent()}</View>
     </ThemedView>
   );
 }

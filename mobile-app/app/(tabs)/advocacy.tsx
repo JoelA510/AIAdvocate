@@ -2,7 +2,6 @@
 import React, { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { Stack } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
@@ -13,7 +12,6 @@ import type { Bill } from "../../src/components/Bill";
 
 export default function AdvocacyScreen() {
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const theme = useTheme();
   const colors = theme.colors as unknown as Record<string, string>;
 
@@ -50,8 +48,8 @@ export default function AdvocacyScreen() {
         contentContainerStyle={[
           styles.scrollContent,
           {
-            paddingTop: insets.top + 8,
-            paddingBottom: insets.bottom + 16,
+            paddingTop: 8,
+            paddingBottom: 16,
             paddingHorizontal: 16,
           },
         ]}
