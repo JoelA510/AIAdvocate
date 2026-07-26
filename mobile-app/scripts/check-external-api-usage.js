@@ -1,11 +1,12 @@
 // Guards the external-API rules in docs/external-api-policy.md.
 //
 // Context: on 2026-07-26 the LegiScan API key was locked for ToS abuse after a
-// sweep issued 23 getSearch calls in ~20 seconds. Every individual call passed
-// the reserve_legiscan_api_call cooldown/quota check — nothing in the system
-// limited *rate*, and nothing stopped a new file from calling LegiScan without
-// metering at all. LegiScan forbids registering a replacement key, so this
-// failure mode is close to unrecoverable and is worth failing CI over.
+// sweep issued 23 getSearch calls in 3.2 seconds (~7/second). Every individual
+// call passed the reserve_legiscan_api_call cooldown/quota check — nothing in
+// the system limited *rate*, and nothing stopped a new file from calling
+// LegiScan without metering at all. LegiScan forbids registering a replacement
+// key, so this failure mode is close to unrecoverable and is worth failing CI
+// over.
 //
 // Checks:
 //   1. Only allowlisted files may contact LegiScan or OpenStates at all.

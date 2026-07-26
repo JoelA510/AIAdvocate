@@ -111,8 +111,8 @@ parts via `yarn workspace mobile-app check:external-api`.
 The non-negotiables:
 
 - The LegiScan key is single and irreplaceable. It was locked once already
-  (2026-07-26) for issuing 23 requests in ~20 seconds. **Never register a
-  replacement key** — restoration goes through api@legiscan.com only.
+  (2026-07-26) for issuing 23 requests in 3.2 seconds (~7/second). **Never
+  register a replacement key** — restoration goes through api@legiscan.com only.
 - Every LegiScan request goes through `public.reserve_legiscan_api_call`, and
   is skipped when the reservation is not `allowed`.
 - Rate floors: ≥ 1000 ms between calls, ≤ 6 calls per invocation, never
