@@ -22,9 +22,5 @@
     "**/sucrase/glob": "10.5.0",
     "terser-webpack-plugin": "5.5.0",
     "**/xcode/uuid": "14.0.0"
-  },
-  "dependencies": {
-    "pg": "^8.16.3",
-    "postgresql": "^0.0.1"
   }
 }
