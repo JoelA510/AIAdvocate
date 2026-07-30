@@ -33,7 +33,7 @@ describe("LanguageProvider", () => {
   });
 
   it("initialises with detected language", async () => {
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <LanguageProvider>
         <TestComponent />
       </LanguageProvider>,
@@ -43,7 +43,7 @@ describe("LanguageProvider", () => {
   });
 
   it("allows changing language and updates i18n", async () => {
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <LanguageProvider>
         <TestComponent />
       </LanguageProvider>,

@@ -73,13 +73,27 @@ describe("AuthProvider", () => {
   });
 
   it("initializes with existing session", async () => {
-    const { getByTestId } = render(
+    // React Native Testing Library 14 made render() async, and it flushes
+    // effects before resolving. Rendering and immediately asserting "loading"
+    // therefore always observes the settled state instead. Hold getSession()
+    // open so "loading" is a state the provider is genuinely sitting in, rather
+    // than a race this test used to win by accident.
+    let releaseGetSession: () => void = () => {};
+    (supabase.auth.getSession as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        releaseGetSession = () => resolve({ data: { session: mockSession }, error: null });
+      }),
+    );
+
+    const { getByTestId } = await render(
       <AuthProvider>
         <TestComponent />
       </AuthProvider>,
     );
     // initially loading
     expect(getByTestId("loading").children[0]).toBe("loading");
+
+    releaseGetSession();
     await waitFor(() => expect(getByTestId("loading").children[0]).toBe("ready"));
     expect(getByTestId("session").children[0]).toBe("authenticated");
     expect(getByTestId("user-id").children[0]).toBe("test-user-123");
@@ -94,7 +108,7 @@ describe("AuthProvider", () => {
       data: { session: null },
       error: null,
     });
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <TestComponent />
       </AuthProvider>,
@@ -114,7 +128,7 @@ describe("AuthProvider", () => {
       data: { session: null },
       error: err,
     });
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <TestComponent />
       </AuthProvider>,
@@ -138,7 +152,7 @@ describe("AuthProvider", () => {
       data: { session: null },
       error: signInErr,
     });
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <AuthProvider>
         <TestComponent />
       </AuthProvider>,

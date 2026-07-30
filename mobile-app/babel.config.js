@@ -15,7 +15,11 @@ module.exports = function (api) {
       ],
 
       // MUST be last to support React Native Reanimated.
-      "react-native-reanimated/plugin",
+      //
+      // Reanimated 4 moved the worklet transform out into its own package:
+      // react-native-worklets is now a required peer (0.10.x) and owns the
+      // babel plugin. "react-native-reanimated/plugin" no longer exists.
+      "react-native-worklets/plugin",
     ],
   };
 };
