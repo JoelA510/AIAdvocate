@@ -35,7 +35,10 @@ export type Bill = {
   summary_medium_es?: string | null;
   summary_complex_es?: string | null;
   is_curated: boolean;
-  original_text: string | null;
+  // Optional: the list queries (see lib/billColumns) omit the bill's full text
+  // because no card renders it. Only `/bill/[id]`, which does its own
+  // `select("*")`, populates these.
+  original_text?: string | null;
   original_text_es?: string | null;
   change_hash: string;
   created_at: string;

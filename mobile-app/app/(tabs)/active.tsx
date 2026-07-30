@@ -9,6 +9,7 @@ import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
 import { ThemedView } from "../../components/ThemedView";
 import { ThemedText } from "../../components/ThemedText";
+import { BILL_LIST_COLUMNS } from "../../src/lib/billColumns";
 import { supabase } from "../../src/lib/supabase";
 
 const OPEN_STATUS_CODES = ["1", "2", "3"];
@@ -47,9 +48,7 @@ export default function ActiveScreen() {
 
         let query = supabase
           .from("bills")
-          .select(
-            "id, bill_number, title, description, status, status_text, status_date, state_link, is_curated, summary_simple, summary_medium, summary_complex, original_text, created_at, change_hash, progress, calendar, history, openstates_bill_id, panel_review",
-          )
+          .select(BILL_LIST_COLUMNS)
           .or(openFilter)
           .order("status_date", { ascending: false })
           .order("created_at", { ascending: false });
@@ -103,6 +102,8 @@ export default function ActiveScreen() {
         data={bills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={({ item }) => <BillComponent bill={item} />}
+        // See the note on the home feed: each card mount costs one RPC.
+        initialNumToRender={6}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       />

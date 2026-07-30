@@ -8,6 +8,7 @@ import { keepPreviousData, useQuery, type UseQueryOptions } from "@tanstack/reac
 import BillComponent, { type Bill } from "@/components/Bill";
 import BillSkeleton from "@/components/BillSkeleton";
 import EmptyState from "@/components/EmptyState";
+import { BILL_LIST_COLUMNS } from "@/lib/billColumns";
 import { fetchTranslationsForBills } from "@/lib/translation";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/AuthProvider";
@@ -16,8 +17,6 @@ import { ThemedView } from "../../components/ThemedView";
 const SESSION_FILTER_ENABLED = false; // Flip once the next legislative cycle should be exposed to users.
 const SESSION_ALL = "all";
 const MAX_Q_LEN = 200;
-const BILL_LIST_COLUMNS =
-  "id, bill_number, title, description, status, status_text, status_date, state_link, is_curated, summary_simple, summary_medium, summary_complex, original_text, created_at, change_hash, progress, calendar, history, openstates_bill_id, panel_review";
 
 const normalizeQuery = (value: string): string =>
   value.replace(/\s+/g, " ").trim().slice(0, MAX_Q_LEN);
@@ -86,19 +85,9 @@ const sortBills = (items: Bill[] | null | undefined): Bill[] => {
 };
 
 type BillsQueryKey = readonly ["bills", { readonly q: string }];
-type BillsQueryOptions = UseQueryOptions<Bill[], Error, Bill[], BillsQueryKey> & {
-  onError: (err: Error) => void;
-};
+type BillsQueryOptions = UseQueryOptions<Bill[], Error, Bill[], BillsQueryKey>;
 type TranslationPatch = Partial<
-  Pick<
-    Bill,
-    | "title"
-    | "description"
-    | "summary_simple"
-    | "summary_medium"
-    | "summary_complex"
-    | "original_text"
-  >
+  Pick<Bill, "title" | "description" | "summary_simple" | "summary_medium" | "summary_complex">
 > & {
   summary_simple_es?: string | null;
   summary_medium_es?: string | null;
@@ -238,7 +227,6 @@ export default function BillsHomeScreen() {
       },
       placeholderData: keepPreviousData,
       staleTime: 15_000,
-      onError: (err: Error) => console.warn("Bills query failed:", err),
     }),
     [normalizedQuery, queryKey],
   );
@@ -249,6 +237,13 @@ export default function BillsHomeScreen() {
   const isInitialLoading = isPending && fetchedBills.length === 0;
   const isRefreshing = isFetching && !isInitialLoading;
   const errorMessage = isError ? (error instanceof Error ? error.message : String(error)) : null;
+
+  // React Query v5 removed the per-query `onError` callback, so the one that
+  // used to live in the options object above had been a silent no-op — feed
+  // failures reached the UI but never the console. Log it from an effect.
+  useEffect(() => {
+    if (errorMessage) console.warn("Bills query failed:", errorMessage);
+  }, [errorMessage]);
 
   useEffect(() => {
     const sessionSet = new Set<string>();
@@ -314,7 +309,6 @@ export default function BillsHomeScreen() {
             summary_simple: value.summary_simple ?? null,
             summary_medium: value.summary_medium ?? null,
             summary_complex: value.summary_complex ?? null,
-            original_text: value.original_text ?? null,
             summary_simple_es: value.summary_simple ?? null,
             summary_medium_es: value.summary_medium ?? null,
             summary_complex_es: value.summary_complex ?? null,
@@ -367,7 +361,6 @@ export default function BillsHomeScreen() {
         summary_simple: tr.summary_simple ?? bill.summary_simple,
         summary_medium: tr.summary_medium ?? bill.summary_medium,
         summary_complex: tr.summary_complex ?? bill.summary_complex,
-        original_text: tr.original_text ?? bill.original_text,
         summary_simple_es: tr.summary_simple_es ?? bill.summary_simple_es,
         summary_medium_es: tr.summary_medium_es ?? bill.summary_medium_es,
         summary_complex_es: tr.summary_complex_es ?? bill.summary_complex_es,
@@ -426,6 +419,10 @@ export default function BillsHomeScreen() {
         data={displayBills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderBillItem}
+        // Each mounted card fires its own get_bill_details_for_user RPC, so the
+        // initial render count sets the size of the request burst on first
+        // paint, not just the layout cost. Six fills a phone screen.
+        initialNumToRender={6}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       />

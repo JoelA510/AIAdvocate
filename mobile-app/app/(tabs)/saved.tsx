@@ -8,6 +8,7 @@ import { ThemedView } from "../../components/ThemedView";
 import BillComponent from "../../src/components/Bill";
 import BillSkeleton from "../../src/components/BillSkeleton";
 import EmptyState from "../../src/components/EmptyState";
+import { BILL_LIST_COLUMNS } from "../../src/lib/billColumns";
 import { supabase } from "../../src/lib/supabase";
 import { useAuth } from "../../src/providers/AuthProvider";
 
@@ -24,12 +25,7 @@ export default function SavedBillsScreen() {
 
   const fetchBillsByIds = async (ids: (string | number)[]) => {
     if (!ids.length) return [] as any[];
-    const { data, error } = await supabase
-      .from("bills")
-      .select(
-        "id, bill_number, title, description, status, status_text, status_date, state_link, is_curated, summary_simple, summary_medium, summary_complex, original_text, created_at, change_hash, progress, calendar, history, openstates_bill_id, panel_review",
-      )
-      .in("id", ids);
+    const { data, error } = await supabase.from("bills").select(BILL_LIST_COLUMNS).in("id", ids);
     if (error) throw error;
     return data ?? [];
   };
@@ -117,6 +113,8 @@ export default function SavedBillsScreen() {
         data={bills}
         keyExtractor={(b) => String((b as any).id)}
         renderItem={({ item }) => <BillComponent bill={item} />}
+        // See the note on the home feed: each card mount costs one RPC.
+        initialNumToRender={6}
         contentContainerStyle={{ paddingBottom: 16 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
