@@ -14,7 +14,7 @@
     "**/@expo/devcert/glob": "10.5.0",
     "**/@expo/fingerprint/glob": "10.5.0",
     "**/@expo/metro-config/glob": "10.5.0",
-    "**/@expo/metro-config/postcss": "8.5.13",
+    "**/@expo/metro-config/postcss": "8.5.25",
     "**/expo-dev-launcher/ajv": "8.20.0",
     "**/expo-modules-autolinking/glob": "10.5.0",
     "**/expo-updates/glob": "10.5.0",
