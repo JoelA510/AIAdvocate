@@ -2,6 +2,7 @@ import React from "react";
 import { render, fireEvent } from "@testing-library/react-native";
 import BillComponent, { Bill } from "../Bill";
 import { Provider as PaperProvider } from "react-native-paper";
+import { QueryWrapper } from "../../test-utils/query";
 
 // Mock navigation
 const mockRouter = {
@@ -77,9 +78,11 @@ const mockBill: Bill = {
 describe("BillComponent", () => {
   it("renders bill title and number", () => {
     const { getByText } = render(
-      <PaperProvider>
-        <BillComponent bill={mockBill} />
-      </PaperProvider>,
+      <QueryWrapper>
+        <PaperProvider>
+          <BillComponent bill={mockBill} />
+        </PaperProvider>
+      </QueryWrapper>,
     );
 
     expect(getByText("HB 123")).toBeTruthy();
@@ -88,9 +91,11 @@ describe("BillComponent", () => {
 
   it("navigates to details on press", () => {
     const { getByText } = render(
-      <PaperProvider>
-        <BillComponent bill={mockBill} />
-      </PaperProvider>,
+      <QueryWrapper>
+        <PaperProvider>
+          <BillComponent bill={mockBill} />
+        </PaperProvider>
+      </QueryWrapper>,
     );
 
     fireEvent.press(getByText("Test Bill"));
