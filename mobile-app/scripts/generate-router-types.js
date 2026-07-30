@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const requireContext = require("expo-router/build/testing-library/require-context-ponyfill").default;
+const requireContext =
+  require("expo-router/build/testing-library/require-context-ponyfill").default;
 const { getTypedRoutesDeclarationFile } = require("expo-router/build/typed-routes/generate");
 const { EXPO_ROUTER_CTX_IGNORE } = require("expo-router/_ctx-shared");
 
