@@ -419,9 +419,10 @@ export default function BillsHomeScreen() {
         data={displayBills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderBillItem}
-        // Each mounted card fires its own get_bill_details_for_user RPC, so the
-        // initial render count sets the size of the request burst on first
-        // paint, not just the layout cost. Six fills a phone screen.
+        // Each newly mounted card fires its own get_bill_details_for_user RPC
+        // (cached per bill thereafter), so the initial render count sets the
+        // size of the request burst on a cold feed, not just the layout cost.
+        // Six fills a phone screen.
         initialNumToRender={6}
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}

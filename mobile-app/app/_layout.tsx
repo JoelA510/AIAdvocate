@@ -27,7 +27,21 @@ import { RouterErrorBoundary } from "../components/RouterErrorBoundary";
 import AppThemeProvider from "@/providers/AppThemeProvider";
 import HeaderBanner from "@/components/HeaderBanner";
 import FooterNav from "@/components/FooterNav";
-const queryClient = new QueryClient();
+// React Query defaults to `retry: 3` with exponential backoff, which quietly
+// multiplies every failure by four. That is the wrong trade for this app: the
+// bill feed renders one query per card, so a Supabase outage — or a 402 once
+// the 5 GB/month egress allowance is spent, which fails every request
+// project-wide — would turn a 50-request feed load into 200, hammering the
+// quota at precisely the moment it is already exhausted. One retry still
+// absorbs a transient blip; the cap keeps the backoff from stacking up.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+    },
+  },
+});
 
 const BANNER = require("../assets/images/header-banner.png");
 const LOGO_ASPECT_RATIO = 1500 / 257;

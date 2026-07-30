@@ -106,6 +106,11 @@ function BillComponent({ bill }: { bill: Bill }) {
     queryKey: detailsQueryKey,
     enabled: Boolean(userId),
     staleTime: 60_000,
+    // Overrides the app-wide `retry: 1`. This query is per-card, so any retry
+    // policy is multiplied by the length of the feed. A failure here costs only
+    // the reaction counts and the bookmark pip — the card still renders — which
+    // is not worth re-querying N times over.
+    retry: false,
     queryFn: async (): Promise<BillDetails> => {
       const { data, error } = await supabase.rpc("get_bill_details_for_user", {
         p_bill_id: bill.id,
