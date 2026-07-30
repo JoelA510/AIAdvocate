@@ -15,7 +15,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Node 20 went end-of-life on 2026-04-30 and stopped receiving
+          # security patches. 22 is the active LTS and what Expo SDK 53
+          # supports.
+          node-version: '22'
           cache: 'yarn'
           cache-dependency-path: 'yarn.lock'
 
@@ -36,6 +39,12 @@ jobs:
 
       - name: Run linter
         run: yarn workspace mobile-app lint
+
+      # ESLint ignores scripts/, so its prettier/prettier rule never reached the
+      # guardrail scripts and they drifted out of Prettier style unnoticed.
+      # prettier --check covers everything the linter does not.
+      - name: Check formatting
+        run: yarn workspace mobile-app format:check
 
       - name: TypeScript check
         run: yarn workspace mobile-app typecheck

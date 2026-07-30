@@ -1,11 +1,12 @@
 // mobile-app/src/components/Bill.tsx (modified)
 
 import { useRouter } from "expo-router";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Card, IconButton, Text, useTheme, Button } from "react-native-paper";
 import Toast from "react-native-toast-message";
 import { useTranslation } from "react-i18next";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { supabase } from "@/lib/supabase";
 import { extractBillStatusDetails } from "@/lib/billStatus";
@@ -35,7 +36,10 @@ export type Bill = {
   summary_medium_es?: string | null;
   summary_complex_es?: string | null;
   is_curated: boolean;
-  original_text: string | null;
+  // Optional: the list queries (BILL_LIST_COLUMNS) omit the bill's full text
+  // because no card renders it. Only `/bill/[id]`, which selects
+  // BILL_DETAIL_COLUMNS, populates these.
+  original_text?: string | null;
   original_text_es?: string | null;
   change_hash: string;
   created_at: string;
@@ -47,6 +51,20 @@ export type Bill = {
     comment?: string;
   } | null;
 };
+
+type BillDetails = {
+  reaction_counts: Record<string, number>;
+  user_reaction: string | null;
+  is_bookmarked: boolean;
+};
+
+// Frozen module-level constant so the `data = EMPTY_BILL_DETAILS` default keeps
+// a stable identity across renders instead of remounting consumers each time.
+const EMPTY_BILL_DETAILS: BillDetails = Object.freeze({
+  reaction_counts: Object.freeze({}) as Record<string, number>,
+  user_reaction: null,
+  is_bookmarked: false,
+});
 
 type BillHistoryEntry = {
   date?: string | null;
@@ -72,39 +90,54 @@ function BillComponent({ bill }: { bill: Bill }) {
   const { t, i18n } = useTranslation();
   const userId = session?.user?.id;
 
-  const [billDetails, setBillDetails] = useState({
-    reaction_counts: {} as Record<string, number>,
-    user_reaction: null as string | null,
-    is_bookmarked: false,
-  });
-  const [loading, setLoading] = useState(true);
+  // One RPC per rendered card. Previously this lived in a bare useEffect, so
+  // every remount refired it: switching tabs, navigating into a bill and back,
+  // or a FlatList recycling a row each cost another round trip per card, and a
+  // 50-bill feed re-paid all 50. React Query gives it a stable cache key, so
+  // concurrent cards for the same bill dedupe into one request and remounts are
+  // served from cache until the entry goes stale.
+  const queryClient = useQueryClient();
+  const detailsQueryKey = useMemo(
+    () => ["billDetails", bill.id, userId] as const,
+    [bill.id, userId],
+  );
 
-  useEffect(() => {
-    if (!userId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const fetchDetails = async () => {
+  const { data: billDetails = EMPTY_BILL_DETAILS, isPending } = useQuery({
+    queryKey: detailsQueryKey,
+    enabled: Boolean(userId),
+    staleTime: 60_000,
+    // Overrides the app-wide `retry: 1`. This query is per-card, so any retry
+    // policy is multiplied by the length of the feed. A failure here costs only
+    // the reaction counts and the bookmark pip — the card still renders — which
+    // is not worth re-querying N times over.
+    retry: false,
+    queryFn: async (): Promise<BillDetails> => {
       const { data, error } = await supabase.rpc("get_bill_details_for_user", {
         p_bill_id: bill.id,
         p_user_id: userId,
       });
+      if (error) throw error;
+      return {
+        reaction_counts: data?.reaction_counts ?? {},
+        user_reaction: data?.user_reaction ?? null,
+        is_bookmarked: Boolean(data?.is_bookmarked),
+      };
+    },
+  });
 
-      if (error) {
-        console.error("Error fetching bill details:", error.message);
-      } else if (data) {
-        setBillDetails({
-          reaction_counts: data.reaction_counts || {},
-          user_reaction: data.user_reaction,
-          is_bookmarked: data.is_bookmarked,
-        });
-      }
-      setLoading(false);
-    };
+  const loading = Boolean(userId) && isPending;
 
-    fetchDetails();
-  }, [bill.id, userId]);
+  const setBillDetails = React.useCallback(
+    (updater: BillDetails | ((prev: BillDetails) => BillDetails)) => {
+      queryClient.setQueryData<BillDetails>(detailsQueryKey, (prev) => {
+        const base = prev ?? EMPTY_BILL_DETAILS;
+        return typeof updater === "function"
+          ? (updater as (p: BillDetails) => BillDetails)(base)
+          : updater;
+      });
+    },
+    [queryClient, detailsQueryKey],
+  );
 
   const handleBookmark = async () => {
     if (!userId) return;

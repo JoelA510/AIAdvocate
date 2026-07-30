@@ -16,6 +16,7 @@ import { IconSymbol } from "../../components/ui/IconSymbol";
 import { trackEvent } from "../../src/lib/analytics";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { supabase } from "../../src/lib/supabase";
+import { BILL_DETAIL_COLUMNS } from "../../src/lib/billColumns";
 import { Bill } from "../../src/components/Bill";
 import SummarySlider from "../../src/components/SummarySlider";
 import FindYourRep from "../../src/components/FindYourRep";
@@ -50,7 +51,11 @@ export default function BillDetailsScreen() {
     const fetchBill = async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase.from("bills").select("*").eq("id", id).single();
+        const { data, error } = await supabase
+          .from("bills")
+          .select(BILL_DETAIL_COLUMNS)
+          .eq("id", id)
+          .single();
         if (error) throw error;
         if (!isMounted) return;
         setBill(data as Bill);

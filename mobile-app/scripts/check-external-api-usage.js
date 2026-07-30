@@ -76,10 +76,7 @@ function listFiles(dir) {
     if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...listFiles(full));
-    else if (
-      /\.(ts|tsx|js|mjs|py|sh)$/.test(entry.name) &&
-      path.resolve(full) !== SELF_PATH
-    ) {
+    else if (/\.(ts|tsx|js|mjs|py|sh)$/.test(entry.name) && path.resolve(full) !== SELF_PATH) {
       out.push(full);
     }
   }
@@ -92,9 +89,7 @@ function rel(p) {
 
 /** Read `const NAME = 1_500;` style declarations, tolerating numeric separators. */
 function readNumericConstant(source, name) {
-  const match = source.match(
-    new RegExp(`const\\s+${name}\\s*=\\s*([0-9_]+)\\s*;`),
-  );
+  const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*([0-9_]+)\\s*;`));
   if (!match) return null;
   return Number(match[1].replace(/_/g, ""));
 }

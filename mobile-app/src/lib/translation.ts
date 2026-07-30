@@ -1,6 +1,11 @@
 // mobile-app/src/lib/translation.ts
 import { supabase } from "./supabase";
 
+// List-level translated fields only. The translated `original_text` is
+// deliberately not part of this shape: the sole caller is the home feed, whose
+// cards never render bill text, and pulling it meant fetching the full
+// translated corpus on every language switch. `/bill/[id]` translates its own
+// text on demand.
 type TranslationRecord = {
   bill_id: number;
   language_code: string;
@@ -9,7 +14,6 @@ type TranslationRecord = {
   summary_simple?: string | null;
   summary_medium?: string | null;
   summary_complex?: string | null;
-  original_text?: string | null;
 };
 
 // Prefer a bulk Edge Function ("translate-bills") and fall back to single calls ("translate-bill")
@@ -29,7 +33,7 @@ export async function fetchTranslationsForBills(
     const { data: cached, error: cachedError } = await supabase
       .from("bill_translations")
       .select(
-        "bill_id, language_code, title, description, summary_simple, summary_medium, summary_complex, original_text",
+        "bill_id, language_code, title, description, summary_simple, summary_medium, summary_complex",
       )
       .eq("language_code", language)
       .in("bill_id", normalizedIds);
