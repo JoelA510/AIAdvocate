@@ -406,9 +406,16 @@ const getSummarySyncInvocationCount = (candidateRows: number): number => {
     return parsePositiveInt(explicitCount, 1, 20);
   }
 
+  // MUST match sync-updated-bills' MAX_BILLS_PER_RUN default. This divides the
+  // candidate count to decide how many sync invocations to spawn, so if the two
+  // defaults drift apart the fan-out is sized against the wrong denominator:
+  // with this at 3 while sync actually processes 8, 24 candidates would spawn
+  // 8 invocations x 8 bills = 64 concurrent pipelines instead of 24 against the
+  // same shared-CPU database — which is the load this whole change is trying to
+  // reduce.
   const billsPerRun = parsePositiveInt(
     Deno.env.get("SYNC_BILLS_PER_RUN"),
-    3,
+    8,
     50,
   );
   const maxInvocations = parsePositiveInt(

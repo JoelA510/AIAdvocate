@@ -33,11 +33,15 @@
 --   after:  229 ms, 3053 shared buffer hits
 --
 -- Semantics narrow slightly: a row whose original_text is present but
--- whitespace-only is no longer treated as missing text. That case does not
--- exist in the data (all 19 stuck rows are true NULL), and the downstream
--- guard still catches it -- processBill re-checks with isUsableBillText() and
--- refuses to summarise anything under MIN_BILL_TEXT_CHARS. Trading it away
--- here buys the detoast saving on every single lease.
+-- whitespace-only is no longer treated as missing text. No such row exists
+-- today (all 19 stuck rows are true NULL).
+--
+-- There is no downstream safety net for this. processBill's isUsableBillText()
+-- check only runs on bills this function has already leased, so a row that
+-- stops matching here is never handed to it -- it would simply sit unqueued
+-- forever. 20260812122000 therefore normalises any empty/whitespace-only text
+-- to NULL, which makes the cheap predicate complete rather than merely fast.
+-- Apply the two together.
 --
 -- Deliberately NOT changed: the summary_* predicates keep BTRIM/ILIKE/regex.
 -- Those columns are small, they are what actually decides whether a summary
