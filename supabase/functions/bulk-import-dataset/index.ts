@@ -71,6 +71,46 @@ const RELEVANT_SEARCH_PHRASES = [
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Omnibus appropriations vehicles are a systematic false positive for the
+// text-verification gate below, and the gate is working correctly when it lets
+// them through: California's Budget Acts appropriate money to essentially every
+// state program, so "human trafficking", "sexual assault" and "domestic
+// violence" all genuinely appear in their text -- as line items among thousands.
+// Measured on what was imported: 10 of the 10 Budget Acts carrying text matched
+// at least two phrases, and AB102/AB105/AB111/SB102/SB105/SB111 matched three.
+//
+// A bill that merely funds a program is not a bill about that program. Surfacing
+// a 1.5 MB appropriations act next to a trafficking statute misrepresents what
+// the app is for, and no summary of it can convey which line items matter to a
+// survivor. Title-matching is exact here rather than heuristic: "Budget Act of
+// YYYY" and "Budget Acts of ..." are the reserved names of California's
+// appropriations vehicles, not descriptive titles a topical bill could carry.
+//
+// Override with BULK_IMPORT_TOPIC_EXCLUSION_REGEX if another vehicle class shows
+// up; set it empty to disable the exclusion entirely.
+const DEFAULT_TOPIC_EXCLUSION_REGEX = /^\s*budget\s+acts?\s+of\b/i;
+
+const getTopicExclusionRegex = (): RegExp | null => {
+  const raw = Deno.env.get("BULK_IMPORT_TOPIC_EXCLUSION_REGEX");
+  if (raw === undefined || raw === null) return DEFAULT_TOPIC_EXCLUSION_REGEX;
+  if (raw.trim() === "") return null;
+  try {
+    return new RegExp(raw, "i");
+  } catch {
+    console.warn(
+      "BULK_IMPORT_TOPIC_EXCLUSION_REGEX is not a valid regex; using the default",
+      { value: raw },
+    );
+    return DEFAULT_TOPIC_EXCLUSION_REGEX;
+  }
+};
+
+const isExcludedVehicle = (title: string | null | undefined): boolean => {
+  const pattern = getTopicExclusionRegex();
+  if (!pattern || !title) return false;
+  return pattern.test(title);
+};
+
 const buildVerifyRegex = (phrases: string[]): RegExp =>
   new RegExp(`(${phrases.map(escapeRegExp).join("|")})`, "i");
 
@@ -169,6 +209,7 @@ type SearchDiscoveryStats = {
   rejected_count: number;
   unverifiable_count: number;
   verify_unavailable: number;
+  excluded_vehicle_count: number;
   error_count: number;
   errors: string[];
   sample_new_bills: Array<{ id: number; bill_number: string; title: string }>;
@@ -836,6 +877,7 @@ const runSearchDiscovery = async (
     rejected_count: 0,
     unverifiable_count: 0,
     verify_unavailable: 0,
+    excluded_vehicle_count: 0,
     error_count: 0,
     errors: [],
     sample_new_bills: [],
@@ -1018,6 +1060,21 @@ const runSearchDiscovery = async (
     if (verified.length >= maxNewBills) break;
 
     const row = queue[index];
+
+    // Checked before the network call: an omnibus appropriations vehicle would
+    // pass text verification on the strength of a line item, so there is no
+    // point spending a leginfo fetch to confirm a match we intend to reject.
+    if (isExcludedVehicle(row.title)) {
+      console.log("- Skipping excluded vehicle", {
+        bill_id: row.id,
+        bill_number: row.bill_number,
+        title: row.title,
+      });
+      stats.excluded_vehicle_count += 1;
+      rejected.add(row.id);
+      continue;
+    }
+
     if (stats.verify_attempted > 0) await delay(verifyDelayMs);
     stats.verify_attempted += 1;
 

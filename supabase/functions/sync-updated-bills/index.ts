@@ -142,6 +142,19 @@ const PER_BILL_HEADROOM_MS = Math.max(
   Number.parseInt(Deno.env.get("SYNC_PER_BILL_HEADROOM_MS") ?? "45000", 10) ||
     45_000,
 );
+
+// Extra time reserved before starting a summariser re-ask, on top of the normal
+// per-bill headroom. A re-ask is a whole additional withRetries round, so
+// gating it on PER_BILL_HEADROOM_MS alone under-reserves: that headroom is
+// sized for finishing the bill, not for repeating its most expensive step.
+// This does not make an overrun impossible -- a round that hits repeated
+// timeouts can still exceed any fixed reserve -- it makes the re-ask decline
+// itself in the cases where an overrun is likely, rather than in none of them.
+const SUMMARY_REASK_RESERVE_MS = Math.max(
+  0,
+  Number.parseInt(Deno.env.get("SYNC_REASK_RESERVE_MS") ?? "45000", 10) ||
+    45_000,
+);
 const RESPONSE_PREVIEW_LIMIT = Math.max(
   1,
   Math.min(
@@ -767,7 +780,7 @@ const callSummarizer = async (
           // identically forever. Deriving both from MIN_SUMMARY_LENGTHS keeps
           // the instruction and the check from drifting apart again.
           content:
-            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.simple)} characters. Medium ≈10th grade with ≥2 paragraphs and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.medium)} characters. Complex is an expert legal analysis of at least ${summaryTarget(MIN_SUMMARY_LENGTHS.complex)} characters. Prefer concrete specifics from the bill over generic description of what the law is. Spanish should remain natural with diacritics.${
+            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.simple)} characters. Medium ≈10th grade with ≥2 paragraphs and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.medium)} characters. Complex is an expert legal analysis of at least ${summaryTarget(MIN_SUMMARY_LENGTHS.complex)} characters. Prefer concrete specifics from the bill over generic description of what the law is. Treat the character counts as targets, not licence to invent: never state an effect, program or amount the source text does not support. A short bill should get a shorter, accurate summary rather than a padded or embellished one -- this app is read by survivors making decisions, and a fabricated legal effect is worse than a brief summary. Spanish should remain natural with diacritics.${
               reinforcement ? `\n${reinforcement}` : ""
             }`,
         },
@@ -1322,7 +1335,8 @@ serve(async (req) => {
         // room left: being killed mid-bill strands the lease for its full TTL,
         // which is worse than failing this bill cleanly and retrying next run.
         const msLeftForRetry = RUN_TIME_BUDGET_MS - (Date.now() - runStartedAt);
-        const haveTimeToRetry = msLeftForRetry >= PER_BILL_HEADROOM_MS;
+        const haveTimeToRetry =
+          msLeftForRetry >= PER_BILL_HEADROOM_MS + SUMMARY_REASK_RESERVE_MS;
 
         if (shortfalls.length > 0 && haveTimeToRetry) {
           console.warn("- Summaries under the length floor; re-asking once", {
@@ -1331,15 +1345,23 @@ serve(async (req) => {
           });
           const detail = shortfalls
             .map((entry) =>
-              `${entry.level} was ${entry.actual} characters against a required ${entry.required}`
+              // Quote the target, not entry.required. The base instruction asks
+              // for summaryTarget() and the raw floor is the smaller, more
+              // specific number -- naming it here invites the model to aim at
+              // the floor and land just under it after toAscii, defeating the
+              // margin.
+              `${entry.level} was ${entry.actual} characters, short of the ${
+                summaryTarget(entry.required)
+              } it needs`
             )
             .join("; ");
           const retried = await generateSummaries(
             `A previous attempt fell short on these levels: ${detail}. Expand ` +
               `each of those levels using additional concrete detail drawn ` +
               `from the bill text -- specific programs, amounts, sections or ` +
-              `effects -- and leave levels that were already long enough at ` +
-              `their current length. Do not pad with generalities.`,
+              `effects. Do not pad with generalities, and do not invent effects ` +
+              `the text does not support: if the bill is genuinely short, ` +
+              `describe what it does in more depth rather than adding claims.`,
           );
 
           // Only take the retry if it clears every floor it needed to.
