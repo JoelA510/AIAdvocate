@@ -609,8 +609,16 @@ const LEGINFO_ANCHOR_PATTERN = /id\s*=\s*(?:"bill_all"|'bill_all'|bill_all\b)/i;
 // page, the slice and the replace-chain intermediates. At 24 M that is ~146 MB
 // before the truncation branch's own copies, which is over the edge of a 256 MB
 // isolate: a ceiling that high never trips, and the page OOMs exactly as it did
-// before. 12 M gives ~48% headroom over the largest bill California has produced
-// while keeping peak near 73 MB, and truncation is loud when it happens.
+// before. 12 M gives ~48% headroom over the largest bill California has
+// produced.
+//
+// On peak at 12 M: the 6-bytes-per-char figure was measured on an earlier form
+// of the pipeline. stripHtmlToText has since added two more full-size
+// intermediates (the comment strip and the per-line trim), so the honest
+// estimate is nearer 120 MB than the 73 MB a naive scaling gives. Still inside
+// a 256 MB isolate with room, and well under what 24 M would have cost, but
+// worth stating accurately: this ceiling is sized with roughly a 2x margin, not
+// a 3x one.
 const LEGINFO_MAX_SLICE_CHARS = 12_000_000;
 
 // Beyond the five XML built-ins plus nbsp, this covers the typographic
@@ -1270,6 +1278,45 @@ serve(async (req) => {
     // Leases held past their bill's failure so the loop cannot re-lease the same
     // bill; drained after the loop. See the deferral note at the catch site.
     const failedLeases: number[] = [];
+
+    // Release the deferred failed leases and forget them. Safe to call at any
+    // point, including with nothing pending.
+    //
+    // Best-effort and never fatal: a release that itself fails leaves a lease to
+    // expire on its 900s TTL, whereas throwing -- especially from the finally --
+    // would replace the run's real error with this one.
+    //
+    // Issued together rather than in sequence, because the finally call runs
+    // after LEASE_CUTOFF_MS with no time reserve of its own; one concurrent
+    // batch keeps the window in which a kill could strand the rest to roughly a
+    // single round trip.
+    const drainFailedLeases = async () => {
+      if (failedLeases.length === 0) return;
+      const draining = failedLeases.splice(0, failedLeases.length);
+      await Promise.allSettled(
+        draining.map(async (failedId) => {
+          try {
+            const { error: releaseError } = await supabaseAdmin
+              .rpc("release_bill_lease", {
+                p_id: failedId,
+                p_owner: owner,
+                p_ok: false,
+              });
+            if (releaseError) {
+              console.error("Failed to release lease", {
+                bill_id: failedId,
+                error: String(releaseError),
+              });
+            }
+          } catch (releaseThrow) {
+            console.error("Failed to release lease", {
+              bill_id: failedId,
+              error: errorToMessage(releaseThrow),
+            });
+          }
+        }),
+      );
+    };
     const legiscanReservations: LegiScanReservation[] = [];
     let legiscanRuntimeDisabledReason: string | null = null;
 
@@ -1742,9 +1789,18 @@ serve(async (req) => {
             if (!candidate?.english || !candidate?.spanish) return false;
             const { english, spanish } = candidate;
             return (["simple", "medium", "complex"] as const).every((level) => {
+              // Length AND the placeholder/error tests. isStorable claims to
+              // mean "will not throw below", and englishFinal is checked with
+              // isValidSummary further down -- so judging only on length let a
+              // retry containing "placeholder" or an "Error: " prefix count as
+              // storable, win the deficit tiebreak, replace a clean first
+              // response, and then throw. A predicate that names itself after a
+              // downstream rule has to apply all of that rule.
               const englishOk = keepExisting[level] ||
                 (Boolean(english[level]) &&
-                  toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS);
+                  toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS &&
+                  !invalidSummaryPrefix.test(english[level].trim()) &&
+                  !invalidSummaryPlaceholder.test(english[level].trim()));
               // isUsableSpanishSummary, which is exactly what the guard below
               // throws on -- "storable" has to mean "will not throw", or the
               // comparison is judging candidates against a rule the code does
@@ -1831,16 +1887,15 @@ serve(async (req) => {
         if (!englishSummaries) {
           throw new Error("Incomplete English summaries returned");
         }
-        if (!spanishSummaries) {
-          throw new Error("Incomplete Spanish summaries returned");
-        }
 
         if (generatedLevels.some((level) => !englishSummaries[level])) {
           throw new Error("Incomplete English summaries returned");
         }
-        if (generatedSpanishLevels.some((level) => !spanishSummaries[level])) {
-          throw new Error("Incomplete Spanish summaries returned");
-        }
+        // No matching throw for Spanish. An absent Spanish level arrives below
+        // as "" after the ?? "" trim, is reported by the weakSpanish warning,
+        // and skips the translation row -- the same path as any other
+        // sub-standard Spanish. Throwing here would have been the one remaining
+        // way for a Spanish problem to destroy three good English summaries.
 
         asciiEnglish = {
           simple: toAscii(englishSummaries.simple ?? ""),
@@ -1896,47 +1951,47 @@ serve(async (req) => {
         }
 
         spanishTrimmed = {
-          simple: (spanishSummaries.simple ?? "").trim(),
-          medium: (spanishSummaries.medium ?? "").trim(),
-          complex: (spanishSummaries.complex ?? "").trim(),
+          // Optional access: a wholly absent `spanish` object is no longer a
+          // throw, so it has to degrade to empty strings here and flow through
+          // the weakSpanish warning like any other missing level.
+          simple: (spanishSummaries?.simple ?? "").trim(),
+          medium: (spanishSummaries?.medium ?? "").trim(),
+          complex: (spanishSummaries?.complex ?? "").trim(),
         };
 
-        // Two-tier, exactly as English is. The previous revision of this guard
-        // threw whenever a generated Spanish level failed isValidSummary, which
-        // includes its 40-character minimum -- so a 32-character Spanish
-        // complex discarded three good English summaries, left the bill with no
-        // summary in any language, and burned two OpenAI calls on every run
-        // forever. That is the same never-converging loop
-        // SUMMARY_HARD_FLOOR_CHARS was introduced to break, reintroduced
-        // through the other language.
+        // Spanish never throws. It warns, and spanishFinal below turns a
+        // sub-standard level into a SKIPPED bill_translations row, which
+        // translation.ts refills on demand.
         //
-        // Garbage still fails: empty after trim, an "Error: ..." prefix or a
-        // placeholder means the translation did not happen and there is nothing
-        // to store. Short-but-real is accepted with a warning, because a brief
-        // Spanish summary alongside three good English ones beats a bill with
-        // neither.
-        const brokenSpanish = generatedSpanishLevels.filter((level) =>
-          !isUsableSpanishSummary(spanishTrimmed![level])
+        // Throwing here was tried and was wrong in both directions. Using
+        // isValidSummary meant a 32-character Spanish complex discarded three
+        // good English summaries, left the bill with nothing in any language,
+        // and burned two OpenAI calls every run forever. Loosening the test to
+        // stop that then allowed "N/A" to be written as a real translation,
+        // which permanently suppresses the on-demand fallback. Neither is a
+        // threshold problem -- the mistake was tying the fate of the English to
+        // the quality of the Spanish at all.
+        //
+        // The English has already passed its own two-tier check by this point.
+        // A Spanish problem now costs one skipped row, recoverable the next
+        // time anyone opens the bill in Spanish.
+        const weakSpanish = generatedSpanishLevels.filter((level) =>
+          !isValidSummary(spanishTrimmed![level])
         );
-        if (brokenSpanish.length > 0) {
-          throw new Error(
-            `Spanish summaries unusable for: ${brokenSpanish.join(", ")}`,
+        if (weakSpanish.length > 0) {
+          console.warn(
+            "- Spanish below standard; skipping the translation row",
+            {
+              bill_id: billData.bill_id,
+              bill_number: billData.bill_number,
+              levels: weakSpanish.map((level) => {
+                const value = spanishTrimmed![level];
+                return isUsableSpanishSummary(value)
+                  ? `${level} short (${value.length}/${MIN_SPANISH_SUMMARY_CHARS})`
+                  : `${level} unusable`;
+              }),
+            },
           );
-        }
-
-        const shortSpanish = generatedSpanishLevels.filter((level) =>
-          spanishTrimmed![level].length < MIN_SPANISH_SUMMARY_CHARS
-        );
-        if (shortSpanish.length > 0) {
-          console.warn("- Accepting short Spanish summaries", {
-            bill_id: billData.bill_id,
-            bill_number: billData.bill_number,
-            levels: shortSpanish.map((level) =>
-              `${level} ${
-                spanishTrimmed![level].length
-              }/${MIN_SPANISH_SUMMARY_CHARS}`
-            ),
-          });
         }
       }
 
@@ -2007,22 +2062,35 @@ serve(async (req) => {
         embeddingPayload = `[${embedding.join(",")}]`;
       }
 
-      // isUsableSpanishSummary, matching the guard above. With isValidSummary
-      // here, a short-but-real Spanish level that the guard had just accepted
-      // was silently nulled on its way to the database -- the guard said "keep
-      // this" and the payload dropped it, which is how a bill ended up stored
-      // with no Spanish and no error anywhere.
+      // Back to the strict isValidSummary, and this is the load-bearing half of
+      // the Spanish design -- see the guard above for the other half.
+      //
+      // Nulling a sub-standard level here does NOT lose it silently. It makes
+      // spanishComplete false, which skips the bill_translations write
+      // entirely, and translation.ts treats a bill with NO row as missing and
+      // fills it through the translate-bill edge function the first time
+      // someone reads that bill in Spanish. Writing a weak row instead is what
+      // would be permanent: fetchTranslationsForBills computes `missing` as
+      // "no row for this bill", so any row at all -- "N/A", or one with null
+      // columns, which upsert_bill_and_translation happily inserts -- marks the
+      // bill as cached and suppresses that fallback forever, while
+      // lease_next_bill never looks at bill_translations to re-queue it.
+      //
+      // So the three outcomes are: broken Spanish warns and skips the row;
+      // short-but-real Spanish warns and skips the row; good Spanish is
+      // written. In none of them is the English discarded, and in none of them
+      // is a bad translation cached over a recoverable gap.
       const spanishFinal = {
         simple: existingSpanishSimple ??
-          (isUsableSpanishSummary(spanishTrimmed?.simple)
+          (isValidSummary(spanishTrimmed?.simple)
             ? spanishTrimmed!.simple
             : null),
         medium: existingSpanishMedium ??
-          (isUsableSpanishSummary(spanishTrimmed?.medium)
+          (isValidSummary(spanishTrimmed?.medium)
             ? spanishTrimmed!.medium
             : null),
         complex: existingSpanishComplex ??
-          (isUsableSpanishSummary(spanishTrimmed?.complex)
+          (isValidSummary(spanishTrimmed?.complex)
             ? spanishTrimmed!.complex
             : null),
       };
@@ -2147,6 +2215,16 @@ serve(async (req) => {
         }
 
         const nextId = await leaseNextBillId();
+
+        // The previous failure has served its purpose the moment a different
+        // bill is leased -- it was only being held so lease_next_bill would not
+        // hand it straight back. Releasing it here rather than in the finally
+        // keeps at most one lease deferred at any instant, so a kill costs one
+        // stranded lease instead of the whole run's failures. Note this runs
+        // even when nextId is null: a drained queue is exactly when there is no
+        // reason left to hold anything.
+        await drainFailedLeases();
+
         if (!nextId) {
           await logCronDebug(
             supabaseAdmin,
@@ -2192,50 +2270,32 @@ serve(async (req) => {
           // head of the queue was failing, which is exactly the state production
           // has been in.
           //
-          // Holding the lease until the run ends makes lease_next_bill skip this
-          // bill for the rest of the run, so iteration 1 gets a different one and
-          // the count means what it says. The release still happens below, so the
-          // next run retries it as before. If the invocation is killed first the
-          // lease strands for its TTL -- the same outcome a kill has always had.
+          // Holding the lease until the NEXT bill has been leased makes
+          // lease_next_bill skip this one, so iteration 1 gets a different bill
+          // and the count means what it says. The release still happens, so the
+          // next run retries it as before.
+          //
+          // At most one deferred lease is outstanding at a time: the loop
+          // releases the previous failure as soon as it has leased a
+          // replacement, and the finally drains whatever is left. That bound is
+          // the point. Deferring every failure to the finally meant a kill at
+          // the 150s limit -- a bill leased at 64.9s that runs 90s is entirely
+          // realistic -- stranded EVERY failed lease for its full 900s TTL, and
+          // those rows sort first in lease_next_bill's ORDER BY, so the head of
+          // the queue would be invisible for fifteen minutes. An earlier version
+          // of this comment called that "the same outcome a kill has always
+          // had". It was not: the code before it released each failure
+          // immediately. Holding exactly one restores that exposure while
+          // keeping the anti-respin property.
           failedLeases.push(nextId);
           failures.push({ billId: nextId, reason: failureReason });
         }
       }
     } finally {
-      // Release every failed lease now that the loop can no longer re-lease
-      // them. Best-effort and never fatal: a release that itself fails leaves a
-      // lease to expire on its TTL, whereas throwing from a finally would
-      // replace the real error with this one.
-      //
-      // Issued together rather than in sequence. This drain runs after
-      // LEASE_CUTOFF_MS has already passed and has no time reserve of its own,
-      // so every serialised round trip widens the window in which a kill would
-      // strand the REMAINING leases -- all of which sort to the head of the
-      // queue for their full 900s TTL. One concurrent batch collapses that
-      // window to roughly a single round trip regardless of how many failed.
-      await Promise.allSettled(
-        failedLeases.map(async (failedId) => {
-          try {
-            const { error: releaseError } = await supabaseAdmin
-              .rpc("release_bill_lease", {
-                p_id: failedId,
-                p_owner: owner,
-                p_ok: false,
-              });
-            if (releaseError) {
-              console.error("Failed to release lease", {
-                bill_id: failedId,
-                error: String(releaseError),
-              });
-            }
-          } catch (releaseThrow) {
-            console.error("Failed to release lease", {
-              bill_id: failedId,
-              error: errorToMessage(releaseThrow),
-            });
-          }
-        }),
-      );
+      // Backstop. Normally the in-loop call has already emptied this; what
+      // reaches here is the failure from the final iteration, or everything
+      // outstanding when leaseNextBillId() threw before the in-loop drain ran.
+      await drainFailedLeases();
     }
 
     if (processedBills.length === 0 && failures.length > 0) {
