@@ -660,7 +660,23 @@ const decodeHtmlEntities = (input: string): string =>
 const SCRIPT_OR_STYLE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const BLOCK_BOUNDARY =
   /<\/?(?:p|div|br|tr|li|h[1-6]|table|caption|blockquote)\b[^>]*>/gi;
-const ANY_TAG = /<[^>]*>/g;
+// Comments are removed as whole units before tags are stripped. /<[^>]*>/ stops
+// at the FIRST ">", so a comment containing one -- "<!-- note > here -->" --
+// had its opening consumed and its tail left behind as literal text in the
+// stored bill.
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+
+// Requires a tag-shaped opening rather than any "<". The permissive form
+// deleted everything between a bare "<" in prose and the next ">", so
+// "fewer than 5 > the threshold" collapsed to "fewer than the threshold" --
+// silently rewriting a statute's meaning. DOMParser, which this replaced,
+// treated a bare "<" as text. Also covers doctypes, CDATA and processing
+// instructions, which are markup rather than content.
+//
+// Latent today: the live AB101 page carries no comments and no bare "<" after
+// the anchor. Fixed because it is a regression against the path it replaced and
+// the failure would be silent and unrecoverable.
+const ANY_TAG = /<\/?[a-zA-Z][^>]*>|<!\[CDATA\[[\s\S]*?\]\]>|<[!?][^>]*>/g;
 
 // Markup -> readable text without building a node tree. Shared by the leginfo
 // scrape and by formatLegislationText's large-input path, so there is one
@@ -669,6 +685,7 @@ const stripHtmlToText = (html: string): string => {
   const text = decodeHtmlEntities(
     html
       .replace(SCRIPT_OR_STYLE, " ")
+      .replace(HTML_COMMENT, " ")
       .replace(BLOCK_BOUNDARY, "\n")
       .replace(ANY_TAG, " "),
   );
@@ -1693,8 +1710,16 @@ serve(async (req) => {
           if (retried) {
             const firstStorable = isStorable(summaries);
             const retryStorable = isStorable(retried);
-            const better = retryStorable &&
-              (!firstStorable ||
+            // Storability decides when the two differ on it; deficit decides
+            // when they agree -- INCLUDING when both are unstorable. Requiring
+            // retryStorable outright discarded the re-ask whenever the retry
+            // fell short, even though the first response was equally doomed and
+            // about to throw: the better of two failing answers was thrown away
+            // for not being perfect, and the bill failed the same way on every
+            // subsequent run. When neither can be stored, taking the one that is
+            // closer costs nothing and can only help.
+            const better = (retryStorable && !firstStorable) ||
+              (retryStorable === firstStorable &&
                 summaryDeficit(retried) < summaryDeficit(summaries));
 
             if (better) {
@@ -1713,10 +1738,19 @@ serve(async (req) => {
               );
             }
           }
-        } else if (shortfalls.length > 0) {
+        } else if (shortfalls.length > 0 || missingSpanish.length > 0) {
+          // missingSpanish is in this condition too. It was omitted, so a run
+          // whose only defect was an unusable Spanish level and which had no
+          // time to re-ask logged nothing at all -- the one case that most needs
+          // a trace, because Spanish problems are otherwise invisible.
           console.warn(
-            "- Under the length floor but no run time left to re-ask",
-            { bill_id: billData.bill_id, shortfalls, ms_left: msLeftForRetry },
+            "- Summaries incomplete or under target but no run time left to re-ask",
+            {
+              bill_id: billData.bill_id,
+              shortfalls,
+              missing_spanish: missingSpanish,
+              ms_left: msLeftForRetry,
+            },
           );
         }
 
@@ -1816,8 +1850,22 @@ serve(async (req) => {
           complex: (spanishSummaries.complex ?? "").trim(),
         };
 
-        if (generatedSpanishLevels.some((level) => !spanishTrimmed![level])) {
-          throw new Error("Spanish summaries contain empty values after trim");
+        // isValidSummary, not mere non-emptiness. spanishFinal drops any level
+        // that fails isValidSummary to null, so a level that is non-empty but
+        // unusable -- 5 characters, "Error: ...", a placeholder -- passed this
+        // guard, was silently dropped, and the bill was stored with
+        // summary_ok = TRUE and no Spanish for that level. lease_next_bill never
+        // inspects bill_translations, so nothing would ever re-queue it: a
+        // survivor reading in Spanish would get nothing, permanently, with no
+        // error anywhere. Failing here instead puts the bill back in the queue,
+        // where the next run's re-ask can fix it.
+        const unusableSpanish = generatedSpanishLevels.filter((level) =>
+          !isValidSummary(spanishTrimmed![level])
+        );
+        if (unusableSpanish.length > 0) {
+          throw new Error(
+            `Spanish summaries unusable for: ${unusableSpanish.join(", ")}`,
+          );
         }
       }
 
@@ -2082,27 +2130,36 @@ serve(async (req) => {
       // them. Best-effort and never fatal: a release that itself fails leaves a
       // lease to expire on its TTL, whereas throwing from a finally would
       // replace the real error with this one.
-      for (const failedId of failedLeases) {
-        try {
-          const { error: releaseError } = await supabaseAdmin
-            .rpc("release_bill_lease", {
-              p_id: failedId,
-              p_owner: owner,
-              p_ok: false,
-            });
-          if (releaseError) {
+      //
+      // Issued together rather than in sequence. This drain runs after
+      // LEASE_CUTOFF_MS has already passed and has no time reserve of its own,
+      // so every serialised round trip widens the window in which a kill would
+      // strand the REMAINING leases -- all of which sort to the head of the
+      // queue for their full 900s TTL. One concurrent batch collapses that
+      // window to roughly a single round trip regardless of how many failed.
+      await Promise.allSettled(
+        failedLeases.map(async (failedId) => {
+          try {
+            const { error: releaseError } = await supabaseAdmin
+              .rpc("release_bill_lease", {
+                p_id: failedId,
+                p_owner: owner,
+                p_ok: false,
+              });
+            if (releaseError) {
+              console.error("Failed to release lease", {
+                bill_id: failedId,
+                error: String(releaseError),
+              });
+            }
+          } catch (releaseThrow) {
             console.error("Failed to release lease", {
               bill_id: failedId,
-              error: String(releaseError),
+              error: errorToMessage(releaseThrow),
             });
           }
-        } catch (releaseThrow) {
-          console.error("Failed to release lease", {
-            bill_id: failedId,
-            error: errorToMessage(releaseThrow),
-          });
-        }
-      }
+        }),
+      );
     }
 
     if (processedBills.length === 0 && failures.length > 0) {
