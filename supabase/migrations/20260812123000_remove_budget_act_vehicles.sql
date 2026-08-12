@@ -1,0 +1,125 @@
+-- 20260812123000_remove_budget_act_vehicles.sql
+--
+-- Removes California's omnibus appropriations vehicles from `bills`. Deletes
+-- only -- see the note below the DELETE for why the bulk re-summarisation this
+-- migration originally carried was dropped.
+--
+-- WHY THE BUDGET ACTS ARE HERE AT ALL
+--
+-- The discovery sweep is correctly targeted -- every phrase in
+-- RELEVANT_SEARCH_PHRASES is a trafficking, sexual assault or domestic violence
+-- term, and each candidate is verified against the real bill text before it is
+-- written. Budget Acts pass that gate legitimately: they appropriate money to
+-- essentially every state program, so those phrases genuinely appear in their
+-- text. All 10 Budget Acts carrying text match at least two phrases, and
+-- AB102 / AB105 / AB111 / SB102 / SB105 / SB111 match three.
+--
+-- A bill that funds a program is not a bill about that program. Love Never
+-- Fails' remit is survivors of trafficking, sexual assault and domestic
+-- violence; a 1.5 MB appropriations act sitting in that feed misrepresents what
+-- the app is for, and no summary of it can tell a survivor which line items
+-- matter. This is also why every Budget Act summary read as interchangeable
+-- boilerplate.
+--
+-- Future imports are already blocked in bulk-import-dataset via
+-- isExcludedVehicle(); this clears what was imported before that existed.
+--
+-- CHECKED BEFORE DELETING -- nine of the ten FKs pointing at bills are ON
+-- DELETE CASCADE (only admin_audit_log.bill_id is SET NULL), so this would
+-- take user data with it if any existed. Every one was counted against
+-- production first, not reasoned about:
+--
+--   budget bills                  18
+--   bookmarks                      0
+--   reactions                      0
+--   subscriptions                  0
+--   votes                          0
+--   vote_events                    0
+--   push_notification_log          0
+--   push_notification_recipients   0
+--   admin_audit_log                0
+--   is_curated                     0
+--   bill_translations             10   (machine-generated, regenerate on demand)
+--
+-- No human-authored or user-owned data is destroyed. If that ever stops being
+-- true, this migration must be revisited rather than replayed.
+--
+-- Scope is deliberately narrow: only the appropriations vehicles. Bills that
+-- are topical only in their operative text -- foster care, protective orders,
+-- "Slavery: corporate disclosures", missing children -- are left alone, since
+-- reaching those is exactly why the text-verification gate exists.
+--
+-- Rollback: these rows are recoverable only by re-running discovery with
+-- BULK_IMPORT_TOPIC_EXCLUSION_REGEX set empty. There is no undo in this file.
+
+DELETE FROM public.bills
+ WHERE title ~* '^[[:space:]]*budget[[:space:]]+acts?[[:space:]]+of[[:>:]]';
+
+-- Note for anyone porting this predicate: Postgres POSIX regex does NOT support
+-- \b (it means backspace) or \s the way JavaScript does -- [[:>:]] is the word
+-- boundary and [[:space:]] the whitespace class. An earlier audit query using
+-- \b silently matched zero rows and made the problem look non-existent.
+
+-- NO BULK RE-QUEUE HERE, deliberately. An earlier draft of this migration
+-- cleared summary_ok/summary_hash for every bill imported since 2026-07-25, on
+-- the theory that summaries written before the summariser prompt was fixed
+-- should be regenerated. Both halves of that turned out to be wrong.
+--
+-- It would not have worked. sync-updated-bills gates regeneration on
+-- needsSummaryGeneration, which tests whether the six summary columns are
+-- present and valid -- not on summary_ok. A bill with complete English and
+-- Spanish summaries would be re-leased, skip the summariser entirely, pay a
+-- fresh embedding call (because the cleared summary_hash no longer matches),
+-- and write back byte-identical text with summary_ok = TRUE.
+--
+-- It was not needed. Measured against production, all 63 non-Budget-Act bills
+-- imported since 2026-07-25 already clear every length floor -- shortest medium
+-- summary 438 characters against a 400 floor, mean 843, and zero bills short at
+-- any of the three levels. The vacuous summaries were the Budget Acts, and the
+-- DELETE above is what actually addresses them.
+--
+-- It would have done harm. 21 bills currently have summary_ok <> TRUE, 19 of
+-- them because they have no original_text at all. Ten of those 21 are Budget
+-- Acts (8 of them text-less), so the DELETE above removes them and 11 remain --
+-- and those 11 are the genuinely stuck rows the rest of this branch exists to
+-- unblock. Adding 63 no-op leases ahead of 11 real ones at SYNC_BILLS_PER_RUN=8
+-- on a daily cron would have delayed the repair from about a day and a half to
+-- about nine, and spent 63 embedding calls to change nothing.
+--
+-- If a future prompt change does warrant re-summarising existing bills, the
+-- summary text has to be cleared, not just the flags -- and that is a
+-- user-visible regression (bills show no summary until regenerated) that should
+-- be a deliberate, separately reviewed decision rather than a footnote to a
+-- cleanup migration.
+
+NOTIFY pgrst, 'reload schema';
+
+-- POST-DEPLOY VERIFICATION (run by hand after this applies; expected values are
+-- from the pre-deploy measurement above, 175 bills total):
+--
+--   SELECT
+--     (SELECT count(*) FROM public.bills) AS total_bills,                   -- 157
+--     (SELECT count(*) FROM public.bills
+--       WHERE title ~* '^[[:space:]]*budget[[:space:]]+acts?[[:space:]]+of[[:>:]]')
+--       AS budget_vehicles_remaining,                                      -- 0
+--     (SELECT count(*) FROM public.bills
+--       WHERE summary_ok IS DISTINCT FROM TRUE) AS queued_for_summary;     -- 11
+--
+-- queued_for_summary should FALL from 21 to 11, not stay at 21: summary_ok has
+-- no column default, so 10 of the 18 deleted Budget Acts were themselves in
+-- that 21 and leave with them. The 11 that remain are the real backlog.
+--
+-- Anything ABOVE 11 means an unintended re-queue slipped in and will crowd out
+-- those 11 -- which is precisely what the dropped UPDATE would have done.
+--
+-- Then confirm the queue is still reachable -- lease_next_bill is what the cron
+-- drains through, and the whole point of this branch is that those 19 bills can
+-- finally be handed out:
+--
+--   BEGIN;
+--     SELECT public.lease_next_bill('verify-20260812123000', 1);
+--   ROLLBACK;
+--
+-- A non-null id is expected. NULL means either everything is already leased or
+-- the predicate matches nothing -- investigate before assuming the cron will
+-- catch up on its own.
