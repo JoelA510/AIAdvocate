@@ -254,8 +254,25 @@ const summaryTarget = (floor: number): number =>
   Math.ceil(floor * SUMMARY_LENGTH_TARGET_MARGIN);
 const asciiGuard = /[^ -~\n]/;
 
-const invalidSummaryPrefix = /^error[:\s]/i;
+// These mirror lease_next_bill's requeue predicate and release_bill_lease's
+// success predicate. They must be at least as strict as the SQL, because the
+// database is the authority on whether a summary counts: anything this code
+// accepts and the database rejects is stored with summary_ok flipped straight
+// back to false, re-leased on the next run, and re-summarised forever.
+//
+// The prefix test used to be /^error[:\s]/i, which requires a colon or space
+// after "error" -- narrower than the SQL's '^[[:space:]]*(error|placeholder)',
+// which has no such boundary. A summary opening "Errors under this act..."
+// passed here and failed there, which is that loop exactly. Widened to match.
+// It will occasionally reject a legitimate summary that happens to open with
+// the word "Errors", but the alternative is not storing it either -- just
+// storing it and re-doing it every night.
+const invalidSummaryPrefix = /^\s*(error|placeholder)/i;
 const invalidSummaryPlaceholder = /placeholder/i;
+// Mirrors "NOT ILIKE 'AI_SUMMARY_FAILED%'" in both SQL predicates. Nothing on
+// this side checked for it, so a failure marker written by an older code path
+// would have been treated as a valid summary here and rejected by the database.
+const invalidSummaryFailedMarker = /^\s*ai_summary_failed/i;
 
 const parsePositiveInt = (
   value: string | number | null | undefined,
@@ -299,6 +316,7 @@ const isValidSummary = (value?: string | null): boolean => {
   if (trimmed.length < 40) return false;
   if (invalidSummaryPrefix.test(trimmed)) return false;
   if (invalidSummaryPlaceholder.test(trimmed)) return false;
+  if (invalidSummaryFailedMarker.test(trimmed)) return false;
   return true;
 };
 
@@ -321,6 +339,7 @@ const isUsableSpanishSummary = (value?: string | null): boolean => {
   if (!trimmed) return false;
   if (invalidSummaryPrefix.test(trimmed)) return false;
   if (invalidSummaryPlaceholder.test(trimmed)) return false;
+  if (invalidSummaryFailedMarker.test(trimmed)) return false;
   return true;
 };
 
@@ -936,8 +955,8 @@ const parseRetryAfter = (header: string | null): number | undefined => {
   return Math.max(0, parsed - Date.now());
 };
 
-// Absolute wall-clock deadline for the whole invocation, set once the run
-// starts. Every retry round is measured against it.
+// Bounds a bill's wall clock. Passed in per call, never held at module scope --
+// see the note on the parameter below.
 //
 // Before this existed, nothing bounded a single bill. One withRetries round is
 // 3 attempts x 45s plus 1s and 2s of backoff -- about 138s -- and a bill runs
@@ -950,21 +969,28 @@ const parseRetryAfter = (header: string | null): number | undefined => {
 // entire budget -- so the work is bounded instead: no attempt begins unless it
 // can finish before the deadline, and each attempt's abort is clamped to the
 // time actually left.
-let runDeadlineAt = Number.POSITIVE_INFINITY;
-
 const ATTEMPT_TIMEOUT_MS = 45_000;
 // An attempt given less than this has no realistic chance against an API call,
 // so it is not worth spending the remaining time to find that out.
 const MIN_ATTEMPT_MS = 5_000;
 
+// `deadlineAt` is a parameter rather than module state, and that is not a style
+// preference. bulk-import-dataset fans out up to 10 concurrent sync
+// invocations, and an edge isolate is reused across requests -- so a module-level
+// deadline is shared mutable state between overlapping runs. The last one to
+// start would overwrite it, granting an already-running invocation a later
+// deadline than its own budget, which is precisely the overrun-and-be-killed
+// path the deadline was added to close. Threading it through keeps each run's
+// budget its own.
 const withRetries = async <T>(
   fn: (attempt: number, signal: AbortSignal) => Promise<T>,
   attempts = 3,
+  deadlineAt = Number.POSITIVE_INFINITY,
 ): Promise<T> => {
   let backoffMs = 1000;
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const msLeft = runDeadlineAt - Date.now();
+    const msLeft = deadlineAt - Date.now();
     if (msLeft < MIN_ATTEMPT_MS) {
       // Refuse rather than start work that cannot finish. Throwing here fails
       // this bill, which the caller handles: the lease is released in the
@@ -1004,7 +1030,7 @@ const withRetries = async <T>(
       // Do not sleep past the deadline either; the check at the top of the next
       // iteration would only wake up to refuse.
       await sleep(
-        Math.max(0, Math.min(waitMs + jitter, runDeadlineAt - Date.now())),
+        Math.max(0, Math.min(waitMs + jitter, deadlineAt - Date.now())),
       );
       backoffMs = Math.min(backoffMs * 2, 16_000);
     } finally {
@@ -1323,11 +1349,10 @@ serve(async (req) => {
     // Declared here, not beside the loop, because processBill closes over it to
     // decide whether there is time left for a summariser re-ask.
     const runStartedAt = Date.now();
-    // Arms the deadline every retry round is measured against. Set here rather
-    // than at module load: an isolate is reused across invocations, so a
-    // module-level value would be the FIRST run's deadline and every later run
-    // would refuse all work.
-    runDeadlineAt = runStartedAt + RUN_TIME_BUDGET_MS;
+    // This run's own deadline. A local, passed explicitly to every withRetries
+    // call, so concurrent invocations sharing an isolate cannot overwrite each
+    // other's budget.
+    const runDeadlineAt = runStartedAt + RUN_TIME_BUDGET_MS;
     const maxBillsToProcess = MAX_BILLS_PER_RUN;
 
     await logCronDebug(
@@ -1672,6 +1697,7 @@ serve(async (req) => {
                 reinforcement,
               ),
             attempts,
+            runDeadlineAt,
           );
 
         let summaries = await generateSummaries();
@@ -1865,7 +1891,8 @@ serve(async (req) => {
                 (Boolean(english[level]) &&
                   toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS &&
                   !invalidSummaryPrefix.test(english[level].trim()) &&
-                  !invalidSummaryPlaceholder.test(english[level].trim()));
+                  !invalidSummaryPlaceholder.test(english[level].trim()) &&
+                  !invalidSummaryFailedMarker.test(english[level].trim()));
               // isValidSummary, because that is what spanishFinal uses to decide
               // whether a bill_translations row is written at all. Spanish no
               // longer throws, so "storable" cannot mean "will not throw" for
@@ -2121,8 +2148,10 @@ serve(async (req) => {
           .filter((segment): segment is string => Boolean(segment))
           .join("\n\n");
 
-        const embedding = await withRetries((_, signal) =>
-          callEmbedding(textForEmbedding, openAiKey, signal)
+        const embedding = await withRetries(
+          (_, signal) => callEmbedding(textForEmbedding, openAiKey, signal),
+          3,
+          runDeadlineAt,
         );
 
         embeddingPayload = `[${embedding.join(",")}]`;
@@ -2296,6 +2325,13 @@ serve(async (req) => {
         // than spin.
         if (nextId && attemptedIds.has(nextId)) {
           stoppedForRepeatLease = true;
+          // lease_next_bill has ALREADY taken the lease by the time we see the
+          // id, so bailing out without recording it leaked that lease: the
+          // finally drain would not know about it and the bill would sit leased
+          // for its full 900s TTL at the head of the queue -- the very stranding
+          // this guard exists to avoid. Hand it to the drain like any other
+          // unfinished bill.
+          failedLeases.push(nextId);
           const message =
             `lease_next_bill returned already-attempted bill ${nextId} at iteration ${i}; stopping to avoid a loop`;
           console.warn(message);
