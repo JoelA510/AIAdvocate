@@ -428,33 +428,70 @@ const formatLegislationText = (raw: string): string => {
 //
 // The runtime *kills* the isolate, so nothing is thrown and nothing reaches
 // cron_job_errors -- which is why this looked like a silent stall rather than a
-// failure. A DOM of a 1.5 MB document costs many times the source in node
-// objects; the bill text is a flat run of markup, so none of that structure is
-// needed.
+// failure. AB101's page is 8,077,421 characters, and a DOM of a document that
+// size costs many times the source in node objects; the bill text is a flat run
+// of markup, so none of that structure is needed.
 //
-// Extract it with bounded string work instead. On leginfo, `bill_all` is the
-// last content block on the page, so everything from the anchor to the end of
-// the document is the bill, and slicing there also caps how much is processed.
+// Extract it with string work instead. On leginfo, `bill_all` is the last
+// content block on the page, so everything from the anchor to the end of the
+// document is the bill.
+//
+// This lowers peak memory but does not make it constant, and the difference
+// matters: fetch's res.text() still materialises the whole body before any of
+// this runs, and the replace chain allocates a few large intermediates on top.
+// Measured on the real pages (node, --expose-gc):
+//
+//   AB101  8,077,421 chars in -> 2,226,761 out, 296 ms, ~48.8 MB heap delta
+//   SB857    677,349 chars in ->   489,999 out,  16 ms, ~10.3 MB heap delta
+//
+// That fits where the DOM did not, but the headroom on AB101 is not enormous.
+// If a future bill is materially larger than AB101, revisit this with chunked
+// processing rather than raising the ceiling.
 const LEGINFO_ANCHOR = 'id="bill_all"';
 
-// Hard ceiling on the markup considered, so a pathological page can never cost
-// more than a bounded amount of memory regardless of what leginfo serves.
-const LEGINFO_MAX_SLICE_CHARS = 4_000_000;
+// Ceiling on the markup considered, purely as a backstop against a pathological
+// page. It must sit comfortably above real bills: AB101 ("Budget Act of 2025"),
+// the bill whose scrape OOMed, is 8,077,421 characters with 8,002,546 of them
+// after the anchor. An earlier revision of this function used 4,000,000 and was
+// "verified" against SB857 (677,873 chars, comfortably under it) -- which would
+// have silently discarded more than half of every budget bill while reporting
+// success. Truncation is now both far less likely and loud when it happens.
+const LEGINFO_MAX_SLICE_CHARS = 24_000_000;
 
-const decodeBasicEntities = (input: string): string =>
-  input
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_m, code) => {
-      const n = Number(code);
-      return Number.isFinite(n) && n > 0 && n < 0x110000
-        ? String.fromCodePoint(n)
-        : " ";
-    });
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+
+// One pass, not a chain of .replace() calls. A chain that decodes &amp; before
+// &lt; double-unescapes: "&amp;lt;" becomes "<" instead of the literal "&lt;".
+// Matching every entity in a single scan means each one is consumed exactly
+// once and its output is never re-examined. Hex forms (&#x2019;) are handled
+// too -- leginfo emits them, and the DOMParser path this replaced decoded them.
+const HTML_ENTITY = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g;
+
+const decodeHtmlEntities = (input: string): string =>
+  input.replace(HTML_ENTITY, (match, dec, hex, name) => {
+    if (name) return NAMED_ENTITIES[name.toLowerCase()] ?? match;
+    const code = dec ? Number(dec) : Number.parseInt(hex, 16);
+    return Number.isFinite(code) && code > 0 && code < 0x110000
+      ? String.fromCodePoint(code)
+      : " ";
+  });
+
+// \s+ -> " " would flatten the whole bill into one paragraph. textContent
+// preserved line structure and the appropriation tables in a budget bill are
+// unreadable without it, so map block-level boundaries to newlines before
+// stripping the rest, then reuse the file's existing whitespace collapsers.
+const SCRIPT_OR_STYLE =
+  /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const BLOCK_BOUNDARY =
+  /<\/?(?:p|div|br|tr|li|h[1-6]|table|caption|blockquote)\b[^>]*>/gi;
+const ANY_TAG = /<[^>]*>/g;
 
 const extractLeginfoBillText = (html: string): string | null => {
   const anchor = html.indexOf(LEGINFO_ANCHOR);
@@ -466,17 +503,41 @@ const extractLeginfoBillText = (html: string): string | null => {
   const tagEnd = html.indexOf(">", anchor);
   const start = tagEnd === -1 ? anchor + LEGINFO_ANCHOR.length : tagEnd + 1;
 
-  const slice = html.slice(start, start + LEGINFO_MAX_SLICE_CHARS);
-  const text = decodeBasicEntities(
-    slice
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]*>/g, " "),
-  )
-    .replace(/\s+/g, " ")
-    .trim();
+  const available = html.length - start;
+  let slice = html.slice(start, start + LEGINFO_MAX_SLICE_CHARS);
 
-  return text.length > 0 ? text : null;
+  if (available > LEGINFO_MAX_SLICE_CHARS) {
+    // A blind cut can land inside a tag, or inside a <script> whose closing tag
+    // is now gone -- SCRIPT_OR_STYLE would not match it and ANY_TAG would strip
+    // only the opening tag, leaving raw JavaScript in the stored bill text.
+    // Back off to the last complete tag, then behind any script left unclosed.
+    const lastClose = slice.lastIndexOf(">");
+    if (lastClose !== -1) slice = slice.slice(0, lastClose + 1);
+
+    const lastScriptOpen = slice.toLowerCase().lastIndexOf("<script");
+    if (
+      lastScriptOpen !== -1 &&
+      lastScriptOpen > slice.toLowerCase().lastIndexOf("</script")
+    ) {
+      slice = slice.slice(0, lastScriptOpen);
+    }
+
+    console.warn("Leginfo scrape hit the slice ceiling; bill text truncated", {
+      available_chars: available,
+      ceiling: LEGINFO_MAX_SLICE_CHARS,
+      kept_chars: slice.length,
+    });
+  }
+
+  const text = decodeHtmlEntities(
+    slice
+      .replace(SCRIPT_OR_STYLE, " ")
+      .replace(BLOCK_BOUNDARY, "\n")
+      .replace(ANY_TAG, " "),
+  );
+
+  const cleaned = collapseNLBlocks(collapseSpacesExceptNL(text)).trim();
+  return cleaned.length > 0 ? cleaned : null;
 };
 
 const scrapeLeginfoText = async (stateLink: string): Promise<string | null> => {
