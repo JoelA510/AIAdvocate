@@ -582,10 +582,8 @@ const NAMED_ENTITIES: Record<string, string> = {
   copy: "©",
   reg: "®",
   trade: "™",
-  // Keys must be lowercase: the lookup lowercases the captured name, so a
-  // mixed-case key like "Dagger" (a distinct character from "dagger" in HTML)
-  // could never match and would only look like it was handled.
   dagger: "†",
+  Dagger: "‡",
   laquo: "«",
   raquo: "»",
   ensp: " ",
@@ -602,7 +600,16 @@ const HTML_ENTITY = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g;
 
 const decodeHtmlEntities = (input: string): string =>
   input.replace(HTML_ENTITY, (match, dec, hex, name) => {
-    if (name) return NAMED_ENTITIES[name.toLowerCase()] ?? match;
+    // Exact case first. HTML named entities are case-sensitive and a few differ
+    // only by case -- &dagger; is a dagger, &Dagger; a double dagger. Folding to
+    // lowercase unconditionally did not merely fail to handle &Dagger;, it
+    // silently decoded it to the wrong character, which is worse than leaving it
+    // alone. The lowercase pass is kept as a lenient fallback for sloppy markup
+    // (&NBSP;, &AMP;), where there is no ambiguity to get wrong.
+    if (name) {
+      return NAMED_ENTITIES[name] ?? NAMED_ENTITIES[name.toLowerCase()] ??
+        match;
+    }
     const code = dec ? Number(dec) : Number.parseInt(hex, 16);
     return Number.isFinite(code) && code > 0 && code < 0x110000
       ? String.fromCodePoint(code)
@@ -629,34 +636,34 @@ const extractLeginfoBillText = (html: string): string | null => {
   const start = tagEnd === -1 ? anchor + LEGINFO_ANCHOR.length : tagEnd + 1;
 
   const available = html.length - start;
-  let slice = html.slice(start, start + LEGINFO_MAX_SLICE_CHARS);
 
+  // Refuse rather than truncate.
+  //
+  // Storing a partial bill here was silently destructive. The caller cannot tell
+  // a truncated scrape from a complete one, so it wrote the fragment as the
+  // bill's whole original_text, summarised it, and set summary_ok = TRUE --
+  // after which lease_next_bill never re-queues that row. The missing half of
+  // the bill was then gone for good, recorded only in a log line, while the app
+  // presented the fragment to a survivor as the law.
+  //
+  // Returning null instead routes the bill to the LegiScan getBillText fallback
+  // that already exists for "leginfo had nothing usable", metered by the same
+  // API guardrails as every other LegiScan call, so this adds no unbudgeted
+  // request. If that fails too the bill stays queued with no text -- visibly
+  // incomplete and recoverable, which is the honest failure.
+  //
+  // With the ceiling at 12 M against a largest-real-bill of 8.08 M this should
+  // never fire. If it does, the page is pathological or California has outgrown
+  // the ceiling, and both want a human rather than a silent fragment.
   if (available > LEGINFO_MAX_SLICE_CHARS) {
-    // A blind cut can land inside a tag, or inside a <script> whose closing tag
-    // is now gone -- SCRIPT_OR_STYLE would not match it and ANY_TAG would strip
-    // only the opening tag, leaving raw JavaScript in the stored bill text.
-    // Back off to the last complete tag, then behind any script left unclosed.
-    const lastClose = slice.lastIndexOf(">");
-    if (lastClose !== -1) slice = slice.slice(0, lastClose + 1);
-
-    // One lowercase copy, not two. This branch only runs when we are already
-    // holding LEGINFO_MAX_SLICE_CHARS of text, so each full-size copy is the
-    // most expensive allocation in the function -- calling .toLowerCase() once
-    // per comparison doubled the peak at exactly the moment it mattered least.
-    const lowered = slice.toLowerCase();
-    const lastScriptOpen = lowered.lastIndexOf("<script");
-    if (
-      lastScriptOpen !== -1 && lastScriptOpen > lowered.lastIndexOf("</script")
-    ) {
-      slice = slice.slice(0, lastScriptOpen);
-    }
-
-    console.warn("Leginfo scrape hit the slice ceiling; bill text truncated", {
-      available_chars: available,
-      ceiling: LEGINFO_MAX_SLICE_CHARS,
-      kept_chars: slice.length,
-    });
+    console.warn(
+      "Leginfo page exceeds the slice ceiling; refusing to store a partial bill",
+      { available_chars: available, ceiling: LEGINFO_MAX_SLICE_CHARS },
+    );
+    return null;
   }
+
+  const slice = html.slice(start);
 
   const text = decodeHtmlEntities(
     slice
@@ -1446,6 +1453,14 @@ serve(async (req) => {
           medium: Boolean(existingMedium),
           complex: Boolean(existingComplex),
         };
+        // spanishFinal prefers existingSpanish* the same way englishFinal prefers
+        // existing*, so the Spanish guards need the same exemption: a level we
+        // are going to discard must not be able to fail the bill.
+        const keepExistingSpanish = {
+          simple: Boolean(existingSpanishSimple),
+          medium: Boolean(existingSpanishMedium),
+          complex: Boolean(existingSpanishComplex),
+        };
         const shortfalls = collectLengthShortfalls(
           summaries.english,
           keepExisting,
@@ -1514,28 +1529,71 @@ serve(async (req) => {
             );
           }
 
-          // Only take the retry if it clears every floor it needed to.
-          // Accepting on truthiness alone let a retry that fixed medium while
-          // regressing simple overwrite a payload whose simple had passed, and
-          // then throw on simple instead.
-          const retryUsable = Boolean(
-            retried?.english?.simple && retried?.english?.medium &&
-              retried?.english?.complex && retried?.spanish?.simple &&
-              retried?.spanish?.medium && retried?.spanish?.complex,
-          );
-          if (
-            retried && retryUsable &&
-            collectLengthShortfalls(retried.english, keepExisting).length === 0
-          ) {
-            summaries = retried;
-          } else if (retried) {
-            // Only when a retry actually came back. A thrown re-ask has already
-            // been logged by the catch above; warning again here would report
-            // the same event twice under two different causes.
-            console.warn(
-              "- Re-ask did not clear the floors; keeping the first response",
-              { bill_id: billData.bill_id },
+          // Adopt the retry when it is BETTER, not only when it is perfect.
+          //
+          // Requiring the retry to clear every target looked safe and was not:
+          // if the first response had an empty level and the retry filled it but
+          // landed slightly under target, the retry was thrown away, the broken
+          // first response was kept, and the completeness check below threw --
+          // identically on every future run, since nothing about the next
+          // attempt differs. Demanding perfection from the fallback is how you
+          // end up keeping the worse of two answers.
+          //
+          // `storable` is the dominant term because it is exactly what the
+          // validators below enforce: all six levels present, and every level we
+          // will actually use at or above the hard floor. A response that is
+          // storable always beats one that is not, whatever their lengths. Only
+          // between two equally storable responses does the aggregate shortfall
+          // decide, which preserves the property that motivated the strict check
+          // -- a retry that improves one level by less than it regresses another
+          // is not an improvement and is not taken.
+          const summaryDeficit = (candidate: typeof summaries): number =>
+            collectLengthShortfalls(candidate.english, keepExisting)
+              .reduce(
+                (total, entry) => total + (entry.required - entry.actual),
+                0,
+              );
+
+          const isStorable = (candidate: typeof summaries | null): boolean => {
+            if (!candidate) return false;
+            const { english, spanish } = candidate;
+            if (
+              !english?.simple || !english?.medium || !english?.complex ||
+              !spanish?.simple || !spanish?.medium || !spanish?.complex
+            ) {
+              return false;
+            }
+            // Only levels we will keep from this response need to clear the hard
+            // floor; a level backed by an existing summary is discarded either
+            // way and must not veto an otherwise good retry.
+            return (["simple", "medium", "complex"] as const).every((level) =>
+              keepExisting[level] ||
+              toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS
             );
+          };
+
+          if (retried) {
+            const firstStorable = isStorable(summaries);
+            const retryStorable = isStorable(retried);
+            const better = retryStorable &&
+              (!firstStorable ||
+                summaryDeficit(retried) < summaryDeficit(summaries));
+
+            if (better) {
+              summaries = retried;
+            } else {
+              // Only when a retry actually came back. A thrown re-ask has
+              // already been logged by the catch above; warning again here would
+              // report the same event twice under two different causes.
+              console.warn(
+                "- Re-ask did not improve on the first response; keeping it",
+                {
+                  bill_id: billData.bill_id,
+                  first_storable: firstStorable,
+                  retry_storable: retryStorable,
+                },
+              );
+            }
           }
         } else if (shortfalls.length > 0) {
           console.warn(
@@ -1547,30 +1605,44 @@ serve(async (req) => {
         const englishSummaries = summaries.english;
         const spanishSummaries = summaries.spanish;
 
+        // Every English guard below is scoped to the levels this response will
+        // actually contribute. englishFinal prefers `existing*` over anything
+        // generated here, so a level backed by an existing summary is discarded
+        // regardless of what came back -- and letting it throw meant a Spanish-
+        // only backfill could fail permanently because the English complex it
+        // was never going to use came back empty. collectLengthShortfalls
+        // already skips those levels; these guards now agree with it.
+        const generatedLevels = (["simple", "medium", "complex"] as const)
+          .filter((level) => !keepExisting[level]);
+
+        const generatedSpanishLevels =
+          (["simple", "medium", "complex"] as const)
+            .filter((level) => !keepExistingSpanish[level]);
+
         if (
-          !englishSummaries?.simple || !englishSummaries?.medium ||
-          !englishSummaries?.complex
+          generatedLevels.some((level) => !englishSummaries?.[level])
         ) {
           throw new Error("Incomplete English summaries returned");
         }
         if (
-          !spanishSummaries?.simple || !spanishSummaries?.medium ||
-          !spanishSummaries?.complex
+          generatedSpanishLevels.some((level) => !spanishSummaries?.[level])
         ) {
           throw new Error("Incomplete Spanish summaries returned");
         }
 
         asciiEnglish = {
-          simple: toAscii(englishSummaries.simple),
-          medium: toAscii(englishSummaries.medium),
-          complex: toAscii(englishSummaries.complex),
+          simple: toAscii(englishSummaries.simple ?? ""),
+          medium: toAscii(englishSummaries.medium ?? ""),
+          complex: toAscii(englishSummaries.complex ?? ""),
         };
 
-        if (Object.values(asciiEnglish).some((text) => !text)) {
+        if (generatedLevels.some((level) => !asciiEnglish![level])) {
           throw new Error("Empty English summaries after ASCII normalization");
         }
 
-        if (Object.values(asciiEnglish).some((text) => asciiGuard.test(text))) {
+        if (
+          generatedLevels.some((level) => asciiGuard.test(asciiEnglish![level]))
+        ) {
           throw new Error("English summaries contain non-ASCII characters");
         }
 
@@ -1582,14 +1654,8 @@ serve(async (req) => {
         // throwing here would fail the same bill identically on every future
         // run. See SUMMARY_HARD_FLOOR_CHARS for the full reasoning.
         const shortAfterReask: string[] = [];
-        for (
-          const [level, text, skip] of [
-            ["simple", asciiEnglish.simple, Boolean(existingSimple)],
-            ["medium", asciiEnglish.medium, Boolean(existingMedium)],
-            ["complex", asciiEnglish.complex, Boolean(existingComplex)],
-          ] as const
-        ) {
-          if (skip) continue;
+        for (const level of generatedLevels) {
+          const text = asciiEnglish[level];
           if (text.length < SUMMARY_HARD_FLOOR_CHARS) {
             throw new Error(
               `${level} summary below hard floor (${text.length} < ${SUMMARY_HARD_FLOOR_CHARS})`,
@@ -1618,12 +1684,12 @@ serve(async (req) => {
         }
 
         spanishTrimmed = {
-          simple: spanishSummaries.simple.trim(),
-          medium: spanishSummaries.medium.trim(),
-          complex: spanishSummaries.complex.trim(),
+          simple: (spanishSummaries.simple ?? "").trim(),
+          medium: (spanishSummaries.medium ?? "").trim(),
+          complex: (spanishSummaries.complex ?? "").trim(),
         };
 
-        if (Object.values(spanishTrimmed).some((text) => !text)) {
+        if (generatedSpanishLevels.some((level) => !spanishTrimmed![level])) {
           throw new Error("Spanish summaries contain empty values after trim");
         }
       }
