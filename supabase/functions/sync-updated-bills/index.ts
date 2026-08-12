@@ -157,6 +157,16 @@ const MIN_SUMMARY_LENGTHS = {
   medium: 400,
   complex: 600,
 };
+
+// toAscii() runs on the model's output before the floors are checked, and it can
+// only shrink the string: NFKD plus diacritic stripping, any non-ASCII run
+// collapsing to a single space, whitespace collapsed, then trimmed. A response
+// that lands exactly on a floor can normalise to just under it and be rejected.
+// Ask for a margin so the floor is what survives normalisation, not what the
+// model aimed at.
+const SUMMARY_LENGTH_TARGET_MARGIN = 1.15;
+const summaryTarget = (floor: number): number =>
+  Math.ceil(floor * SUMMARY_LENGTH_TARGET_MARGIN);
 const asciiGuard = /[^ -~\n]/;
 
 const invalidSummaryPrefix = /^error[:\s]/i;
@@ -571,6 +581,35 @@ const toAscii = (input: string): string =>
     .replace(/[^\S\n]+/g, " ")
     .trim();
 
+type SummaryShortfall = {
+  level: "simple" | "medium" | "complex";
+  actual: number;
+  required: number;
+};
+
+// Measures the same string the validator will judge -- post-toAscii -- so the
+// re-ask triggers on exactly the condition that would otherwise throw, rather
+// than on the raw model output which is always at least as long.
+const firstLengthShortfall = (
+  english: { simple: string; medium: string; complex: string } | undefined,
+): SummaryShortfall | null => {
+  if (!english) return null;
+  const levels: Array<SummaryShortfall["level"]> = [
+    "simple",
+    "medium",
+    "complex",
+  ];
+  for (const level of levels) {
+    const value = english[level];
+    if (!value) continue;
+    const actual = toAscii(value).length;
+    const required = MIN_SUMMARY_LENGTHS[level];
+    if (actual < required) return { level, actual, required };
+  }
+  return null;
+};
+
+
 const summarySchema = {
   name: "SummaryPayload",
   schema: {
@@ -673,6 +712,10 @@ const callSummarizer = async (
   openAiKey: string,
   signal: AbortSignal,
   userIdentifier: string,
+  // Appended verbatim to the user turn. Used to re-ask when a generation came
+  // back under the length floors, so the model is told what it actually missed
+  // instead of being handed the identical prompt again.
+  reinforcement?: string,
 ): Promise<SummaryPayload> => {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -710,7 +753,9 @@ const callSummarizer = async (
           // identically forever. Deriving both from MIN_SUMMARY_LENGTHS keeps
           // the instruction and the check from drifting apart again.
           content:
-            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph and at least ${MIN_SUMMARY_LENGTHS.simple} characters. Medium ≈10th grade with ≥2 paragraphs and at least ${MIN_SUMMARY_LENGTHS.medium} characters. Complex is an expert legal analysis of at least ${MIN_SUMMARY_LENGTHS.complex} characters. Prefer concrete specifics from the bill over generic description of what the law is. Spanish should remain natural with diacritics.`,
+            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.simple)} characters. Medium ≈10th grade with ≥2 paragraphs and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.medium)} characters. Complex is an expert legal analysis of at least ${summaryTarget(MIN_SUMMARY_LENGTHS.complex)} characters. Prefer concrete specifics from the bill over generic description of what the law is. Spanish should remain natural with diacritics.${
+              reinforcement ? `\n${reinforcement}` : ""
+            }`,
         },
       ],
     }),
@@ -1226,14 +1271,46 @@ serve(async (req) => {
           originalTextFormatted,
         );
 
-        const summaries = await withRetries((_, signal) =>
-          callSummarizer(
-            summarizerSource,
-            openAiKey,
-            signal,
-            String(billData?.bill_id ?? billId ?? "unknown"),
-          )
-        );
+        const generateSummaries = (reinforcement?: string) =>
+          withRetries((_, signal) =>
+            callSummarizer(
+              summarizerSource,
+              openAiKey,
+              signal,
+              String(billData?.bill_id ?? billId ?? "unknown"),
+              reinforcement,
+            )
+          );
+
+        let summaries = await generateSummaries();
+
+        // withRetries covers transport failures on the OpenAI call, not a
+        // response that came back too short. Without this re-ask a single
+        // sub-floor generation fails the bill outright, and because nothing
+        // about the next run differs it fails identically every cron cycle --
+        // burning a paid summarisation each time and never converging. AB101
+        // was stuck exactly this way at 372 characters against a 400 floor.
+        const shortfall = firstLengthShortfall(summaries.english);
+        if (shortfall) {
+          console.warn("- Summary under the length floor; re-asking once", {
+            bill_id: billData.bill_id,
+            ...shortfall,
+          });
+          const retried = await generateSummaries(
+            `A previous attempt returned a ${shortfall.level} summary of ` +
+              `${shortfall.actual} characters, under the required ` +
+              `${shortfall.required}. Expand that level using additional ` +
+              `concrete detail drawn from the bill text -- specific programs, ` +
+              `amounts, sections or effects. Do not pad with generalities.`,
+          );
+          if (
+            retried?.english?.simple && retried?.english?.medium &&
+            retried?.english?.complex && retried?.spanish?.simple &&
+            retried?.spanish?.medium && retried?.spanish?.complex
+          ) {
+            summaries = retried;
+          }
+        }
 
         const englishSummaries = summaries.english;
         const spanishSummaries = summaries.spanish;
