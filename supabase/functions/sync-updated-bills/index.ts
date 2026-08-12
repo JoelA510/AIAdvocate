@@ -110,9 +110,37 @@ const LEGISCAN_API_HEADERS = {
   "User-Agent": "AIAdvocate/1.0 Supabase Edge Function",
 };
 
+// Discovery adds roughly five California bills a day while this defaulted to
+// three per daily run, so the unsummarised backlog grew even on days when
+// nothing errored. Raised to eight, which is only safe because of the wall
+// clock budget below.
 const MAX_BILLS_PER_RUN = Math.max(
   0,
-  Number.parseInt(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "3", 10) || 0,
+  Number.parseInt(Deno.env.get("SYNC_BILLS_PER_RUN") ?? "8", 10) || 0,
+);
+
+// The bill loop had no time budget: it ran its iteration count and relied on
+// finishing before the platform killed the invocation. Being killed mid-bill is
+// worse than stopping early, because the lease taken by lease_next_bill is
+// still held and nothing releases it -- that bill is then skipped by every run
+// for the remaining 900s of its TTL. Stop leasing new work once the run is
+// close to the limit and let the next cron pick up where this one left off.
+const RUN_TIME_BUDGET_MS = Math.max(
+  10_000,
+  Number.parseInt(Deno.env.get("SYNC_RUN_TIME_BUDGET_MS") ?? "110000", 10) ||
+    110_000,
+);
+
+// Headroom held back from RUN_TIME_BUDGET_MS so the last bill a run starts can
+// still finish inside the budget. A single bill can legitimately take a while:
+// fetchJsonWithRetries allows 3 attempts at a 45s abort plus backoff, and a
+// bill makes several such calls. This does not cap an already-running bill --
+// nothing here can -- it just stops the loop handing out work it has no time
+// left to finish.
+const PER_BILL_HEADROOM_MS = Math.max(
+  0,
+  Number.parseInt(Deno.env.get("SYNC_PER_BILL_HEADROOM_MS") ?? "45000", 10) ||
+    45_000,
 );
 const RESPONSE_PREVIEW_LIMIT = Math.max(
   1,
@@ -656,9 +684,27 @@ const buildSummarizerSource = (
   sections.push(`Legislation:\n${formattedText}`);
   const combined = sections.join("\n\n").trim();
   if (combined.length <= MAX_MODEL_INPUT_CHARS) return combined;
-  return `${
-    combined.slice(0, MAX_MODEL_INPUT_CHARS)
-  }\n\n[Text truncated for model input. Focus on the salient sections above.]`;
+
+  // Oversized bills used to be head-truncated with slice(0, MAX). For a long
+  // bill that hands the model nothing but the opening boilerplate, and the
+  // resulting summaries say what a statute *is* rather than what this bill
+  // *does*. It showed up most clearly on California's budget bills, which run
+  // 1.2-1.6 MB -- so the model saw well under 1% of the document, all of it
+  // preamble, and every Budget Act summary came out near-identical and
+  // contentless ("a law that helps fund the state government for the year
+  // 2025-26"), regardless of what the bill actually appropriated.
+  //
+  // Sample the head and the tail instead, within the same character budget:
+  // the head keeps the title, findings and enacting clause that establish what
+  // the bill is, and the tail carries the operative sections that a preamble
+  // never reaches. Bills under the limit are untouched, so this only changes
+  // inputs that were previously being silently gutted.
+  const notice =
+    "\n\n[...text elided for model input; the opening and closing sections of the bill are shown...]\n\n";
+  const budget = MAX_MODEL_INPUT_CHARS - notice.length;
+  const headChars = Math.floor(budget * 0.4);
+  const tailChars = budget - headChars;
+  return `${combined.slice(0, headChars)}${notice}${combined.slice(-tailChars)}`;
 };
 
 const coalesceText = (...values: unknown[]): string | null => {
@@ -1301,7 +1347,27 @@ serve(async (req) => {
       });
     };
 
+    const runStartedAt = Date.now();
+    let stoppedForTimeBudget = false;
     for (let i = 0; i < maxBillsToProcess; i++) {
+      const elapsedMs = Date.now() - runStartedAt;
+      // The budget gates whether to *start* another bill, so a bill leased just
+      // under the line still runs to completion and the invocation can overrun.
+      // Reserve headroom for one worst-case bill rather than checking against
+      // the raw budget, so the guard bounds the whole run and not just the
+      // moment work is handed out.
+      if (elapsedMs >= RUN_TIME_BUDGET_MS - PER_BILL_HEADROOM_MS) {
+        stoppedForTimeBudget = true;
+        const message =
+          `Stopping before iteration ${i}: run time budget reached (${elapsedMs}ms of ${RUN_TIME_BUDGET_MS}ms, reserving ${PER_BILL_HEADROOM_MS}ms for an in-flight bill). Remaining bills roll over to the next run.`;
+        // Surfaced through console + the response body, not only logCronDebug:
+        // that helper is a no-op unless SYNC_DEBUG_LOGS=true, which made a
+        // truncated run indistinguishable from a drained queue.
+        console.warn(message);
+        await logCronDebug(supabaseAdmin, message);
+        break;
+      }
+
       const nextId = await leaseNextBillId();
       if (!nextId) {
         await logCronDebug(
@@ -1357,6 +1423,7 @@ serve(async (req) => {
       return toJson({
         error:
           "All leased bills failed during text import or summary generation.",
+        stoppedForTimeBudget,
         failuresCount: failures.length,
         failuresPreview: failures.slice(0, RESPONSE_PREVIEW_LIMIT),
         legiscan: {
@@ -1372,7 +1439,11 @@ serve(async (req) => {
 
     if (processedBills.length === 0) {
       return toJson({
-        message: "Sync complete. All bills are up-to-date.",
+        // Do not claim a drained queue if the loop stopped on the clock.
+        message: stoppedForTimeBudget
+          ? "Sync stopped on the run time budget before processing any bills. Work remains queued."
+          : "Sync complete. All bills are up-to-date.",
+        stoppedForTimeBudget,
         legiscan: {
           enabled: legiscanDetailsEnabled,
           disabled_for_run_reason: legiscanRuntimeDisabledReason,
@@ -1385,7 +1456,10 @@ serve(async (req) => {
     }
 
     return toJson({
-      message: `Processed ${processedBills.length} bill(s).`,
+      message: stoppedForTimeBudget
+        ? `Processed ${processedBills.length} bill(s), then stopped on the run time budget. Work remains queued.`
+        : `Processed ${processedBills.length} bill(s).`,
+      stoppedForTimeBudget,
       processedBillsCount: processedBills.length,
       processedBillsPreview: processedBills.slice(0, RESPONSE_PREVIEW_LIMIT),
       failuresCount: failures.length,

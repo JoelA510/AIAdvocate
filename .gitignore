@@ -65,3 +65,4 @@ yarn-audit.json
 hot-cache.md
 mobile-app/project_context.txt
 mobile-app/create_context.sh
+deno.lock
