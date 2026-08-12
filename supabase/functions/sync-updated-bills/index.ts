@@ -417,6 +417,68 @@ const formatLegislationText = (raw: string): string => {
   return working.trim();
 };
 
+// Leginfo pages were previously parsed with deno_dom's DOMParser, which built a
+// full DOM for the whole document. That is what actually broke ingestion for
+// California's budget bills: their text pages run well over a megabyte, and on
+// 2026-08-12 the edge function logs show the sequence
+//
+//   Processing bill { bill_id: 1908086 }   (AB101, "Budget Act of 2025")
+//   - Attempting Leginfo scrape
+//   Memory limit exceeded  -> shutdown     (4 seconds later)
+//
+// The runtime *kills* the isolate, so nothing is thrown and nothing reaches
+// cron_job_errors -- which is why this looked like a silent stall rather than a
+// failure. A DOM of a 1.5 MB document costs many times the source in node
+// objects; the bill text is a flat run of markup, so none of that structure is
+// needed.
+//
+// Extract it with bounded string work instead. On leginfo, `bill_all` is the
+// last content block on the page, so everything from the anchor to the end of
+// the document is the bill, and slicing there also caps how much is processed.
+const LEGINFO_ANCHOR = 'id="bill_all"';
+
+// Hard ceiling on the markup considered, so a pathological page can never cost
+// more than a bounded amount of memory regardless of what leginfo serves.
+const LEGINFO_MAX_SLICE_CHARS = 4_000_000;
+
+const decodeBasicEntities = (input: string): string =>
+  input
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_m, code) => {
+      const n = Number(code);
+      return Number.isFinite(n) && n > 0 && n < 0x110000
+        ? String.fromCodePoint(n)
+        : " ";
+    });
+
+const extractLeginfoBillText = (html: string): string | null => {
+  const anchor = html.indexOf(LEGINFO_ANCHOR);
+  if (anchor === -1) return null;
+
+  // Start after the opening tag's closing ">", not at the anchor itself --
+  // slicing mid-tag leaves the element's remaining attributes as literal text
+  // ('id="bill_all" align="justify">') at the head of the bill.
+  const tagEnd = html.indexOf(">", anchor);
+  const start = tagEnd === -1 ? anchor + LEGINFO_ANCHOR.length : tagEnd + 1;
+
+  const slice = html.slice(start, start + LEGINFO_MAX_SLICE_CHARS);
+  const text = decodeBasicEntities(
+    slice
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]*>/g, " "),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.length > 0 ? text : null;
+};
+
 const scrapeLeginfoText = async (stateLink: string): Promise<string | null> => {
   try {
     const urlObj = new URL(stateLink);
@@ -429,13 +491,7 @@ const scrapeLeginfoText = async (stateLink: string): Promise<string | null> => {
     if (!res.ok) return null;
 
     const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    if (!doc) return null;
-
-    const billContent = doc.getElementById("bill_all");
-    if (!billContent) return null;
-
-    return billContent.textContent || null;
+    return extractLeginfoBillText(html);
   } catch (error) {
     console.warn("Leginfo scrape failed", { error: String(error) });
     return null;
