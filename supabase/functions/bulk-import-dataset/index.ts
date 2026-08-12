@@ -71,6 +71,63 @@ const RELEVANT_SEARCH_PHRASES = [
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Omnibus appropriations vehicles are a systematic false positive for the
+// text-verification gate below, and the gate is working correctly when it lets
+// them through: California's Budget Acts appropriate money to essentially every
+// state program, so "human trafficking", "sexual assault" and "domestic
+// violence" all genuinely appear in their text -- as line items among thousands.
+// Measured on what was imported: 10 of the 10 Budget Acts carrying text matched
+// at least two phrases, and AB102/AB105/AB111/SB102/SB105/SB111 matched three.
+//
+// A bill that merely funds a program is not a bill about that program. Surfacing
+// a 1.5 MB appropriations act next to a trafficking statute misrepresents what
+// the app is for, and no summary of it can convey which line items matter to a
+// survivor. Title-matching is exact here rather than heuristic: "Budget Act of
+// YYYY" and "Budget Acts of ..." are the reserved names of California's
+// appropriations vehicles, not descriptive titles a topical bill could carry.
+//
+// Override with BULK_IMPORT_TOPIC_EXCLUSION_REGEX if another vehicle class shows
+// up; set it empty to disable the exclusion entirely.
+const DEFAULT_TOPIC_EXCLUSION_REGEX = /^\s*budget\s+acts?\s+of\b/i;
+
+// Resolved once per isolate rather than per title. isExcludedVehicle() is
+// called for every candidate in both sweeps -- hundreds per run -- and the
+// previous per-call form re-read the environment and recompiled the regex each
+// time. Worse, an invalid BULK_IMPORT_TOPIC_EXCLUSION_REGEX emitted its warning
+// on every single call, so a one-character typo in the env var buried the run's
+// real output under hundreds of copies of the same line. Memoising makes the
+// warning fire once, which is how many times the condition actually occurred.
+let topicExclusionRegex: RegExp | null | undefined;
+
+const getTopicExclusionRegex = (): RegExp | null => {
+  if (topicExclusionRegex !== undefined) return topicExclusionRegex;
+  const raw = Deno.env.get("BULK_IMPORT_TOPIC_EXCLUSION_REGEX");
+  if (raw === undefined || raw === null) {
+    topicExclusionRegex = DEFAULT_TOPIC_EXCLUSION_REGEX;
+  } else if (raw.trim() === "") {
+    topicExclusionRegex = null;
+  } else {
+    try {
+      topicExclusionRegex = new RegExp(raw, "i");
+    } catch {
+      console.warn(
+        "BULK_IMPORT_TOPIC_EXCLUSION_REGEX is not a valid regex; using the default",
+        { value: raw },
+      );
+      topicExclusionRegex = DEFAULT_TOPIC_EXCLUSION_REGEX;
+    }
+  }
+  return topicExclusionRegex;
+};
+
+const isExcludedVehicle = (title: string | null | undefined): boolean => {
+  const pattern = getTopicExclusionRegex();
+  if (!pattern || !title) return false;
+  // Safe to share a compiled regex across calls because the flags are fixed at
+  // "i" -- no /g, so .test() has no lastIndex state to carry between titles.
+  return pattern.test(title);
+};
+
 const buildVerifyRegex = (phrases: string[]): RegExp =>
   new RegExp(`(${phrases.map(escapeRegExp).join("|")})`, "i");
 
@@ -169,6 +226,7 @@ type SearchDiscoveryStats = {
   rejected_count: number;
   unverifiable_count: number;
   verify_unavailable: number;
+  excluded_vehicle_count: number;
   error_count: number;
   errors: string[];
   sample_new_bills: Array<{ id: number; bill_number: string; title: string }>;
@@ -406,9 +464,25 @@ const getSummarySyncInvocationCount = (candidateRows: number): number => {
     return parsePositiveInt(explicitCount, 1, 20);
   }
 
+  // Mirrors sync-updated-bills' MAX_BILLS_PER_RUN default, and divides the
+  // candidate count to decide how many sync invocations to spawn. Keeping the
+  // two defaults aligned matters because drift in the denominator oversubscribes
+  // the fan-out: with this at 3 while sync actually leases 8, 24 candidates
+  // would spawn 8 invocations x 8 bills = 64 concurrent pipelines instead of 24
+  // against the same shared-CPU database -- the load this whole change reduces.
+  //
+  // Worth knowing: this is an UPPER bound on what a sync run does, not a
+  // prediction of it. Since sync gained a wall-clock budget, its real per-run
+  // count is whatever it can finish inside LEASE_CUTOFF_MS, which is fewer than
+  // MAX_BILLS_PER_RUN whenever bills are slow. So the fan-out under-provisions
+  // rather than over-provisions, and the remainder is picked up by the daily
+  // cron instead of by a wider fan-out. That is the direction to err in on a
+  // shared-CPU database, and the queue still drains -- so this stays keyed to
+  // the lease ceiling rather than to a guessed per-bill duration, which would be
+  // a number invented rather than measured.
   const billsPerRun = parsePositiveInt(
     Deno.env.get("SYNC_BILLS_PER_RUN"),
-    3,
+    8,
     50,
   );
   const maxInvocations = parsePositiveInt(
@@ -829,6 +903,7 @@ const runSearchDiscovery = async (
     rejected_count: 0,
     unverifiable_count: 0,
     verify_unavailable: 0,
+    excluded_vehicle_count: 0,
     error_count: 0,
     errors: [],
     sample_new_bills: [],
@@ -955,6 +1030,42 @@ const runSearchDiscovery = async (
     }
   }
 
+  // Omnibus appropriations vehicles are dropped here, at the candidate stage,
+  // rather than inside the verification loop below. Two things depend on that
+  // placement:
+  //
+  //   1. `dryRun` returns before the verification loop, so an exclusion applied
+  //      down there is invisible to the one mode you would use to check the
+  //      filter -- a dry run would report excluded_vehicle_count: 0 and still
+  //      list Budget Acts under new_bills/sample_new_bills.
+  //   2. The verification loop rejects by writing ids into the persisted
+  //      `rejected` cache, and `newCandidates` filters on that cache *before*
+  //      any title check runs. Excluding by rejection would therefore make the
+  //      documented rollback (clear BULK_IMPORT_TOPIC_EXCLUSION_REGEX, re-run
+  //      discovery) a no-op until those ids aged out of the 5,000-entry window
+  //      -- which is exactly the recovery path that
+  //      20260812123000_remove_budget_act_vehicles.sql relies on.
+  //
+  // Filtering the map instead costs a regex per title per sweep and leaves no
+  // persisted trace, so the exclusion stays reversible by configuration alone.
+  // The original motivation still holds: these never reach billTextMentionsTopic,
+  // so no leginfo fetch is spent confirming a match we intend to reject.
+  //
+  // The persisted queue is swept too -- vehicles queued before this filter
+  // existed would otherwise sit there forever, since nothing else removes them.
+  const excludedVehicleIds = new Set<number>();
+  for (const [id, row] of candidates) {
+    if (isExcludedVehicle(row.title)) {
+      console.log("- Skipping excluded vehicle", {
+        bill_id: id,
+        bill_number: row.bill_number,
+        title: row.title,
+      });
+      candidates.delete(id);
+      excludedVehicleIds.add(id);
+    }
+  }
+
   stats.candidate_bills = candidates.size;
 
   // Candidates are queued rather than inserted directly: verification costs a
@@ -966,6 +1077,19 @@ const runSearchDiscovery = async (
   const queued = new Map<number, BillSeedRow>(
     pending.rows.map((row) => [row.id, row]),
   );
+
+  for (const [id, row] of queued) {
+    if (isExcludedVehicle(row.title)) {
+      queued.delete(id);
+      excludedVehicleIds.add(id);
+    }
+  }
+
+  // Counted by id rather than by increment, because a vehicle can appear in both
+  // sweeps above -- discovered again this run *and* still sitting in the
+  // persisted queue from an earlier one. Incrementing twice would report more
+  // exclusions than there are bills.
+  stats.excluded_vehicle_count = excludedVehicleIds.size;
 
   const newCandidates = Array.from(candidates.values()).filter(
     (row) => !rejected.has(row.id) && !queued.has(row.id),
@@ -1011,6 +1135,12 @@ const runSearchDiscovery = async (
     if (verified.length >= maxNewBills) break;
 
     const row = queue[index];
+
+    // No exclusion check here -- vehicles were filtered out of `candidates` and
+    // the persisted queue before this loop, so nothing reaching it can be one.
+    // See the note at the candidate-stage filter for why rejecting them here
+    // was wrong.
+
     if (stats.verify_attempted > 0) await delay(verifyDelayMs);
     stats.verify_attempted += 1;
 

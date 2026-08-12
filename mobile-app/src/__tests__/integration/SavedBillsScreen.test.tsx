@@ -1,6 +1,7 @@
 // mobile-app/src/__tests__/integration/SavedBillsScreen.test.tsx
 import React from "react";
 import { render, waitFor, act } from "@testing-library/react-native";
+import { QueryWrapper } from "../../test-utils/query";
 import SavedBillsScreen from "../../../app/(tabs)/saved";
 import { AuthProvider } from "../../providers/AuthProvider";
 import { supabase } from "../../lib/supabase";
@@ -88,9 +89,11 @@ describe("SavedBillsScreen Integration", () => {
     });
 
     const { getByText } = await render(
-      <AuthProvider>
-        <SavedBillsScreen />
-      </AuthProvider>,
+      <QueryWrapper>
+        <AuthProvider>
+          <SavedBillsScreen />
+        </AuthProvider>
+      </QueryWrapper>,
     );
 
     await waitFor(() => expect(getByText("No saved bills yet")).toBeTruthy());
@@ -139,9 +142,11 @@ describe("SavedBillsScreen Integration", () => {
     });
 
     const { getByText, findByText } = await render(
-      <AuthProvider>
-        <SavedBillsScreen />
-      </AuthProvider>,
+      <QueryWrapper>
+        <AuthProvider>
+          <SavedBillsScreen />
+        </AuthProvider>
+      </QueryWrapper>,
     );
 
     await findByText("Test Bill");
