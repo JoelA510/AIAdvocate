@@ -320,19 +320,18 @@ const isValidSummary = (value?: string | null): boolean => {
   return true;
 };
 
-// Spanish's equivalent of SUMMARY_HARD_FLOOR_CHARS: the line between "the
-// translation did not happen" and "the translation is shorter than we would
-// like". Below this we warn; failing isUsableSpanishSummary we throw.
+// NOTHING THROWS FOR SPANISH. An earlier revision of this comment said it did;
+// that contract is gone. A sub-standard Spanish level causes the
+// bill_translations row to be skipped, and translation.ts refills it on demand.
+//
+// These two are what remain: they only distinguish "short" from "unusable" in
+// the warning, so an operator reading the logs can tell a thin translation from
+// a failed one. Both outcomes are identical to the code.
 //
 // Spanish deliberately has no length TARGET. Its levels are translations of
-// English levels that have already been held to MIN_SUMMARY_LENGTHS, so their
-// length is inherited rather than independently steered, and imposing a second
-// floor here would fail bills for the model's word choice in another language.
+// English levels already held to MIN_SUMMARY_LENGTHS, so their length is
+// inherited rather than independently steered.
 const MIN_SPANISH_SUMMARY_CHARS = 40;
-
-// Presence and sanity only -- no length test. isValidSummary's 40-character
-// minimum is right for an English summary that must stand on its own and wrong
-// as a reason to throw away a whole bill's work.
 const isUsableSpanishSummary = (value?: string | null): boolean => {
   if (!value) return false;
   const trimmed = value.trim();
@@ -692,7 +691,12 @@ const NAMED_ENTITIES: Record<string, string> = {
 // Matching every entity in a single scan means each one is consumed exactly
 // once and its output is never re-examined. Hex forms (&#x2019;) are handled
 // too -- leginfo emits them, and the DOMParser path this replaced decoded them.
-const HTML_ENTITY = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g;
+// The named branch allows digits after the first letter. It was [a-zA-Z]+, so
+// &frac12; / &frac14; / &frac34; could never match the table that lists them --
+// they were emitted literally into stored bill text, a regression against the
+// textContent path this replaced. Entity names start with a letter and may
+// contain digits thereafter.
+const HTML_ENTITY = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z][a-zA-Z0-9]*));/g;
 
 const decodeHtmlEntities = (input: string): string =>
   input.replace(HTML_ENTITY, (match, dec, hex, name) => {
@@ -743,6 +747,15 @@ const HTML_COMMENT = /<!--[\s\S]*?-->/g;
 // Latent today: the live AB101 page carries no comments and no bare "<" after
 // the anchor. Fixed because it is a regression against the path it replaced and
 // the failure would be silent and unrecoverable.
+// Table cells need a visible separator or adjacent column values run together.
+const CELL_BOUNDARY = /<\/?(?:td|th)\b[^>]*>/gi;
+
+// Everything left is removed outright, NOT replaced with a space. leginfo marks
+// amendments with inline tags mid-token -- "Section 1234<i>.5</i>" -- so
+// substituting a space split citations and words in the stored bill text
+// ("Section 1234 .5"). Block and cell boundaries have already been turned into
+// newlines and separators above, so nothing here carries structure worth
+// preserving.
 const ANY_TAG = /<\/?[a-zA-Z][^>]*>|<!\[CDATA\[[\s\S]*?\]\]>|<[!?][^>]*>/g;
 
 // Markup -> readable text without building a node tree. Shared by the leginfo
@@ -754,7 +767,8 @@ const stripHtmlToText = (html: string): string => {
       .replace(SCRIPT_OR_STYLE, " ")
       .replace(HTML_COMMENT, " ")
       .replace(BLOCK_BOUNDARY, "\n")
-      .replace(ANY_TAG, " "),
+      .replace(CELL_BOUNDARY, " | ")
+      .replace(ANY_TAG, ""),
   );
   // Trim horizontal whitespace off each line BEFORE collapsing newline runs.
   // Without this, collapseNLBlocks is very nearly a no-op here: the preceding
@@ -827,7 +841,10 @@ const extractLeginfoBillText = (html: string): string | null => {
   return cleaned.length > 0 ? cleaned : null;
 };
 
-const scrapeLeginfoText = async (stateLink: string): Promise<string | null> => {
+const scrapeLeginfoText = async (
+  stateLink: string,
+  deadlineAt = Number.POSITIVE_INFINITY,
+): Promise<string | null> => {
   try {
     const urlObj = new URL(stateLink);
     const billId = urlObj.searchParams.get("bill_id");
@@ -842,7 +859,14 @@ const scrapeLeginfoText = async (stateLink: string): Promise<string | null> => {
     // hang. AbortSignal.timeout covers the body read as well as the headers.
     const res = await fetch(leginfoUrl, {
       headers: BROWSER_HEADERS,
-      signal: AbortSignal.timeout(LEGINFO_FETCH_TIMEOUT_MS),
+      // Clamped to the run deadline as well as its own ceiling, so this fetch
+      // cannot be the thing that carries the invocation past 150s.
+      signal: AbortSignal.timeout(
+        Math.max(
+          1_000,
+          Math.min(LEGINFO_FETCH_TIMEOUT_MS, deadlineAt - Date.now()),
+        ),
+      ),
     });
     if (!res.ok) return null;
 
@@ -1040,26 +1064,39 @@ const withRetries = async <T>(
   throw new Error("Retry logic exhausted without completion");
 };
 
+// deadlineAt threaded through for the same reason withRetries takes it: these
+// are LegiScan getBill / getBillText calls, each a full 3-attempt round worth
+// ~138s in the worst case, and leaving them unbounded meant a bill leased just
+// under LEASE_CUTOFF_MS could still run past the 150s ceiling and be killed
+// before drainFailedLeases(). Bounding one retry path and not the other only
+// moves where the overrun happens.
 const fetchJsonWithRetries = async <T>(
   url: string,
   name: string,
   headers: Record<string, string> = BROWSER_HEADERS,
+  deadlineAt = Number.POSITIVE_INFINITY,
 ): Promise<T> => {
-  return withRetries<T>(async (_attempt, signal) => {
-    const res = await fetch(url, { headers, signal });
-    if (!res.ok) {
-      throw new HttpError(
-        `${name} ${res.status}`,
-        res.status,
-        parseRetryAfter(res.headers.get("retry-after")),
-      );
-    }
-    try {
-      return await res.json() as T;
-    } catch (error) {
-      throw new Error(`${name} JSON parse failed: ${(error as Error).message}`);
-    }
-  });
+  return withRetries<T>(
+    async (_attempt, signal) => {
+      const res = await fetch(url, { headers, signal });
+      if (!res.ok) {
+        throw new HttpError(
+          `${name} ${res.status}`,
+          res.status,
+          parseRetryAfter(res.headers.get("retry-after")),
+        );
+      }
+      try {
+        return await res.json() as T;
+      } catch (error) {
+        throw new Error(
+          `${name} JSON parse failed: ${(error as Error).message}`,
+        );
+      }
+    },
+    3,
+    deadlineAt,
+  );
 };
 
 const callSummarizer = async (
@@ -1475,7 +1512,9 @@ serve(async (req) => {
           bill_id: billId,
           link: billData.state_link,
         });
-        decodedText = await scrapeLeginfoText(billData.state_link) ?? undefined;
+        decodedText =
+          await scrapeLeginfoText(billData.state_link, runDeadlineAt) ??
+            undefined;
       }
 
       if (
@@ -1507,6 +1546,7 @@ serve(async (req) => {
               billDetailsUrl,
               "legiscan getBill",
               LEGISCAN_API_HEADERS,
+              runDeadlineAt,
             );
             if (res.status === "ERROR") {
               throw new Error(
@@ -1551,6 +1591,7 @@ serve(async (req) => {
                   billTextUrl,
                   "legiscan getBillText",
                   LEGISCAN_API_HEADERS,
+                  runDeadlineAt,
                 );
                 if (textRes.status === "ERROR") {
                   throw new Error(
