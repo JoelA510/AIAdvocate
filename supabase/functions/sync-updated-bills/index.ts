@@ -1547,16 +1547,27 @@ serve(async (req) => {
         const msLeftForRetry = RUN_TIME_BUDGET_MS - (Date.now() - runStartedAt);
         const haveTimeToRetry = msLeftForRetry >= SUMMARY_REASK_RESERVE_MS;
 
-        // A missing Spanish level is a re-ask trigger too. The re-ask was driven
-        // by English shortfalls alone, so a response with perfect English and an
-        // empty Spanish medium never got a second attempt -- it went straight to
-        // "Incomplete Spanish summaries returned" and failed the bill on every
-        // run thereafter. Spanish has no length floor to fall short of, so
-        // presence is the whole test.
+        // A Spanish level that will not survive downstream is a re-ask trigger
+        // too. The re-ask was driven by English shortfalls alone, so a response
+        // with perfect English and a bad Spanish medium never got a second
+        // attempt -- it went straight to a throw and failed the bill on every
+        // run thereafter.
+        //
+        // The test is isValidSummary, deliberately the STRICTEST of the three
+        // that Spanish faces later, not raw truthiness. Truthiness agrees with
+        // none of them: " " is truthy but dies on the trim guard (throw, every
+        // run, forever), and a 5-character level passes the trim guard but fails
+        // isValidSummary inside spanishFinal, which silently stores the bill
+        // with summary_ok = true and no Spanish translation -- never re-queued,
+        // so a survivor reading in Spanish gets nothing and nothing notices.
+        // Triggering on the strictest test means anything the re-ask can fix
+        // gets the chance.
+        const spanishLevelUsable = (level: "simple" | "medium" | "complex") =>
+          keepExistingSpanish[level] ||
+          isValidSummary(summaries.spanish?.[level]);
+
         const missingSpanish = (["simple", "medium", "complex"] as const)
-          .filter((level) =>
-            !keepExistingSpanish[level] && !summaries.spanish?.[level]
-          );
+          .filter((level) => !spanishLevelUsable(level));
 
         if (
           (shortfalls.length > 0 || missingSpanish.length > 0) &&
@@ -1667,8 +1678,14 @@ serve(async (req) => {
               const englishOk = keepExisting[level] ||
                 (Boolean(english[level]) &&
                   toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS);
+              // isValidSummary, matching the re-ask trigger and the strictest
+              // downstream test. Judging a retry's Spanish by truthiness let a
+              // retry whose Spanish was " " count as storable: against a first
+              // response that was storable but under target, the retry won on
+              // deficit, was adopted, and then died on the trim guard -- failing
+              // a bill the first response would have stored.
               const spanishOk = keepExistingSpanish[level] ||
-                Boolean(spanish[level]);
+                isValidSummary(spanish[level]);
               return englishOk && spanishOk;
             });
           };
@@ -1976,96 +1993,115 @@ serve(async (req) => {
     };
 
     let stoppedForTimeBudget = false;
-    for (let i = 0; i < maxBillsToProcess; i++) {
-      const elapsedMs = Date.now() - runStartedAt;
-      // The budget gates whether to *start* another bill, so a bill leased just
-      // under the line still runs to completion and the invocation can overrun.
-      // Reserve headroom for one worst-case bill rather than checking against
-      // the raw budget, so the guard bounds the whole run and not just the
-      // moment work is handed out.
-      if (elapsedMs >= LEASE_CUTOFF_MS) {
-        stoppedForTimeBudget = true;
-        const message =
-          `Stopping before iteration ${i}: run time budget reached (${elapsedMs}ms of ${RUN_TIME_BUDGET_MS}ms, cutoff ${LEASE_CUTOFF_MS}ms after reserving ${PER_BILL_HEADROOM_MS}ms for an in-flight bill). Remaining bills roll over to the next run.`;
-        // Surfaced through console + the response body, not only logCronDebug:
-        // that helper is a no-op unless SYNC_DEBUG_LOGS=true, which made a
-        // truncated run indistinguishable from a drained queue.
-        console.warn(message);
-        await logCronDebug(supabaseAdmin, message);
-        break;
-      }
-
-      const nextId = await leaseNextBillId();
-      if (!nextId) {
-        await logCronDebug(
-          supabaseAdmin,
-          `lease_next_bill returned null at iteration ${i}`,
-        );
-        break;
-      }
-
-      try {
-        await processBill(nextId);
-        const { error: releaseError } = await supabaseAdmin
-          .rpc("release_bill_lease", {
-            p_id: nextId,
-            p_owner: owner,
-            p_ok: true,
-          });
-        if (releaseError) throw releaseError;
-      } catch (err) {
-        const failureReason = errorToMessage(err);
-        console.error("❌ Failed processing bill", {
-          bill_id: nextId,
-          error: failureReason,
-        });
-
-        // Log error to cron_job_errors table
-        try {
-          await supabaseAdmin.from("cron_job_errors").insert({
-            job_name: "sync-updated-bills",
-            error_message: `Bill ${nextId} failed: ${failureReason}`,
-          });
-        } catch (e) {
-          console.error("Failed to log bill failure", e);
+    // try/finally, because the drain below is not optional. leaseNextBillId()
+    // sits outside the per-bill try/catch and rethrows RPC errors -- and a
+    // lease_next_bill statement timeout is not hypothetical, it is what
+    // 20260812120000 was written to fix and what production hit daily. Without
+    // finally, that throw at iteration N skips the drain entirely and leaves
+    // every already-failed bill leased for its full 900s TTL. Those bills sort
+    // FIRST in lease_next_bill's ORDER BY, so the head of the queue would be
+    // invisible to every run for fifteen minutes -- strictly worse than the
+    // immediate release this deferral replaced.
+    try {
+      for (let i = 0; i < maxBillsToProcess; i++) {
+        const elapsedMs = Date.now() - runStartedAt;
+        // The budget gates whether to *start* another bill, so a bill leased just
+        // under the line still runs to completion and the invocation can overrun.
+        // Reserve headroom for one worst-case bill rather than checking against
+        // the raw budget, so the guard bounds the whole run and not just the
+        // moment work is handed out.
+        if (elapsedMs >= LEASE_CUTOFF_MS) {
+          stoppedForTimeBudget = true;
+          const message =
+            `Stopping before iteration ${i}: run time budget reached (${elapsedMs}ms of ${RUN_TIME_BUDGET_MS}ms, cutoff ${LEASE_CUTOFF_MS}ms after reserving ${PER_BILL_HEADROOM_MS}ms for an in-flight bill). Remaining bills roll over to the next run.`;
+          // Surfaced through console + the response body, not only logCronDebug:
+          // that helper is a no-op unless SYNC_DEBUG_LOGS=true, which made a
+          // truncated run indistinguishable from a drained queue.
+          console.warn(message);
+          await logCronDebug(supabaseAdmin, message);
+          break;
         }
 
-        // Deferred, NOT released here. release_bill_lease sets
-        // summary_lease_until = NULL, and lease_next_bill's candidate predicate
-        // admits any row whose lease is null or expired, ordered deterministically
-        // (original_text IS NULL first, then summary_ok, then id). Releasing a
-        // failed bill immediately therefore hands the very same bill back on the
-        // next iteration, and it fails the same way -- so a run with
-        // MAX_BILLS_PER_RUN=8 spent all eight iterations on one stuck bill and
-        // drained nothing. Raising 3 -> 8 bought no throughput at all while the
-        // head of the queue was failing, which is exactly the state production
-        // has been in.
-        //
-        // Holding the lease until the run ends makes lease_next_bill skip this
-        // bill for the rest of the run, so iteration 1 gets a different one and
-        // the count means what it says. The release still happens below, so the
-        // next run retries it as before. If the invocation is killed first the
-        // lease strands for its TTL -- the same outcome a kill has always had.
-        failedLeases.push(nextId);
-        failures.push({ billId: nextId, reason: failureReason });
-      }
-    }
+        const nextId = await leaseNextBillId();
+        if (!nextId) {
+          await logCronDebug(
+            supabaseAdmin,
+            `lease_next_bill returned null at iteration ${i}`,
+          );
+          break;
+        }
 
-    // Release every failed lease now that the loop can no longer re-lease them.
-    // Best-effort and never fatal: a lease left behind expires on its own TTL,
-    // whereas throwing here would discard a run's successful work.
-    for (const failedId of failedLeases) {
-      const { error: releaseError } = await supabaseAdmin
-        .rpc("release_bill_lease", {
-          p_id: failedId,
-          p_owner: owner,
-          p_ok: false,
-        });
-      if (releaseError) {
-        console.error("Failed to release lease", {
-          bill_id: failedId,
-          error: String(releaseError),
-        });
+        try {
+          await processBill(nextId);
+          const { error: releaseError } = await supabaseAdmin
+            .rpc("release_bill_lease", {
+              p_id: nextId,
+              p_owner: owner,
+              p_ok: true,
+            });
+          if (releaseError) throw releaseError;
+        } catch (err) {
+          const failureReason = errorToMessage(err);
+          console.error("❌ Failed processing bill", {
+            bill_id: nextId,
+            error: failureReason,
+          });
+
+          // Log error to cron_job_errors table
+          try {
+            await supabaseAdmin.from("cron_job_errors").insert({
+              job_name: "sync-updated-bills",
+              error_message: `Bill ${nextId} failed: ${failureReason}`,
+            });
+          } catch (e) {
+            console.error("Failed to log bill failure", e);
+          }
+
+          // Deferred, NOT released here. release_bill_lease sets
+          // summary_lease_until = NULL, and lease_next_bill's candidate predicate
+          // admits any row whose lease is null or expired, ordered deterministically
+          // (original_text IS NULL first, then summary_ok, then id). Releasing a
+          // failed bill immediately therefore hands the very same bill back on the
+          // next iteration, and it fails the same way -- so a run with
+          // MAX_BILLS_PER_RUN=8 spent all eight iterations on one stuck bill and
+          // drained nothing. Raising 3 -> 8 bought no throughput at all while the
+          // head of the queue was failing, which is exactly the state production
+          // has been in.
+          //
+          // Holding the lease until the run ends makes lease_next_bill skip this
+          // bill for the rest of the run, so iteration 1 gets a different one and
+          // the count means what it says. The release still happens below, so the
+          // next run retries it as before. If the invocation is killed first the
+          // lease strands for its TTL -- the same outcome a kill has always had.
+          failedLeases.push(nextId);
+          failures.push({ billId: nextId, reason: failureReason });
+        }
+      }
+    } finally {
+      // Release every failed lease now that the loop can no longer re-lease
+      // them. Best-effort and never fatal: a release that itself fails leaves a
+      // lease to expire on its TTL, whereas throwing from a finally would
+      // replace the real error with this one.
+      for (const failedId of failedLeases) {
+        try {
+          const { error: releaseError } = await supabaseAdmin
+            .rpc("release_bill_lease", {
+              p_id: failedId,
+              p_owner: owner,
+              p_ok: false,
+            });
+          if (releaseError) {
+            console.error("Failed to release lease", {
+              bill_id: failedId,
+              error: String(releaseError),
+            });
+          }
+        } catch (releaseThrow) {
+          console.error("Failed to release lease", {
+            bill_id: failedId,
+            error: errorToMessage(releaseThrow),
+          });
+        }
       }
     }
 
