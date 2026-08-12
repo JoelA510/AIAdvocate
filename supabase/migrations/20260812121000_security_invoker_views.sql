@@ -21,6 +21,24 @@
 --
 -- so v_rep_vote_history keeps returning the same rows to the app. It is read by
 -- VotingHistory.tsx and FindYourRep.tsx, which is why that check mattered.
+--
+-- Confirmed by measurement, not just by reading policies. Applied inside a
+-- rolled-back transaction against production, impersonating a signed-in user
+-- the way PostgREST does:
+--
+--   set local role authenticated;
+--   set local request.jwt.claims = '{"sub":"...","role":"authenticated"}';
+--   select count(*) from public.v_rep_vote_history;
+--
+--   before flip: 4748 rows
+--   after flip:  4748 rows
+--
+-- Worth knowing for anyone repeating this: querying the view without a JWT
+-- returns 0 rows whether or not security_invoker is set, because the view
+-- carries its own gate (`auth.uid() IS NOT NULL OR auth.role() =
+-- 'service_role'`). A plain `SET ROLE anon` test therefore proves nothing --
+-- it reads as "the flip broke the view" when the view is simply behaving as
+-- designed for an unauthenticated caller.
 
 ALTER VIEW public.v_rep_vote_history SET (security_invoker = true);
 ALTER VIEW public.v_bill_summary_leases SET (security_invoker = true);
