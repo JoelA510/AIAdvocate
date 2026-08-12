@@ -158,12 +158,13 @@ const MIN_SUMMARY_LENGTHS = {
   complex: 600,
 };
 
-// toAscii() runs on the model's output before the floors are checked, and it can
-// only shrink the string: NFKD plus diacritic stripping, any non-ASCII run
-// collapsing to a single space, whitespace collapsed, then trimmed. A response
-// that lands exactly on a floor can normalise to just under it and be rejected.
-// Ask for a margin so the floor is what survives normalisation, not what the
-// model aimed at.
+// toAscii() runs on the model's output before the floors are checked and
+// usually shortens it: diacritics stripped, any non-ASCII run collapsed to one
+// space, whitespace collapsed, trimmed. (NFKD can expand a few characters --
+// "…" becomes "..." -- so it is not strictly monotonic, but the common
+// direction is down.) A response landing exactly on a floor can normalise to
+// just under it and be rejected, so ask for a margin: the floor should be what
+// survives normalisation, not what the model aimed at.
 const SUMMARY_LENGTH_TARGET_MARGIN = 1.15;
 const summaryTarget = (floor: number): number =>
   Math.ceil(floor * SUMMARY_LENGTH_TARGET_MARGIN);
@@ -587,28 +588,41 @@ type SummaryShortfall = {
   required: number;
 };
 
-// Measures the same string the validator will judge -- post-toAscii -- so the
-// re-ask triggers on exactly the condition that would otherwise throw, rather
-// than on the raw model output which is always at least as long.
-const firstLengthShortfall = (
+// Mirrors the validator exactly, in both respects that matter:
+//
+//  * it measures the post-toAscii string, which is what the validator judges;
+//  * it skips any level whose existing stored summary is being kept, because
+//    the validator only enforces a floor when the matching existing* is absent.
+//    Without that skip the Spanish-backfill path (English already stored,
+//    regenerating only because Spanish is missing) would re-ask over English
+//    that englishFinal discards anyway -- paying for a second 12k-char
+//    summarisation, and risking a non-ASCII retry failing a bill that was about
+//    to succeed.
+//
+// Returns every shortfall, not just the first: naming one level meant a bill
+// short on two got one fixed and still threw on the other, re-entering the same
+// never-converging loop this exists to close.
+const collectLengthShortfalls = (
   english: { simple: string; medium: string; complex: string } | undefined,
-): SummaryShortfall | null => {
-  if (!english) return null;
+  keepExisting: { simple: boolean; medium: boolean; complex: boolean },
+): SummaryShortfall[] => {
+  if (!english) return [];
   const levels: Array<SummaryShortfall["level"]> = [
     "simple",
     "medium",
     "complex",
   ];
+  const out: SummaryShortfall[] = [];
   for (const level of levels) {
+    if (keepExisting[level]) continue;
     const value = english[level];
     if (!value) continue;
     const actual = toAscii(value).length;
     const required = MIN_SUMMARY_LENGTHS[level];
-    if (actual < required) return { level, actual, required };
+    if (actual < required) out.push({ level, actual, required });
   }
-  return null;
+  return out;
 };
-
 
 const summarySchema = {
   name: "SummaryPayload",
@@ -983,6 +997,9 @@ serve(async (req) => {
     }
 
     const owner = (crypto as any).randomUUID?.() ?? String(Date.now());
+    // Declared here, not beside the loop, because processBill closes over it to
+    // decide whether there is time left for a summariser re-ask.
+    const runStartedAt = Date.now();
     const maxBillsToProcess = MAX_BILLS_PER_RUN;
 
     await logCronDebug(
@@ -1290,26 +1307,66 @@ serve(async (req) => {
         // about the next run differs it fails identically every cron cycle --
         // burning a paid summarisation each time and never converging. AB101
         // was stuck exactly this way at 372 characters against a 400 floor.
-        const shortfall = firstLengthShortfall(summaries.english);
-        if (shortfall) {
-          console.warn("- Summary under the length floor; re-asking once", {
+        const keepExisting = {
+          simple: Boolean(existingSimple),
+          medium: Boolean(existingMedium),
+          complex: Boolean(existingComplex),
+        };
+        const shortfalls = collectLengthShortfalls(
+          summaries.english,
+          keepExisting,
+        );
+
+        // A re-ask is a whole extra withRetries round, roughly doubling this
+        // bill's worst-case summariser wall clock. Skip it when the run has no
+        // room left: being killed mid-bill strands the lease for its full TTL,
+        // which is worse than failing this bill cleanly and retrying next run.
+        const msLeftForRetry = RUN_TIME_BUDGET_MS - (Date.now() - runStartedAt);
+        const haveTimeToRetry = msLeftForRetry >= PER_BILL_HEADROOM_MS;
+
+        if (shortfalls.length > 0 && haveTimeToRetry) {
+          console.warn("- Summaries under the length floor; re-asking once", {
             bill_id: billData.bill_id,
-            ...shortfall,
+            shortfalls,
           });
+          const detail = shortfalls
+            .map((entry) =>
+              `${entry.level} was ${entry.actual} characters against a required ${entry.required}`
+            )
+            .join("; ");
           const retried = await generateSummaries(
-            `A previous attempt returned a ${shortfall.level} summary of ` +
-              `${shortfall.actual} characters, under the required ` +
-              `${shortfall.required}. Expand that level using additional ` +
-              `concrete detail drawn from the bill text -- specific programs, ` +
-              `amounts, sections or effects. Do not pad with generalities.`,
+            `A previous attempt fell short on these levels: ${detail}. Expand ` +
+              `each of those levels using additional concrete detail drawn ` +
+              `from the bill text -- specific programs, amounts, sections or ` +
+              `effects -- and leave levels that were already long enough at ` +
+              `their current length. Do not pad with generalities.`,
+          );
+
+          // Only take the retry if it clears every floor it needed to.
+          // Accepting on truthiness alone let a retry that fixed medium while
+          // regressing simple overwrite a payload whose simple had passed, and
+          // then throw on simple instead.
+          const retryUsable = Boolean(
+            retried?.english?.simple && retried?.english?.medium &&
+              retried?.english?.complex && retried?.spanish?.simple &&
+              retried?.spanish?.medium && retried?.spanish?.complex,
           );
           if (
-            retried?.english?.simple && retried?.english?.medium &&
-            retried?.english?.complex && retried?.spanish?.simple &&
-            retried?.spanish?.medium && retried?.spanish?.complex
+            retryUsable &&
+            collectLengthShortfalls(retried.english, keepExisting).length === 0
           ) {
             summaries = retried;
+          } else {
+            console.warn(
+              "- Re-ask did not clear the floors; keeping the first response",
+              { bill_id: billData.bill_id },
+            );
           }
+        } else if (shortfalls.length > 0) {
+          console.warn(
+            "- Under the length floor but no run time left to re-ask",
+            { bill_id: billData.bill_id, shortfalls, ms_left: msLeftForRetry },
+          );
         }
 
         const englishSummaries = summaries.english;
@@ -1549,7 +1606,6 @@ serve(async (req) => {
       });
     };
 
-    const runStartedAt = Date.now();
     let stoppedForTimeBudget = false;
     for (let i = 0; i < maxBillsToProcess; i++) {
       const elapsedMs = Date.now() - runStartedAt;
