@@ -79,10 +79,12 @@ DELETE FROM public.bills
 -- DELETE above is what actually addresses them.
 --
 -- It would have done harm. 21 bills currently have summary_ok <> TRUE, 19 of
--- them because they have no original_text at all -- these are the genuinely
--- stuck rows the rest of this branch exists to unblock. Adding 63 no-op leases
--- ahead of them at SYNC_BILLS_PER_RUN=8 on a daily cron would have delayed the
--- real repair by roughly a week and spent 63 embedding calls to change nothing.
+-- them because they have no original_text at all. Ten of those 21 are Budget
+-- Acts (8 of them text-less), so the DELETE above removes them and 11 remain --
+-- and those 11 are the genuinely stuck rows the rest of this branch exists to
+-- unblock. Adding 63 no-op leases ahead of 11 real ones at SYNC_BILLS_PER_RUN=8
+-- on a daily cron would have delayed the repair from about a day and a half to
+-- about nine, and spent 63 embedding calls to change nothing.
 --
 -- If a future prompt change does warrant re-summarising existing bills, the
 -- summary text has to be cleared, not just the flags -- and that is a
@@ -101,11 +103,14 @@ NOTIFY pgrst, 'reload schema';
 --       WHERE title ~* '^[[:space:]]*budget[[:space:]]+acts?[[:space:]]+of[[:>:]]')
 --       AS budget_vehicles_remaining,                                      -- 0
 --     (SELECT count(*) FROM public.bills
---       WHERE summary_ok IS DISTINCT FROM TRUE) AS queued_for_summary;     -- 21
+--       WHERE summary_ok IS DISTINCT FROM TRUE) AS queued_for_summary;     -- 11
 --
--- queued_for_summary must be UNCHANGED at 21. This migration deletes rows; it
--- must not add anything to the summariser queue. A larger number means an
--- unintended re-queue slipped in and will crowd out the 19 text-less bills.
+-- queued_for_summary should FALL from 21 to 11, not stay at 21: summary_ok has
+-- no column default, so 10 of the 18 deleted Budget Acts were themselves in
+-- that 21 and leave with them. The 11 that remain are the real backlog.
+--
+-- Anything ABOVE 11 means an unintended re-queue slipped in and will crowd out
+-- those 11 -- which is precisely what the dropped UPDATE would have done.
 --
 -- Then confirm the queue is still reachable -- lease_next_bill is what the cron
 -- drains through, and the whole point of this branch is that those 19 bills can

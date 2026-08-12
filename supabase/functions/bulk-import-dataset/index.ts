@@ -90,24 +90,41 @@ const escapeRegExp = (value: string): string =>
 // up; set it empty to disable the exclusion entirely.
 const DEFAULT_TOPIC_EXCLUSION_REGEX = /^\s*budget\s+acts?\s+of\b/i;
 
+// Resolved once per isolate rather than per title. isExcludedVehicle() is
+// called for every candidate in both sweeps -- hundreds per run -- and the
+// previous per-call form re-read the environment and recompiled the regex each
+// time. Worse, an invalid BULK_IMPORT_TOPIC_EXCLUSION_REGEX emitted its warning
+// on every single call, so a one-character typo in the env var buried the run's
+// real output under hundreds of copies of the same line. Memoising makes the
+// warning fire once, which is how many times the condition actually occurred.
+let topicExclusionRegex: RegExp | null | undefined;
+
 const getTopicExclusionRegex = (): RegExp | null => {
+  if (topicExclusionRegex !== undefined) return topicExclusionRegex;
   const raw = Deno.env.get("BULK_IMPORT_TOPIC_EXCLUSION_REGEX");
-  if (raw === undefined || raw === null) return DEFAULT_TOPIC_EXCLUSION_REGEX;
-  if (raw.trim() === "") return null;
-  try {
-    return new RegExp(raw, "i");
-  } catch {
-    console.warn(
-      "BULK_IMPORT_TOPIC_EXCLUSION_REGEX is not a valid regex; using the default",
-      { value: raw },
-    );
-    return DEFAULT_TOPIC_EXCLUSION_REGEX;
+  if (raw === undefined || raw === null) {
+    topicExclusionRegex = DEFAULT_TOPIC_EXCLUSION_REGEX;
+  } else if (raw.trim() === "") {
+    topicExclusionRegex = null;
+  } else {
+    try {
+      topicExclusionRegex = new RegExp(raw, "i");
+    } catch {
+      console.warn(
+        "BULK_IMPORT_TOPIC_EXCLUSION_REGEX is not a valid regex; using the default",
+        { value: raw },
+      );
+      topicExclusionRegex = DEFAULT_TOPIC_EXCLUSION_REGEX;
+    }
   }
+  return topicExclusionRegex;
 };
 
 const isExcludedVehicle = (title: string | null | undefined): boolean => {
   const pattern = getTopicExclusionRegex();
   if (!pattern || !title) return false;
+  // Safe to share a compiled regex across calls because the flags are fixed at
+  // "i" -- no /g, so .test() has no lastIndex state to carry between titles.
   return pattern.test(title);
 };
 

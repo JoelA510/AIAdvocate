@@ -551,8 +551,7 @@ const decodeHtmlEntities = (input: string): string =>
 // preserved line structure and the appropriation tables in a budget bill are
 // unreadable without it, so map block-level boundaries to newlines before
 // stripping the rest, then reuse the file's existing whitespace collapsers.
-const SCRIPT_OR_STYLE =
-  /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const SCRIPT_OR_STYLE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const BLOCK_BOUNDARY =
   /<\/?(?:p|div|br|tr|li|h[1-6]|table|caption|blockquote)\b[^>]*>/gi;
 const ANY_TAG = /<[^>]*>/g;
@@ -820,7 +819,13 @@ const callSummarizer = async (
           // identically forever. Deriving both from MIN_SUMMARY_LENGTHS keeps
           // the instruction and the check from drifting apart again.
           content:
-            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.simple)} characters. Medium ≈10th grade with ≥2 paragraphs and at least ${summaryTarget(MIN_SUMMARY_LENGTHS.medium)} characters. Complex is an expert legal analysis of at least ${summaryTarget(MIN_SUMMARY_LENGTHS.complex)} characters. Prefer concrete specifics from the bill over generic description of what the law is. Treat the character counts as targets, not licence to invent: never state an effect, program or amount the source text does not support. A short bill should get a shorter, accurate summary rather than a padded or embellished one -- this app is read by survivors making decisions, and a fabricated legal effect is worse than a brief summary. Spanish should remain natural with diacritics.${
+            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph and at least ${
+              summaryTarget(MIN_SUMMARY_LENGTHS.simple)
+            } characters. Medium ≈10th grade with ≥2 paragraphs and at least ${
+              summaryTarget(MIN_SUMMARY_LENGTHS.medium)
+            } characters. Complex is an expert legal analysis of at least ${
+              summaryTarget(MIN_SUMMARY_LENGTHS.complex)
+            } characters. Prefer concrete specifics from the bill over generic description of what the law is. Treat the character counts as targets, not licence to invent: never state an effect, program or amount the source text does not support. A short bill should get a shorter, accurate summary rather than a padded or embellished one -- this app is read by survivors making decisions, and a fabricated legal effect is worse than a brief summary. Spanish should remain natural with diacritics.${
               reinforcement ? `\n${reinforcement}` : ""
             }`,
         },
@@ -941,7 +946,9 @@ const buildSummarizerSource = (
   const budget = MAX_MODEL_INPUT_CHARS - notice.length;
   const headChars = Math.floor(budget * 0.4);
   const tailChars = budget - headChars;
-  return `${combined.slice(0, headChars)}${notice}${combined.slice(-tailChars)}`;
+  return `${combined.slice(0, headChars)}${notice}${
+    combined.slice(-tailChars)
+  }`;
 };
 
 const coalesceText = (...values: unknown[]): string | null => {
@@ -1341,15 +1348,17 @@ serve(async (req) => {
           originalTextFormatted,
         );
 
-        const generateSummaries = (reinforcement?: string) =>
-          withRetries((_, signal) =>
-            callSummarizer(
-              summarizerSource,
-              openAiKey,
-              signal,
-              String(billData?.bill_id ?? billId ?? "unknown"),
-              reinforcement,
-            )
+        const generateSummaries = (reinforcement?: string, attempts = 3) =>
+          withRetries(
+            (_, signal) =>
+              callSummarizer(
+                summarizerSource,
+                openAiKey,
+                signal,
+                String(billData?.bill_id ?? billId ?? "unknown"),
+                reinforcement,
+              ),
+            attempts,
           );
 
         let summaries = await generateSummaries();
@@ -1370,10 +1379,19 @@ serve(async (req) => {
           keepExisting,
         );
 
-        // A re-ask is a whole extra withRetries round, roughly doubling this
-        // bill's worst-case summariser wall clock. Skip it when the run has no
-        // room left: being killed mid-bill strands the lease for its full TTL,
-        // which is worse than failing this bill cleanly and retrying next run.
+        // The re-ask gets ONE attempt, not withRetries' default three. That is
+        // what makes SUMMARY_REASK_RESERVE_MS a truthful reserve: a full round
+        // is 3 x 45s aborts plus 1s and 2s of backoff, about 138s, which no
+        // reserve inside a 110s budget could honestly cover. Gating a 138s
+        // worst case on a 45s reserve would let a bill 25s into the run start a
+        // re-ask, time out three times, and get the invocation killed mid-bill
+        // -- stranding the lease for its full 900s TTL, since release_bill_lease
+        // only runs in the loop's catch. Capping the re-ask at one attempt makes
+        // its worst case 45s, which the reserve does cover.
+        //
+        // Retries are the right call for the first generation, which the bill
+        // cannot proceed without. They are the wrong call for a re-ask, which is
+        // an optional quality improvement over a response we already hold.
         const msLeftForRetry = RUN_TIME_BUDGET_MS - (Date.now() - runStartedAt);
         const haveTimeToRetry = msLeftForRetry >= SUMMARY_REASK_RESERVE_MS;
 
@@ -1394,14 +1412,35 @@ serve(async (req) => {
               } it needs`
             )
             .join("; ");
-          const retried = await generateSummaries(
-            `A previous attempt fell short on these levels: ${detail}. Expand ` +
-              `each of those levels using additional concrete detail drawn ` +
-              `from the bill text -- specific programs, amounts, sections or ` +
-              `effects. Do not pad with generalities, and do not invent effects ` +
-              `the text does not support: if the bill is genuinely short, ` +
-              `describe what it does in more depth rather than adding claims.`,
-          );
+          // Caught, not propagated. `summaries` already holds a response that
+          // the two-tier floor check below will happily store -- 372 characters
+          // against a 400 target is short of ideal but far above the hard floor.
+          // Letting the re-ask's failure escape would throw that away and fail
+          // the bill on the strength of an optional improvement, which is the
+          // never-converging loop this whole re-ask exists to close, entered
+          // from the other side.
+          let retried: Awaited<ReturnType<typeof generateSummaries>> | null =
+            null;
+          try {
+            retried = await generateSummaries(
+              `A previous attempt fell short on these levels: ${detail}. Expand ` +
+                `each of those levels using additional concrete detail drawn ` +
+                `from the bill text -- specific programs, amounts, sections or ` +
+                `effects. Do not pad with generalities, and do not invent effects ` +
+                `the text does not support: if the bill is genuinely short, ` +
+                `describe what it does in more depth rather than adding claims.`,
+              1,
+            );
+          } catch (error) {
+            console.warn(
+              "- Summary re-ask failed; keeping the first response",
+              {
+                bill_id: billData.bill_id,
+                bill_number: billData.bill_number,
+                error: errorToMessage(error),
+              },
+            );
+          }
 
           // Only take the retry if it clears every floor it needed to.
           // Accepting on truthiness alone let a retry that fixed medium while
@@ -1413,11 +1452,14 @@ serve(async (req) => {
               retried?.spanish?.medium && retried?.spanish?.complex,
           );
           if (
-            retryUsable &&
+            retried && retryUsable &&
             collectLengthShortfalls(retried.english, keepExisting).length === 0
           ) {
             summaries = retried;
-          } else {
+          } else if (retried) {
+            // Only when a retry actually came back. A thrown re-ask has already
+            // been logged by the catch above; warning again here would report
+            // the same event twice under two different causes.
             console.warn(
               "- Re-ask did not clear the floors; keeping the first response",
               { bill_id: billData.bill_id },
