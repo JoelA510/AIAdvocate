@@ -701,8 +701,16 @@ const callSummarizer = async (
         },
         {
           role: "user",
+          // The length floors are interpolated rather than described in prose
+          // because the validator below rejects anything under them, and the
+          // prompt never used to mention them at all. AB101 ("Budget Act of
+          // 2025") failed on 2026-08-12 with "Medium summary below minimum
+          // length (372)" against a 400 floor -- the model had no way to know
+          // the target, and a bill that misses it re-queues and fails
+          // identically forever. Deriving both from MIN_SUMMARY_LENGTHS keeps
+          // the instruction and the check from drifting apart again.
           content:
-            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph. Medium ≈10th grade with ≥2 paragraphs. Complex is an expert legal analysis. Spanish should remain natural with diacritics.`,
+            `Source text:\n---\n${text}\n---\nInstructions: English summaries must be ASCII only. Simple level ≈5th grade with ≥1 paragraph and at least ${MIN_SUMMARY_LENGTHS.simple} characters. Medium ≈10th grade with ≥2 paragraphs and at least ${MIN_SUMMARY_LENGTHS.medium} characters. Complex is an expert legal analysis of at least ${MIN_SUMMARY_LENGTHS.complex} characters. Prefer concrete specifics from the bill over generic description of what the law is. Spanish should remain natural with diacritics.`,
         },
       ],
     }),
