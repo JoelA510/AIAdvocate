@@ -755,6 +755,11 @@ const stripHtmlToText = (html: string): string => {
 // isolate rather than becoming the default rendering.
 const MAX_DOM_PARSE_CHARS = 500_000;
 
+// Abort for the leginfo scrape. It sits outside withRetries, so it needs its own
+// bound; sized like one withRetries attempt because it pulls the largest payload
+// in the bill path.
+const LEGINFO_FETCH_TIMEOUT_MS = 45_000;
+
 const extractLeginfoBillText = (html: string): string | null => {
   const anchorMatch = LEGINFO_ANCHOR_PATTERN.exec(html);
   if (!anchorMatch) return null;
@@ -811,7 +816,15 @@ const scrapeLeginfoText = async (stateLink: string): Promise<string | null> => {
 
     const leginfoUrl =
       `https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${billId}`;
-    const res = await fetch(leginfoUrl, { headers: BROWSER_HEADERS });
+    // Timed. This fetch had no abort at all, so a leginfo server that accepted
+    // the connection and then stalled would hold the invocation until the
+    // platform killed it -- taking the lease drain with it. It is also the one
+    // request in the bill path that pulls megabytes, so it is the likeliest to
+    // hang. AbortSignal.timeout covers the body read as well as the headers.
+    const res = await fetch(leginfoUrl, {
+      headers: BROWSER_HEADERS,
+      signal: AbortSignal.timeout(LEGINFO_FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
 
     const html = await res.text();
@@ -923,17 +936,57 @@ const parseRetryAfter = (header: string | null): number | undefined => {
   return Math.max(0, parsed - Date.now());
 };
 
+// Absolute wall-clock deadline for the whole invocation, set once the run
+// starts. Every retry round is measured against it.
+//
+// Before this existed, nothing bounded a single bill. One withRetries round is
+// 3 attempts x 45s plus 1s and 2s of backoff -- about 138s -- and a bill runs
+// several of them (summariser, optionally a re-ask, then the embedding). No
+// reserve inside a 150s ceiling can cover that, which meant LEASE_CUTOFF_MS
+// bounded only when work *started*, never when it ended, and a run could sail
+// past 150s and be killed with its lease drain unexecuted.
+//
+// Reserving more time per bill cannot fix that -- the worst case exceeds the
+// entire budget -- so the work is bounded instead: no attempt begins unless it
+// can finish before the deadline, and each attempt's abort is clamped to the
+// time actually left.
+let runDeadlineAt = Number.POSITIVE_INFINITY;
+
+const ATTEMPT_TIMEOUT_MS = 45_000;
+// An attempt given less than this has no realistic chance against an API call,
+// so it is not worth spending the remaining time to find that out.
+const MIN_ATTEMPT_MS = 5_000;
+
 const withRetries = async <T>(
   fn: (attempt: number, signal: AbortSignal) => Promise<T>,
   attempts = 3,
 ): Promise<T> => {
   let backoffMs = 1000;
+  let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    const msLeft = runDeadlineAt - Date.now();
+    if (msLeft < MIN_ATTEMPT_MS) {
+      // Refuse rather than start work that cannot finish. Throwing here fails
+      // this bill, which the caller handles: the lease is released in the
+      // drain and the next run retries it. Starting the attempt anyway risks
+      // the invocation being killed, which strands the lease for 900s and skips
+      // the drain entirely -- strictly worse for the same bill.
+      throw lastError ??
+        new Error(
+          `Run deadline reached before attempt ${attempt} (${msLeft}ms left)`,
+        );
+    }
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45_000);
+    // Clamped to the run deadline, so a hung call cannot outlive the budget.
+    const timeout = setTimeout(
+      () => controller.abort(),
+      Math.min(ATTEMPT_TIMEOUT_MS, msLeft),
+    );
     try {
       return await fn(attempt, controller.signal);
     } catch (error) {
+      lastError = error;
       if (attempt === attempts) throw error;
       const retryAfterMs =
         error instanceof HttpError && typeof error.retryAfterMs === "number"
@@ -948,7 +1001,11 @@ const withRetries = async <T>(
         error: String(error),
       });
       const jitter = Math.floor(Math.random() * 250);
-      await sleep(waitMs + jitter);
+      // Do not sleep past the deadline either; the check at the top of the next
+      // iteration would only wake up to refuse.
+      await sleep(
+        Math.max(0, Math.min(waitMs + jitter, runDeadlineAt - Date.now())),
+      );
       backoffMs = Math.min(backoffMs * 2, 16_000);
     } finally {
       clearTimeout(timeout);
@@ -1266,6 +1323,11 @@ serve(async (req) => {
     // Declared here, not beside the loop, because processBill closes over it to
     // decide whether there is time left for a summariser re-ask.
     const runStartedAt = Date.now();
+    // Arms the deadline every retry round is measured against. Set here rather
+    // than at module load: an isolate is reused across invocations, so a
+    // module-level value would be the FIRST run's deadline and every later run
+    // would refuse all work.
+    runDeadlineAt = runStartedAt + RUN_TIME_BUDGET_MS;
     const maxBillsToProcess = MAX_BILLS_PER_RUN;
 
     await logCronDebug(
@@ -2189,6 +2251,10 @@ serve(async (req) => {
     };
 
     let stoppedForTimeBudget = false;
+    // Separate from stoppedForTimeBudget so the response can distinguish "ran
+    // out of clock" from "the queue handed the same bill back". Both mean work
+    // remains; only one is normal.
+    let stoppedForRepeatLease = false;
     // try/finally, because the drain below is not optional. leaseNextBillId()
     // sits outside the per-bill try/catch and rethrows RPC errors -- and a
     // lease_next_bill statement timeout is not hypothetical, it is what
@@ -2229,6 +2295,7 @@ serve(async (req) => {
         // a repeat means every further lease returns the same row: stop rather
         // than spin.
         if (nextId && attemptedIds.has(nextId)) {
+          stoppedForRepeatLease = true;
           const message =
             `lease_next_bill returned already-attempted bill ${nextId} at iteration ${i}; stopping to avoid a loop`;
           console.warn(message);
@@ -2320,6 +2387,7 @@ serve(async (req) => {
         error:
           "All leased bills failed during text import or summary generation.",
         stoppedForTimeBudget,
+        stoppedForRepeatLease,
         failuresCount: failures.length,
         failuresPreview: failures.slice(0, RESPONSE_PREVIEW_LIMIT),
         legiscan: {
@@ -2335,11 +2403,17 @@ serve(async (req) => {
 
     if (processedBills.length === 0) {
       return toJson({
-        // Do not claim a drained queue if the loop stopped on the clock.
+        // Do not claim a drained queue if the loop stopped early for ANY
+        // reason. The repeat-lease bail-out used to fall through to "All bills
+        // are up-to-date" with the backlog untouched -- the same misreporting
+        // stoppedForTimeBudget was added to eliminate, through a second exit.
         message: stoppedForTimeBudget
           ? "Sync stopped on the run time budget before processing any bills. Work remains queued."
+          : stoppedForRepeatLease
+          ? "Sync stopped after lease_next_bill returned an already-attempted bill, before processing any bills. Work remains queued."
           : "Sync complete. All bills are up-to-date.",
         stoppedForTimeBudget,
+        stoppedForRepeatLease,
         legiscan: {
           enabled: legiscanDetailsEnabled,
           disabled_for_run_reason: legiscanRuntimeDisabledReason,
@@ -2354,8 +2428,11 @@ serve(async (req) => {
     return toJson({
       message: stoppedForTimeBudget
         ? `Processed ${processedBills.length} bill(s), then stopped on the run time budget. Work remains queued.`
+        : stoppedForRepeatLease
+        ? `Processed ${processedBills.length} bill(s), then stopped after lease_next_bill returned an already-attempted bill. Work remains queued.`
         : `Processed ${processedBills.length} bill(s).`,
       stoppedForTimeBudget,
+      stoppedForRepeatLease,
       processedBillsCount: processedBills.length,
       processedBillsPreview: processedBills.slice(0, RESPONSE_PREVIEW_LIMIT),
       failuresCount: failures.length,
