@@ -762,14 +762,35 @@ const ANY_TAG = /<\/?[a-zA-Z][^>]*>|<!\[CDATA\[[\s\S]*?\]\]>|<[!?][^>]*>/g;
 // scrape and by formatLegislationText's large-input path, so there is one
 // implementation to reason about rather than two that can drift.
 const stripHtmlToText = (html: string): string => {
-  const text = decodeHtmlEntities(
-    html
-      .replace(SCRIPT_OR_STYLE, " ")
-      .replace(HTML_COMMENT, " ")
-      .replace(BLOCK_BOUNDARY, "\n")
-      .replace(CELL_BOUNDARY, " | ")
-      .replace(ANY_TAG, ""),
-  );
+  const withBoundaries = html
+    .replace(SCRIPT_OR_STYLE, " ")
+    .replace(HTML_COMMENT, " ")
+    .replace(BLOCK_BOUNDARY, "\n")
+    .replace(CELL_BOUNDARY, " | ");
+
+  // Applied to a fixpoint, not once, and this is required by the switch from
+  // replacing tags with a space to removing them.
+  //
+  // Removal splices the surrounding characters together, so a single pass can
+  // MANUFACTURE a tag it has already scanned past: "<scr<b>ipt>" loses the <b>
+  // and becomes "<script>". CodeQL flags this as incomplete multi-character
+  // sanitization and it is right -- a single pass is only safe when the
+  // replacement keeps the halves apart, which is what the space used to do and
+  // what removing the tag deliberately stopped doing (it was splitting
+  // citations like "Section 1234<i>.5</i>").
+  //
+  // Repeating until the string stops changing removes anything reconstructed.
+  // It terminates because every pass that changes the string strictly shortens
+  // it; the bound is belt-and-braces against a pattern that could somehow
+  // rewrite without shrinking.
+  let stripped = withBoundaries;
+  for (let pass = 0; pass < 8; pass++) {
+    const next = stripped.replace(ANY_TAG, "");
+    if (next === stripped) break;
+    stripped = next;
+  }
+
+  const text = decodeHtmlEntities(stripped);
   // Trim horizontal whitespace off each line BEFORE collapsing newline runs.
   // Without this, collapseNLBlocks is very nearly a no-op here: the preceding
   // collapseSpacesExceptNL turns the indentation between block tags into single
