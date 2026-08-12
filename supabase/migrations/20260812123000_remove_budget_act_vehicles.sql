@@ -1,8 +1,8 @@
 -- 20260812123000_remove_budget_act_vehicles.sql
 --
--- Removes California's omnibus appropriations vehicles from `bills`, and
--- re-queues the remaining recent imports so their summaries regenerate under
--- the corrected summariser prompt.
+-- Removes California's omnibus appropriations vehicles from `bills`. Deletes
+-- only -- see the note below the DELETE for why the bulk re-summarisation this
+-- migration originally carried was dropped.
 --
 -- WHY THE BUDGET ACTS ARE HERE AT ALL
 --
@@ -60,25 +60,35 @@ DELETE FROM public.bills
 -- boundary and [[:space:]] the whitespace class. An earlier audit query using
 -- \b silently matched zero rows and made the problem look non-existent.
 
--- Re-queue recent imports for re-summarisation.
+-- NO BULK RE-QUEUE HERE, deliberately. An earlier draft of this migration
+-- cleared summary_ok/summary_hash for every bill imported since 2026-07-25, on
+-- the theory that summaries written before the summariser prompt was fixed
+-- should be regenerated. Both halves of that turned out to be wrong.
 --
--- The summariser prompt changed materially: it now states the length floors it
--- is judged against, asks for concrete specifics over generic description, and
--- forbids inventing effects the source text does not support. Summaries written
--- before that are the ones that read as "a law that helps fund the state
--- government" regardless of content.
+-- It would not have worked. sync-updated-bills gates regeneration on
+-- needsSummaryGeneration, which tests whether the six summary columns are
+-- present and valid -- not on summary_ok. A bill with complete English and
+-- Spanish summaries would be re-leased, skip the summariser entirely, pay a
+-- fresh embedding call (because the cleared summary_hash no longer matches),
+-- and write back byte-identical text with summary_ok = TRUE.
 --
--- Clearing summary_ok and summary_hash puts these bills back in front of
--- lease_next_bill without deleting the existing text, so the app keeps showing
--- the current summary until a better one replaces it. At SYNC_BILLS_PER_RUN=8
--- on a daily cron this drains over roughly a week; each bill costs one
--- OpenAI call.
-UPDATE public.bills
-   SET summary_ok = FALSE,
-       summary_hash = NULL
- WHERE created_at >= TIMESTAMPTZ '2026-07-25'
-   AND summary_simple IS NOT NULL
-   AND summary_simple <> '';
+-- It was not needed. Measured against production, all 63 non-Budget-Act bills
+-- imported since 2026-07-25 already clear every length floor -- shortest medium
+-- summary 438 characters against a 400 floor, mean 843, and zero bills short at
+-- any of the three levels. The vacuous summaries were the Budget Acts, and the
+-- DELETE above is what actually addresses them.
+--
+-- It would have done harm. 21 bills currently have summary_ok <> TRUE, 19 of
+-- them because they have no original_text at all -- these are the genuinely
+-- stuck rows the rest of this branch exists to unblock. Adding 63 no-op leases
+-- ahead of them at SYNC_BILLS_PER_RUN=8 on a daily cron would have delayed the
+-- real repair by roughly a week and spent 63 embedding calls to change nothing.
+--
+-- If a future prompt change does warrant re-summarising existing bills, the
+-- summary text has to be cleared, not just the flags -- and that is a
+-- user-visible regression (bills show no summary until regenerated) that should
+-- be a deliberate, separately reviewed decision rather than a footnote to a
+-- cleanup migration.
 
 NOTIFY pgrst, 'reload schema';
 
@@ -91,16 +101,20 @@ NOTIFY pgrst, 'reload schema';
 --       WHERE title ~* '^[[:space:]]*budget[[:space:]]+acts?[[:space:]]+of[[:>:]]')
 --       AS budget_vehicles_remaining,                                      -- 0
 --     (SELECT count(*) FROM public.bills
---       WHERE summary_ok IS DISTINCT FROM TRUE) AS queued_for_summary;     -- >= 63
+--       WHERE summary_ok IS DISTINCT FROM TRUE) AS queued_for_summary;     -- 21
 --
--- Then confirm the queue is actually reachable -- lease_next_bill is what the
--- cron drains through, and a re-queued row that it will not hand out is worse
--- than one that was never re-queued:
+-- queued_for_summary must be UNCHANGED at 21. This migration deletes rows; it
+-- must not add anything to the summariser queue. A larger number means an
+-- unintended re-queue slipped in and will crowd out the 19 text-less bills.
+--
+-- Then confirm the queue is still reachable -- lease_next_bill is what the cron
+-- drains through, and the whole point of this branch is that those 19 bills can
+-- finally be handed out:
 --
 --   BEGIN;
 --     SELECT public.lease_next_bill('verify-20260812123000', 1);
 --   ROLLBACK;
 --
--- A non-null id means the re-queue took. NULL means either everything is
--- already leased or the predicate does not match -- investigate before
--- assuming the cron will catch up on its own.
+-- A non-null id is expected. NULL means either everything is already leased or
+-- the predicate matches nothing -- investigate before assuming the cron will
+-- catch up on its own.

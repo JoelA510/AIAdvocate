@@ -131,30 +131,43 @@ const RUN_TIME_BUDGET_MS = Math.max(
     110_000,
 );
 
+// `parseInt(x) || fallback` cannot express a configured zero: parseInt("0")
+// returns 0, which is falsy, so the fallback wins. Both reserves below are
+// legitimately settable to 0 -- that is how you turn a reserve off -- so they
+// need a parse that distinguishes "not a number" from "zero".
+const envMillis = (name: string, fallback: number): number => {
+  const raw = Deno.env.get(name);
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
 // Headroom held back from RUN_TIME_BUDGET_MS so the last bill a run starts can
 // still finish inside the budget. A single bill can legitimately take a while:
 // fetchJsonWithRetries allows 3 attempts at a 45s abort plus backoff, and a
 // bill makes several such calls. This does not cap an already-running bill --
 // nothing here can -- it just stops the loop handing out work it has no time
 // left to finish.
-const PER_BILL_HEADROOM_MS = Math.max(
-  0,
-  Number.parseInt(Deno.env.get("SYNC_PER_BILL_HEADROOM_MS") ?? "45000", 10) ||
-    45_000,
-);
+const PER_BILL_HEADROOM_MS = envMillis("SYNC_PER_BILL_HEADROOM_MS", 45_000);
 
-// Extra time reserved before starting a summariser re-ask, on top of the normal
-// per-bill headroom. A re-ask is a whole additional withRetries round, so
-// gating it on PER_BILL_HEADROOM_MS alone under-reserves: that headroom is
-// sized for finishing the bill, not for repeating its most expensive step.
-// This does not make an overrun impossible -- a round that hits repeated
-// timeouts can still exceed any fixed reserve -- it makes the re-ask decline
-// itself in the cases where an overrun is likely, rather than in none of them.
-const SUMMARY_REASK_RESERVE_MS = Math.max(
-  0,
-  Number.parseInt(Deno.env.get("SYNC_REASK_RESERVE_MS") ?? "45000", 10) ||
-    45_000,
-);
+// Time that must remain in the run budget before a summariser re-ask is worth
+// starting. A re-ask is a whole additional withRetries round, so it needs its
+// own reserve rather than riding on PER_BILL_HEADROOM_MS.
+//
+// It is deliberately checked ALONE, not added to PER_BILL_HEADROOM_MS. That
+// headroom is the outer loop's reserve for letting an in-flight bill finish;
+// once we are inside a bill we are already spending it, and adding it again
+// double-counts. With both defaults at 45s the summed form required 90s of a
+// 110s budget to remain -- i.e. elapsed <= 20s -- while the loop itself only
+// starts a bill at elapsed < 65s, and by the re-ask decision that bill has
+// already paid for a lease, a LegiScan fetch, a leginfo scrape and a full
+// summariser round. The gate was therefore false in essentially every real run
+// and the re-ask never fired.
+//
+// This does not make an overrun impossible: a round that hits repeated timeouts
+// can exceed any fixed reserve. It makes the re-ask decline itself when an
+// overrun is likely, rather than in every case or in none.
+const SUMMARY_REASK_RESERVE_MS = envMillis("SYNC_REASK_RESERVE_MS", 45_000);
 const RESPONSE_PREVIEW_LIMIT = Math.max(
   1,
   Math.min(
@@ -165,11 +178,38 @@ const RESPONSE_PREVIEW_LIMIT = Math.max(
 );
 const MAX_MODEL_INPUT_CHARS = 12000;
 const MIN_BILL_TEXT_CHARS = 120;
+// Quality targets, not validity thresholds. They decide what the prompt asks
+// for and whether a re-ask fires; they are NOT what decides that a summary is
+// unusable. See SUMMARY_HARD_FLOOR_CHARS.
 const MIN_SUMMARY_LENGTHS = {
   simple: 200,
   medium: 400,
   complex: 600,
 };
+
+// The floor a summary must clear to be stored at all.
+//
+// These two thresholds were the same number until it became clear they are
+// answering different questions. MIN_SUMMARY_LENGTHS asks "is this as thorough
+// as we want?"; this asks "is this output broken?". Conflating them is a trap,
+// because the prompt now (correctly) tells the model that a short bill should
+// get a shorter, accurate summary rather than a padded one -- so a model that
+// obeys us produces output that a hard MIN_SUMMARY_LENGTHS check throws on. The
+// bill then fails, gets re-leased, and fails identically on every subsequent
+// cron run, because nothing about the next attempt differs. That is the same
+// never-converging loop the re-ask was added to break, re-entered through the
+// validator instead.
+//
+// So: below this, the generation is broken and we throw. Between this and
+// MIN_SUMMARY_LENGTHS, we have already spent a re-ask trying to do better, and
+// storing a short-but-accurate summary beats showing a survivor nothing at all
+// -- we log and accept.
+//
+// 120 is chosen to sit well clear of the 40-character threshold in
+// lease_next_bill's requeue predicate. Anything we accept here must be long
+// enough that the database does not immediately hand the bill back, or the loop
+// simply moves down a layer.
+const SUMMARY_HARD_FLOOR_CHARS = 120;
 
 // toAscii() runs on the model's output before the floors are checked and
 // usually shortens it: diacritics stripped, any non-ASCII run collapsed to one
@@ -1335,8 +1375,7 @@ serve(async (req) => {
         // room left: being killed mid-bill strands the lease for its full TTL,
         // which is worse than failing this bill cleanly and retrying next run.
         const msLeftForRetry = RUN_TIME_BUDGET_MS - (Date.now() - runStartedAt);
-        const haveTimeToRetry =
-          msLeftForRetry >= PER_BILL_HEADROOM_MS + SUMMARY_REASK_RESERVE_MS;
+        const haveTimeToRetry = msLeftForRetry >= SUMMARY_REASK_RESERVE_MS;
 
         if (shortfalls.length > 0 && haveTimeToRetry) {
           console.warn("- Summaries under the length floor; re-asking once", {
@@ -1421,28 +1460,46 @@ serve(async (req) => {
           throw new Error("English summaries contain non-ASCII characters");
         }
 
-        if (
-          !existingSimple &&
-          asciiEnglish.simple.length < MIN_SUMMARY_LENGTHS.simple
+        // Two-tier length check. Below SUMMARY_HARD_FLOOR_CHARS the generation
+        // is broken and we throw so the bill retries. Between that and the
+        // MIN_SUMMARY_LENGTHS target we accept with a warning: a re-ask has
+        // already been spent (or declined for time), the prompt itself tells the
+        // model that a genuinely short bill deserves a short summary, and
+        // throwing here would fail the same bill identically on every future
+        // run. See SUMMARY_HARD_FLOOR_CHARS for the full reasoning.
+        const shortAfterReask: string[] = [];
+        for (
+          const [level, text, skip] of [
+            ["simple", asciiEnglish.simple, Boolean(existingSimple)],
+            ["medium", asciiEnglish.medium, Boolean(existingMedium)],
+            ["complex", asciiEnglish.complex, Boolean(existingComplex)],
+          ] as const
         ) {
-          throw new Error(
-            `Simple summary below minimum length (${asciiEnglish.simple.length})`,
-          );
+          if (skip) continue;
+          if (text.length < SUMMARY_HARD_FLOOR_CHARS) {
+            throw new Error(
+              `${level} summary below hard floor (${text.length} < ${SUMMARY_HARD_FLOOR_CHARS})`,
+            );
+          }
+          if (text.length < MIN_SUMMARY_LENGTHS[level]) {
+            shortAfterReask.push(
+              `${level} ${text.length}/${MIN_SUMMARY_LENGTHS[level]}`,
+            );
+          }
         }
-        if (
-          !existingMedium &&
-          asciiEnglish.medium.length < MIN_SUMMARY_LENGTHS.medium
-        ) {
-          throw new Error(
-            `Medium summary below minimum length (${asciiEnglish.medium.length})`,
-          );
-        }
-        if (
-          !existingComplex &&
-          asciiEnglish.complex.length < MIN_SUMMARY_LENGTHS.complex
-        ) {
-          throw new Error(
-            `Complex summary below minimum length (${asciiEnglish.complex.length})`,
+
+        if (shortAfterReask.length > 0) {
+          // Warned rather than silently accepted: a run of these means the
+          // targets no longer match what the source bills can support, which is
+          // a prompt/threshold question for a human, not something to retry into
+          // forever.
+          console.warn(
+            "- Accepting summaries under target length after re-ask",
+            {
+              bill_id: billData.bill_id,
+              bill_number: billData.bill_number,
+              levels: shortAfterReask,
+            },
           );
         }
 

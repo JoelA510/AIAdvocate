@@ -1004,6 +1004,42 @@ const runSearchDiscovery = async (
     }
   }
 
+  // Omnibus appropriations vehicles are dropped here, at the candidate stage,
+  // rather than inside the verification loop below. Two things depend on that
+  // placement:
+  //
+  //   1. `dryRun` returns before the verification loop, so an exclusion applied
+  //      down there is invisible to the one mode you would use to check the
+  //      filter -- a dry run would report excluded_vehicle_count: 0 and still
+  //      list Budget Acts under new_bills/sample_new_bills.
+  //   2. The verification loop rejects by writing ids into the persisted
+  //      `rejected` cache, and `newCandidates` filters on that cache *before*
+  //      any title check runs. Excluding by rejection would therefore make the
+  //      documented rollback (clear BULK_IMPORT_TOPIC_EXCLUSION_REGEX, re-run
+  //      discovery) a no-op until those ids aged out of the 5,000-entry window
+  //      -- which is exactly the recovery path that
+  //      20260812123000_remove_budget_act_vehicles.sql relies on.
+  //
+  // Filtering the map instead costs a regex per title per sweep and leaves no
+  // persisted trace, so the exclusion stays reversible by configuration alone.
+  // The original motivation still holds: these never reach billTextMentionsTopic,
+  // so no leginfo fetch is spent confirming a match we intend to reject.
+  //
+  // The persisted queue is swept too -- vehicles queued before this filter
+  // existed would otherwise sit there forever, since nothing else removes them.
+  const excludedVehicleIds = new Set<number>();
+  for (const [id, row] of candidates) {
+    if (isExcludedVehicle(row.title)) {
+      console.log("- Skipping excluded vehicle", {
+        bill_id: id,
+        bill_number: row.bill_number,
+        title: row.title,
+      });
+      candidates.delete(id);
+      excludedVehicleIds.add(id);
+    }
+  }
+
   stats.candidate_bills = candidates.size;
 
   // Candidates are queued rather than inserted directly: verification costs a
@@ -1015,6 +1051,19 @@ const runSearchDiscovery = async (
   const queued = new Map<number, BillSeedRow>(
     pending.rows.map((row) => [row.id, row]),
   );
+
+  for (const [id, row] of queued) {
+    if (isExcludedVehicle(row.title)) {
+      queued.delete(id);
+      excludedVehicleIds.add(id);
+    }
+  }
+
+  // Counted by id rather than by increment, because a vehicle can appear in both
+  // sweeps above -- discovered again this run *and* still sitting in the
+  // persisted queue from an earlier one. Incrementing twice would report more
+  // exclusions than there are bills.
+  stats.excluded_vehicle_count = excludedVehicleIds.size;
 
   const newCandidates = Array.from(candidates.values()).filter(
     (row) => !rejected.has(row.id) && !queued.has(row.id),
@@ -1061,19 +1110,10 @@ const runSearchDiscovery = async (
 
     const row = queue[index];
 
-    // Checked before the network call: an omnibus appropriations vehicle would
-    // pass text verification on the strength of a line item, so there is no
-    // point spending a leginfo fetch to confirm a match we intend to reject.
-    if (isExcludedVehicle(row.title)) {
-      console.log("- Skipping excluded vehicle", {
-        bill_id: row.id,
-        bill_number: row.bill_number,
-        title: row.title,
-      });
-      stats.excluded_vehicle_count += 1;
-      rejected.add(row.id);
-      continue;
-    }
+    // No exclusion check here -- vehicles were filtered out of `candidates` and
+    // the persisted queue before this loop, so nothing reaching it can be one.
+    // See the note at the candidate-stage filter for why rejecting them here
+    // was wrong.
 
     if (stats.verify_attempted > 0) await delay(verifyDelayMs);
     stats.verify_attempted += 1;
