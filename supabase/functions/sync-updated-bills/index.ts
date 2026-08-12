@@ -1278,6 +1278,9 @@ serve(async (req) => {
     // Leases held past their bill's failure so the loop cannot re-lease the same
     // bill; drained after the loop. See the deferral note at the catch site.
     const failedLeases: number[] = [];
+    // Every bill this run has leased. Guards against processing one twice; see
+    // the check at the lease site.
+    const attemptedIds = new Set<number>();
 
     // Release the deferred failed leases and forget them. Safe to call at any
     // point, including with nothing pending.
@@ -1801,15 +1804,16 @@ serve(async (req) => {
                   toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS &&
                   !invalidSummaryPrefix.test(english[level].trim()) &&
                   !invalidSummaryPlaceholder.test(english[level].trim()));
-              // isUsableSpanishSummary, which is exactly what the guard below
-              // throws on -- "storable" has to mean "will not throw", or the
-              // comparison is judging candidates against a rule the code does
-              // not apply. Truthiness was the earlier mistake in the other
-              // direction: a retry whose Spanish was " " counted as storable,
-              // won the deficit tiebreak, and then died on the guard, failing a
-              // bill the first response would have stored.
+              // isValidSummary, because that is what spanishFinal uses to decide
+              // whether a bill_translations row is written at all. Spanish no
+              // longer throws, so "storable" cannot mean "will not throw" for
+              // it; the thing worth preferring is a response whose Spanish will
+              // actually be stored. Judging it by isUsableSpanishSummary let a
+              // retry whose Spanish was "N/A" count as storable, win the deficit
+              // tiebreak, replace a first response with three valid Spanish
+              // levels, and lose the translation row entirely.
               const spanishOk = keepExistingSpanish[level] ||
-                isUsableSpanishSummary(spanish[level]);
+                isValidSummary(spanish[level]);
               return englishOk && spanishOk;
             });
           };
@@ -2216,14 +2220,21 @@ serve(async (req) => {
 
         const nextId = await leaseNextBillId();
 
-        // The previous failure has served its purpose the moment a different
-        // bill is leased -- it was only being held so lease_next_bill would not
-        // hand it straight back. Releasing it here rather than in the finally
-        // keeps at most one lease deferred at any instant, so a kill costs one
-        // stranded lease instead of the whole run's failures. Note this runs
-        // even when nextId is null: a drained queue is exactly when there is no
-        // reason left to hold anything.
-        await drainFailedLeases();
+        // Safety net, and it should never fire: a failed bill's lease is held
+        // until the finally, so lease_next_bill's own predicate excludes it for
+        // the rest of the run. If one is handed back anyway -- a release RPC
+        // that partially succeeded, a clock skew, a second worker -- reprocessing
+        // it would repeat the same failure, double-count it in `failures`, and
+        // spend an iteration to learn nothing. The ordering is deterministic, so
+        // a repeat means every further lease returns the same row: stop rather
+        // than spin.
+        if (nextId && attemptedIds.has(nextId)) {
+          const message =
+            `lease_next_bill returned already-attempted bill ${nextId} at iteration ${i}; stopping to avoid a loop`;
+          console.warn(message);
+          await logCronDebug(supabaseAdmin, message);
+          break;
+        }
 
         if (!nextId) {
           await logCronDebug(
@@ -2232,6 +2243,8 @@ serve(async (req) => {
           );
           break;
         }
+
+        attemptedIds.add(nextId);
 
         try {
           await processBill(nextId);
@@ -2270,31 +2283,35 @@ serve(async (req) => {
           // head of the queue was failing, which is exactly the state production
           // has been in.
           //
-          // Holding the lease until the NEXT bill has been leased makes
-          // lease_next_bill skip this one, so iteration 1 gets a different bill
-          // and the count means what it says. The release still happens, so the
-          // next run retries it as before.
+          // Held until the finally -- ALL of them, for the whole run.
           //
-          // At most one deferred lease is outstanding at a time: the loop
-          // releases the previous failure as soon as it has leased a
-          // replacement, and the finally drains whatever is left. That bound is
-          // the point. Deferring every failure to the finally meant a kill at
-          // the 150s limit -- a bill leased at 64.9s that runs 90s is entirely
-          // realistic -- stranded EVERY failed lease for its full 900s TTL, and
-          // those rows sort first in lease_next_bill's ORDER BY, so the head of
-          // the queue would be invisible for fifteen minutes. An earlier version
-          // of this comment called that "the same outcome a kill has always
-          // had". It was not: the code before it released each failure
-          // immediately. Holding exactly one restores that exposure while
-          // keeping the anti-respin property.
+          // An intermediate version released the previous failure as soon as a
+          // replacement had been leased, to bound how many leases a kill could
+          // strand. That does not work: releasing A after leasing B makes A
+          // eligible again, and since A sorts first the next lease returns A,
+          // then B, then A. The run alternates between two failing bills, burns
+          // all 8 iterations on them, never reaches the backlog, and
+          // double-counts both in `failures`. It is the same defect as
+          // releasing immediately, with a period of two instead of one.
+          //
+          // Holding every failed lease for the run is the only arrangement in
+          // which lease_next_bill actually advances, because its predicate
+          // excludes a leased row and its ordering is deterministic. The cost
+          // is real and worth stating: an invocation killed at the 150s limit
+          // strands all of this run's failed leases for their 900s TTL, at the
+          // head of the queue. That is fifteen minutes of delay on bills that
+          // are already failing, against a loop that otherwise drains nothing
+          // at all -- and the next run picks them up regardless.
           failedLeases.push(nextId);
           failures.push({ billId: nextId, reason: failureReason });
         }
       }
     } finally {
-      // Backstop. Normally the in-loop call has already emptied this; what
-      // reaches here is the failure from the final iteration, or everything
-      // outstanding when leaseNextBillId() threw before the in-loop drain ran.
+      // The only release point. In a finally because leaseNextBillId() sits
+      // outside the per-bill try/catch and rethrows RPC errors -- a
+      // lease_next_bill statement timeout is what 20260812120000 exists to fix
+      // and what production hit daily -- and skipping the drain on that path
+      // would leave every failure leased for its full TTL.
       await drainFailedLeases();
     }
 
