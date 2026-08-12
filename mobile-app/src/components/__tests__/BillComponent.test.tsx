@@ -76,8 +76,8 @@ const mockBill: Bill = {
 };
 
 describe("BillComponent", () => {
-  it("renders bill title and number", () => {
-    const { getByText } = render(
+  it("renders bill title and number", async () => {
+    const { getByText } = await render(
       <QueryWrapper>
         <PaperProvider>
           <BillComponent bill={mockBill} />
@@ -89,8 +89,8 @@ describe("BillComponent", () => {
     expect(getByText("Test Bill")).toBeTruthy();
   });
 
-  it("navigates to details on press", () => {
-    const { getByText } = render(
+  it("navigates to details on press", async () => {
+    const { getByText } = await render(
       <QueryWrapper>
         <PaperProvider>
           <BillComponent bill={mockBill} />

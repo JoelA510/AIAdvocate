@@ -88,7 +88,7 @@ describe("SavedBillsScreen Integration", () => {
       error: null,
     });
 
-    const { getByText } = render(
+    const { getByText } = await render(
       <QueryWrapper>
         <AuthProvider>
           <SavedBillsScreen />
@@ -141,7 +141,7 @@ describe("SavedBillsScreen Integration", () => {
       subscribe: jest.fn(),
     });
 
-    const { getByText, findByText } = render(
+    const { getByText, findByText } = await render(
       <QueryWrapper>
         <AuthProvider>
           <SavedBillsScreen />

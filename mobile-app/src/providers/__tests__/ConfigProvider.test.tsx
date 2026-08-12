@@ -55,7 +55,7 @@ describe("ConfigProvider", () => {
   });
 
   it("fetches remote config and provides it via context", async () => {
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <ConfigProvider>
         <TestComponent />
       </ConfigProvider>,
