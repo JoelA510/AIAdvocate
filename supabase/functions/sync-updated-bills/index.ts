@@ -545,7 +545,15 @@ const formatLegislationText = (raw: string): string => {
 // That fits where the DOM did not, but the headroom on AB101 is not enormous.
 // If a future bill is materially larger than AB101, revisit this with chunked
 // processing rather than raising the ceiling.
-const LEGINFO_ANCHOR = 'id="bill_all"';
+// Tolerant of quoting and spacing rather than a byte-exact substring.
+// getElementById did not care whether leginfo wrote id="bill_all", id='bill_all'
+// or id = bill_all; a literal 'id="bill_all"' search does, and this is the only
+// way text reaches the app -- the LegiScan getBillText fallback is gated behind
+// SYNC_USE_LEGISCAN, which is off in production. So a purely cosmetic change to
+// leginfo's markup would silently stop text extraction for every California
+// bill, with nothing behind it. Matching the attribute instead of one rendering
+// of it costs nothing and removes that class of failure.
+const LEGINFO_ANCHOR_PATTERN = /id\s*=\s*(?:"bill_all"|'bill_all'|bill_all\b)/i;
 
 // Ceiling on the markup considered, as a backstop against a pathological page.
 //
@@ -664,7 +672,16 @@ const stripHtmlToText = (html: string): string => {
       .replace(BLOCK_BOUNDARY, "\n")
       .replace(ANY_TAG, " "),
   );
-  return collapseNLBlocks(collapseSpacesExceptNL(text)).trim();
+  // Trim horizontal whitespace off each line BEFORE collapsing newline runs.
+  // Without this, collapseNLBlocks is very nearly a no-op here: the preceding
+  // collapseSpacesExceptNL turns the indentation between block tags into single
+  // spaces, so a run of empty lines arrives as "\n \n \n" and the /\n{3,}/
+  // pattern never matches. Measured on a real leginfo page, 38 of 91 output
+  // lines were blank for exactly this reason. It is safe because the spaces
+  // being removed are indentation that collapseSpacesExceptNL has already
+  // flattened to one character, not content.
+  const trimmed = collapseSpacesExceptNL(text).replace(/[ \t]*\n[ \t]*/g, "\n");
+  return collapseNLBlocks(trimmed).trim();
 };
 
 // Ceiling above which formatLegislationText skips DOMParser. Well below the
@@ -674,14 +691,15 @@ const stripHtmlToText = (html: string): string => {
 const MAX_DOM_PARSE_CHARS = 500_000;
 
 const extractLeginfoBillText = (html: string): string | null => {
-  const anchor = html.indexOf(LEGINFO_ANCHOR);
-  if (anchor === -1) return null;
+  const anchorMatch = LEGINFO_ANCHOR_PATTERN.exec(html);
+  if (!anchorMatch) return null;
+  const anchor = anchorMatch.index;
 
   // Start after the opening tag's closing ">", not at the anchor itself --
   // slicing mid-tag leaves the element's remaining attributes as literal text
   // ('id="bill_all" align="justify">') at the head of the bill.
   const tagEnd = html.indexOf(">", anchor);
-  const start = tagEnd === -1 ? anchor + LEGINFO_ANCHOR.length : tagEnd + 1;
+  const start = tagEnd === -1 ? anchor + anchorMatch[0].length : tagEnd + 1;
 
   const available = html.length - start;
 
@@ -694,11 +712,16 @@ const extractLeginfoBillText = (html: string): string | null => {
   // the bill was then gone for good, recorded only in a log line, while the app
   // presented the fragment to a survivor as the law.
   //
-  // Returning null instead routes the bill to the LegiScan getBillText fallback
-  // that already exists for "leginfo had nothing usable", metered by the same
-  // API guardrails as every other LegiScan call, so this adds no unbudgeted
-  // request. If that fails too the bill stays queued with no text -- visibly
-  // incomplete and recoverable, which is the honest failure.
+  // Returning null leaves the bill with no text. Be clear about that: the
+  // LegiScan getBillText path is gated behind SYNC_USE_LEGISCAN, which defaults
+  // to false and is off in production (docs/external-api-policy.md records why
+  // it cannot simply be switched on), so in practice there is no fallback here.
+  //
+  // No text is still the better failure. `original_text IS NULL` sorts FIRST in
+  // lease_next_bill's ORDER BY, so the bill stays at the head of the queue and
+  // is visibly incomplete; a stored fragment sorts as done and is never seen
+  // again. One is a bill waiting to be fixed, the other is a wrong answer
+  // presented as the law.
   //
   // With the ceiling at 12 M against a largest-real-bill of 8.08 M this should
   // never fire. If it does, the page is pathological or California has outgrown
@@ -1187,6 +1210,9 @@ serve(async (req) => {
 
     const processedBills: number[] = [];
     const failures: Array<{ billId: number; reason: string }> = [];
+    // Leases held past their bill's failure so the loop cannot re-lease the same
+    // bill; drained after the loop. See the deferral note at the catch site.
+    const failedLeases: number[] = [];
     const legiscanReservations: LegiScanReservation[] = [];
     let legiscanRuntimeDisabledReason: string | null = null;
 
@@ -1521,23 +1547,65 @@ serve(async (req) => {
         const msLeftForRetry = RUN_TIME_BUDGET_MS - (Date.now() - runStartedAt);
         const haveTimeToRetry = msLeftForRetry >= SUMMARY_REASK_RESERVE_MS;
 
-        if (shortfalls.length > 0 && haveTimeToRetry) {
-          console.warn("- Summaries under the length floor; re-asking once", {
-            bill_id: billData.bill_id,
-            shortfalls,
-          });
-          const detail = shortfalls
-            .map((entry) =>
-              // Quote the target, not entry.required. The base instruction asks
-              // for summaryTarget() and the raw floor is the smaller, more
-              // specific number -- naming it here invites the model to aim at
-              // the floor and land just under it after toAscii, defeating the
-              // margin.
-              `${entry.level} was ${entry.actual} characters, short of the ${
-                summaryTarget(entry.required)
-              } it needs`
-            )
-            .join("; ");
+        // A missing Spanish level is a re-ask trigger too. The re-ask was driven
+        // by English shortfalls alone, so a response with perfect English and an
+        // empty Spanish medium never got a second attempt -- it went straight to
+        // "Incomplete Spanish summaries returned" and failed the bill on every
+        // run thereafter. Spanish has no length floor to fall short of, so
+        // presence is the whole test.
+        const missingSpanish = (["simple", "medium", "complex"] as const)
+          .filter((level) =>
+            !keepExistingSpanish[level] && !summaries.spanish?.[level]
+          );
+
+        if (
+          (shortfalls.length > 0 || missingSpanish.length > 0) &&
+          haveTimeToRetry
+        ) {
+          console.warn(
+            "- Summaries incomplete or under target; re-asking once",
+            {
+              bill_id: billData.bill_id,
+              shortfalls,
+              missing_spanish: missingSpanish,
+            },
+          );
+          // Built from whichever problems actually occurred. Naming the English
+          // shortfalls unconditionally produced "fell short on these levels: ."
+          // when the only fault was a missing Spanish level, which tells the
+          // model nothing about what to fix.
+          const reinforcementParts: string[] = [];
+          if (shortfalls.length > 0) {
+            const detail = shortfalls
+              .map((entry) =>
+                // Quote the target, not entry.required. The base instruction asks
+                // for summaryTarget() and the raw floor is the smaller, more
+                // specific number -- naming it here invites the model to aim at
+                // the floor and land just under it after toAscii, defeating the
+                // margin.
+                `${entry.level} was ${entry.actual} characters, short of the ${
+                  summaryTarget(entry.required)
+                } it needs`
+              )
+              .join("; ");
+            reinforcementParts.push(
+              `A previous attempt fell short on these English levels: ${detail}. ` +
+                `Expand each of those levels using additional concrete detail ` +
+                `drawn from the bill text -- specific programs, amounts, ` +
+                `sections or effects. Do not pad with generalities, and do not ` +
+                `invent effects the text does not support: if the bill is ` +
+                `genuinely short, describe what it does in more depth rather ` +
+                `than adding claims.`,
+            );
+          }
+          if (missingSpanish.length > 0) {
+            reinforcementParts.push(
+              `A previous attempt returned no Spanish text for: ` +
+                `${missingSpanish.join(", ")}. Every Spanish level must be ` +
+                `present and must be a faithful translation of the ` +
+                `corresponding English level.`,
+            );
+          }
           // Caught, not propagated. `summaries` already holds a response that
           // the two-tier floor check below will happily store -- 372 characters
           // against a 400 target is short of ideal but far above the hard floor.
@@ -1548,15 +1616,7 @@ serve(async (req) => {
           let retried: Awaited<ReturnType<typeof generateSummaries>> | null =
             null;
           try {
-            retried = await generateSummaries(
-              `A previous attempt fell short on these levels: ${detail}. Expand ` +
-                `each of those levels using additional concrete detail drawn ` +
-                `from the bill text -- specific programs, amounts, sections or ` +
-                `effects. Do not pad with generalities, and do not invent effects ` +
-                `the text does not support: if the bill is genuinely short, ` +
-                `describe what it does in more depth rather than adding claims.`,
-              1,
-            );
+            retried = await generateSummaries(reinforcementParts.join(" "), 1);
           } catch (error) {
             console.warn(
               "- Summary re-ask failed; keeping the first response",
@@ -1970,19 +2030,42 @@ serve(async (req) => {
           console.error("Failed to log bill failure", e);
         }
 
-        const { error: releaseError } = await supabaseAdmin
-          .rpc("release_bill_lease", {
-            p_id: nextId,
-            p_owner: owner,
-            p_ok: false,
-          });
-        if (releaseError) {
-          console.error("Failed to release lease", {
-            bill_id: nextId,
-            error: String(releaseError),
-          });
-        }
+        // Deferred, NOT released here. release_bill_lease sets
+        // summary_lease_until = NULL, and lease_next_bill's candidate predicate
+        // admits any row whose lease is null or expired, ordered deterministically
+        // (original_text IS NULL first, then summary_ok, then id). Releasing a
+        // failed bill immediately therefore hands the very same bill back on the
+        // next iteration, and it fails the same way -- so a run with
+        // MAX_BILLS_PER_RUN=8 spent all eight iterations on one stuck bill and
+        // drained nothing. Raising 3 -> 8 bought no throughput at all while the
+        // head of the queue was failing, which is exactly the state production
+        // has been in.
+        //
+        // Holding the lease until the run ends makes lease_next_bill skip this
+        // bill for the rest of the run, so iteration 1 gets a different one and
+        // the count means what it says. The release still happens below, so the
+        // next run retries it as before. If the invocation is killed first the
+        // lease strands for its TTL -- the same outcome a kill has always had.
+        failedLeases.push(nextId);
         failures.push({ billId: nextId, reason: failureReason });
+      }
+    }
+
+    // Release every failed lease now that the loop can no longer re-lease them.
+    // Best-effort and never fatal: a lease left behind expires on its own TTL,
+    // whereas throwing here would discard a run's successful work.
+    for (const failedId of failedLeases) {
+      const { error: releaseError } = await supabaseAdmin
+        .rpc("release_bill_lease", {
+          p_id: failedId,
+          p_owner: owner,
+          p_ok: false,
+        });
+      if (releaseError) {
+        console.error("Failed to release lease", {
+          bill_id: failedId,
+          error: String(releaseError),
+        });
       }
     }
 
