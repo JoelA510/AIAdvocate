@@ -150,6 +150,19 @@ const envMillis = (name: string, fallback: number): number => {
 // left to finish.
 const PER_BILL_HEADROOM_MS = envMillis("SYNC_PER_BILL_HEADROOM_MS", 45_000);
 
+// The point in the run after which no further bill is leased. Clamped to leave
+// at least one second of leasing window, because the two inputs are configured
+// independently and nothing stops the headroom exceeding the budget:
+// SYNC_RUN_TIME_BUDGET_MS=30000 against the default 45s headroom yields -15000,
+// the loop breaks at iteration 0 forever, and the function cheerfully returns
+// HTTP 200 saying it stopped on the run time budget. A total, silent halt of
+// ingestion that looks like a healthy run is far worse than a run that
+// overshoots its headroom, so when the two are in conflict, leasing wins.
+const LEASE_CUTOFF_MS = Math.max(
+  1_000,
+  RUN_TIME_BUDGET_MS - PER_BILL_HEADROOM_MS,
+);
+
 // Time that must remain in the run budget before a summariser re-ask is worth
 // starting. A re-ask is a whole additional withRetries round, so it needs its
 // own reserve rather than riding on PER_BILL_HEADROOM_MS.
@@ -513,15 +526,34 @@ const formatLegislationText = (raw: string): string => {
 // processing rather than raising the ceiling.
 const LEGINFO_ANCHOR = 'id="bill_all"';
 
-// Ceiling on the markup considered, purely as a backstop against a pathological
-// page. It must sit comfortably above real bills: AB101 ("Budget Act of 2025"),
-// the bill whose scrape OOMed, is 8,077,421 characters with 8,002,546 of them
-// after the anchor. An earlier revision of this function used 4,000,000 and was
-// "verified" against SB857 (677,873 chars, comfortably under it) -- which would
-// have silently discarded more than half of every budget bill while reporting
-// success. Truncation is now both far less likely and loud when it happens.
-const LEGINFO_MAX_SLICE_CHARS = 24_000_000;
+// Ceiling on the markup considered, as a backstop against a pathological page.
+//
+// It has to clear real bills: AB101 ("Budget Act of 2025"), the bill whose
+// scrape OOMed, is 8,077,421 characters with 8,002,546 after the anchor. An
+// earlier revision used 4,000,000 and was "verified" against SB857 (677,873
+// chars, comfortably under it) -- which would have silently discarded more than
+// half of every budget bill while reporting success.
+//
+// But it also has to stay BELOW the memory it exists to protect, and 24,000,000
+// did not. The extractor was measured at 48.8 MB peak for AB101's 8 M
+// characters -- roughly 6 bytes of peak per source character, counting the UTF-16
+// page, the slice and the replace-chain intermediates. At 24 M that is ~146 MB
+// before the truncation branch's own copies, which is over the edge of a 256 MB
+// isolate: a ceiling that high never trips, and the page OOMs exactly as it did
+// before. 12 M gives ~48% headroom over the largest bill California has produced
+// while keeping peak near 73 MB, and truncation is loud when it happens.
+const LEGINFO_MAX_SLICE_CHARS = 12_000_000;
 
+// Beyond the five XML built-ins plus nbsp, this covers the typographic
+// punctuation and legal symbols that appear in statute text. An unlisted entity
+// is left as its literal source form rather than dropped, so a gap here degrades
+// to a visible "&mdash;" instead of silently losing a character -- but the point
+// of the table is that the DOMParser path this replaced decoded all of these,
+// and anything missing is a regression against it, not a new limitation.
+//
+// Probed against a live leginfo bill page: zero named entities outside this set
+// appeared in the markup, so this is insurance rather than a fix for something
+// observed.
 const NAMED_ENTITIES: Record<string, string> = {
   amp: "&",
   lt: "<",
@@ -529,6 +561,36 @@ const NAMED_ENTITIES: Record<string, string> = {
   quot: '"',
   apos: "'",
   nbsp: " ",
+  mdash: "—",
+  ndash: "–",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  hellip: "…",
+  sect: "§",
+  para: "¶",
+  middot: "·",
+  bull: "•",
+  deg: "°",
+  times: "×",
+  divide: "÷",
+  plusmn: "±",
+  frac12: "½",
+  frac14: "¼",
+  frac34: "¾",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  // Keys must be lowercase: the lookup lowercases the captured name, so a
+  // mixed-case key like "Dagger" (a distinct character from "dagger" in HTML)
+  // could never match and would only look like it was handled.
+  dagger: "†",
+  laquo: "«",
+  raquo: "»",
+  ensp: " ",
+  emsp: " ",
+  thinsp: " ",
 };
 
 // One pass, not a chain of .replace() calls. A chain that decodes &amp; before
@@ -577,10 +639,14 @@ const extractLeginfoBillText = (html: string): string | null => {
     const lastClose = slice.lastIndexOf(">");
     if (lastClose !== -1) slice = slice.slice(0, lastClose + 1);
 
-    const lastScriptOpen = slice.toLowerCase().lastIndexOf("<script");
+    // One lowercase copy, not two. This branch only runs when we are already
+    // holding LEGINFO_MAX_SLICE_CHARS of text, so each full-size copy is the
+    // most expensive allocation in the function -- calling .toLowerCase() once
+    // per comparison doubled the peak at exactly the moment it mattered least.
+    const lowered = slice.toLowerCase();
+    const lastScriptOpen = lowered.lastIndexOf("<script");
     if (
-      lastScriptOpen !== -1 &&
-      lastScriptOpen > slice.toLowerCase().lastIndexOf("</script")
+      lastScriptOpen !== -1 && lastScriptOpen > lowered.lastIndexOf("</script")
     ) {
       slice = slice.slice(0, lastScriptOpen);
     }
@@ -668,8 +734,14 @@ const collectLengthShortfalls = (
   for (const level of levels) {
     if (keepExisting[level]) continue;
     const value = english[level];
-    if (!value) continue;
-    const actual = toAscii(value).length;
+    // A missing or empty level counts as a shortfall of zero, not as "nothing
+    // to report". Skipping it meant the worst possible response -- a level that
+    // came back empty -- produced no shortfall, so no re-ask fired, and the
+    // completeness check downstream threw "Incomplete English summaries
+    // returned". Nothing about the next cron run would differ, so the bill
+    // failed identically forever: the exact non-converging loop the re-ask
+    // exists to close, entered through the one case that needs it most.
+    const actual = value ? toAscii(value).length : 0;
     const required = MIN_SUMMARY_LENGTHS[level];
     if (actual < required) out.push({ level, actual, required });
   }
@@ -1735,10 +1807,10 @@ serve(async (req) => {
       // Reserve headroom for one worst-case bill rather than checking against
       // the raw budget, so the guard bounds the whole run and not just the
       // moment work is handed out.
-      if (elapsedMs >= RUN_TIME_BUDGET_MS - PER_BILL_HEADROOM_MS) {
+      if (elapsedMs >= LEASE_CUTOFF_MS) {
         stoppedForTimeBudget = true;
         const message =
-          `Stopping before iteration ${i}: run time budget reached (${elapsedMs}ms of ${RUN_TIME_BUDGET_MS}ms, reserving ${PER_BILL_HEADROOM_MS}ms for an in-flight bill). Remaining bills roll over to the next run.`;
+          `Stopping before iteration ${i}: run time budget reached (${elapsedMs}ms of ${RUN_TIME_BUDGET_MS}ms, cutoff ${LEASE_CUTOFF_MS}ms after reserving ${PER_BILL_HEADROOM_MS}ms for an in-flight bill). Remaining bills roll over to the next run.`;
         // Surfaced through console + the response body, not only logCronDebug:
         // that helper is a no-op unless SYNC_DEBUG_LOGS=true, which made a
         // truncated run indistinguishable from a drained queue.

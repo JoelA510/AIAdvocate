@@ -464,13 +464,22 @@ const getSummarySyncInvocationCount = (candidateRows: number): number => {
     return parsePositiveInt(explicitCount, 1, 20);
   }
 
-  // MUST match sync-updated-bills' MAX_BILLS_PER_RUN default. This divides the
-  // candidate count to decide how many sync invocations to spawn, so if the two
-  // defaults drift apart the fan-out is sized against the wrong denominator:
-  // with this at 3 while sync actually processes 8, 24 candidates would spawn
-  // 8 invocations x 8 bills = 64 concurrent pipelines instead of 24 against the
-  // same shared-CPU database — which is the load this whole change is trying to
-  // reduce.
+  // Mirrors sync-updated-bills' MAX_BILLS_PER_RUN default, and divides the
+  // candidate count to decide how many sync invocations to spawn. Keeping the
+  // two defaults aligned matters because drift in the denominator oversubscribes
+  // the fan-out: with this at 3 while sync actually leases 8, 24 candidates
+  // would spawn 8 invocations x 8 bills = 64 concurrent pipelines instead of 24
+  // against the same shared-CPU database -- the load this whole change reduces.
+  //
+  // Worth knowing: this is an UPPER bound on what a sync run does, not a
+  // prediction of it. Since sync gained a wall-clock budget, its real per-run
+  // count is whatever it can finish inside LEASE_CUTOFF_MS, which is fewer than
+  // MAX_BILLS_PER_RUN whenever bills are slow. So the fan-out under-provisions
+  // rather than over-provisions, and the remainder is picked up by the daily
+  // cron instead of by a wider fan-out. That is the direction to err in on a
+  // shared-CPU database, and the queue still drains -- so this stays keyed to
+  // the lease ceiling rather than to a guessed per-bill duration, which would be
+  // a number invented rather than measured.
   const billsPerRun = parsePositiveInt(
     Deno.env.get("SYNC_BILLS_PER_RUN"),
     8,
