@@ -125,6 +125,24 @@ const MAX_BILLS_PER_RUN = Math.max(
 // still held and nothing releases it -- that bill is then skipped by every run
 // for the remaining 900s of its TTL. Stop leasing new work once the run is
 // close to the limit and let the next cron pick up where this one left off.
+//
+// 110s is sized against the real ceiling, which is 150s, not the 400s that
+// Supabase's docs quote first. Two limits bind here and both are 150:
+//
+//   * Wall clock is 150s on the FREE plan (400s is paid only). This project's
+//     organisation is on free -- checked, not assumed.
+//   * Request idle timeout is 150s on every plan: a function that has not
+//     responded by then returns 504 regardless of how long the worker may live.
+//     This function is invoked over HTTP by pg_net and returns a JSON body, so
+//     that limit applies even if the plan changed.
+//
+// With PER_BILL_HEADROOM_MS at 45s, no bill starts after 65s, so the worst
+// realistic run is 65s plus one bill -- comfortably inside 150s. Raising the
+// budget to fit MAX_BILLS_PER_RUN=8 would push past it and trade a truncated
+// run, which rolls over cleanly, for a 504 and a stranded lease. The bills-per-
+// run ceiling is deliberately higher than the clock usually reaches: it costs
+// nothing when the clock binds first and is there for the runs where bills are
+// quick. Revisit on a paid plan, and only against measured per-bill durations.
 const RUN_TIME_BUDGET_MS = Math.max(
   10_000,
   Number.parseInt(Deno.env.get("SYNC_RUN_TIME_BUDGET_MS") ?? "110000", 10) ||
@@ -279,6 +297,28 @@ const isValidSummary = (value?: string | null): boolean => {
   if (!value) return false;
   const trimmed = value.trim();
   if (trimmed.length < 40) return false;
+  if (invalidSummaryPrefix.test(trimmed)) return false;
+  if (invalidSummaryPlaceholder.test(trimmed)) return false;
+  return true;
+};
+
+// Spanish's equivalent of SUMMARY_HARD_FLOOR_CHARS: the line between "the
+// translation did not happen" and "the translation is shorter than we would
+// like". Below this we warn; failing isUsableSpanishSummary we throw.
+//
+// Spanish deliberately has no length TARGET. Its levels are translations of
+// English levels that have already been held to MIN_SUMMARY_LENGTHS, so their
+// length is inherited rather than independently steered, and imposing a second
+// floor here would fail bills for the model's word choice in another language.
+const MIN_SPANISH_SUMMARY_CHARS = 40;
+
+// Presence and sanity only -- no length test. isValidSummary's 40-character
+// minimum is right for an English summary that must stand on its own and wrong
+// as a reason to throw away a whole bill's work.
+const isUsableSpanishSummary = (value?: string | null): boolean => {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
   if (invalidSummaryPrefix.test(trimmed)) return false;
   if (invalidSummaryPlaceholder.test(trimmed)) return false;
   return true;
@@ -1674,12 +1714,22 @@ serve(async (req) => {
           // decide, which preserves the property that motivated the strict check
           // -- a retry that improves one level by less than it regresses another
           // is not an improvement and is not taken.
-          const summaryDeficit = (candidate: typeof summaries): number =>
-            collectLengthShortfalls(candidate.english, keepExisting)
+          const summaryDeficit = (candidate: typeof summaries): number => {
+            // A candidate with no english object at all scores WORST, not best.
+            // collectLengthShortfalls returns [] for a falsy english -- correct
+            // for its own purpose, actively wrong as a score, because "no
+            // shortfalls" then reads as a perfect zero. In the tiebreak where
+            // neither candidate is storable that let an empty retry beat a first
+            // response holding usable English. Only the strict json_schema
+            // prevents this in practice, and a scoring function should not
+            // depend on a guarantee made somewhere else.
+            if (!candidate.english) return Number.POSITIVE_INFINITY;
+            return collectLengthShortfalls(candidate.english, keepExisting)
               .reduce(
                 (total, entry) => total + (entry.required - entry.actual),
                 0,
               );
+          };
 
           // Scoped to the levels this response will actually contribute, for
           // the same reason the guards below are: a level backed by an existing
@@ -1695,14 +1745,15 @@ serve(async (req) => {
               const englishOk = keepExisting[level] ||
                 (Boolean(english[level]) &&
                   toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS);
-              // isValidSummary, matching the re-ask trigger and the strictest
-              // downstream test. Judging a retry's Spanish by truthiness let a
-              // retry whose Spanish was " " count as storable: against a first
-              // response that was storable but under target, the retry won on
-              // deficit, was adopted, and then died on the trim guard -- failing
-              // a bill the first response would have stored.
+              // isUsableSpanishSummary, which is exactly what the guard below
+              // throws on -- "storable" has to mean "will not throw", or the
+              // comparison is judging candidates against a rule the code does
+              // not apply. Truthiness was the earlier mistake in the other
+              // direction: a retry whose Spanish was " " counted as storable,
+              // won the deficit tiebreak, and then died on the guard, failing a
+              // bill the first response would have stored.
               const spanishOk = keepExistingSpanish[level] ||
-                isValidSummary(spanish[level]);
+                isUsableSpanishSummary(spanish[level]);
               return englishOk && spanishOk;
             });
           };
@@ -1850,22 +1901,42 @@ serve(async (req) => {
           complex: (spanishSummaries.complex ?? "").trim(),
         };
 
-        // isValidSummary, not mere non-emptiness. spanishFinal drops any level
-        // that fails isValidSummary to null, so a level that is non-empty but
-        // unusable -- 5 characters, "Error: ...", a placeholder -- passed this
-        // guard, was silently dropped, and the bill was stored with
-        // summary_ok = TRUE and no Spanish for that level. lease_next_bill never
-        // inspects bill_translations, so nothing would ever re-queue it: a
-        // survivor reading in Spanish would get nothing, permanently, with no
-        // error anywhere. Failing here instead puts the bill back in the queue,
-        // where the next run's re-ask can fix it.
-        const unusableSpanish = generatedSpanishLevels.filter((level) =>
-          !isValidSummary(spanishTrimmed![level])
+        // Two-tier, exactly as English is. The previous revision of this guard
+        // threw whenever a generated Spanish level failed isValidSummary, which
+        // includes its 40-character minimum -- so a 32-character Spanish
+        // complex discarded three good English summaries, left the bill with no
+        // summary in any language, and burned two OpenAI calls on every run
+        // forever. That is the same never-converging loop
+        // SUMMARY_HARD_FLOOR_CHARS was introduced to break, reintroduced
+        // through the other language.
+        //
+        // Garbage still fails: empty after trim, an "Error: ..." prefix or a
+        // placeholder means the translation did not happen and there is nothing
+        // to store. Short-but-real is accepted with a warning, because a brief
+        // Spanish summary alongside three good English ones beats a bill with
+        // neither.
+        const brokenSpanish = generatedSpanishLevels.filter((level) =>
+          !isUsableSpanishSummary(spanishTrimmed![level])
         );
-        if (unusableSpanish.length > 0) {
+        if (brokenSpanish.length > 0) {
           throw new Error(
-            `Spanish summaries unusable for: ${unusableSpanish.join(", ")}`,
+            `Spanish summaries unusable for: ${brokenSpanish.join(", ")}`,
           );
+        }
+
+        const shortSpanish = generatedSpanishLevels.filter((level) =>
+          spanishTrimmed![level].length < MIN_SPANISH_SUMMARY_CHARS
+        );
+        if (shortSpanish.length > 0) {
+          console.warn("- Accepting short Spanish summaries", {
+            bill_id: billData.bill_id,
+            bill_number: billData.bill_number,
+            levels: shortSpanish.map((level) =>
+              `${level} ${
+                spanishTrimmed![level].length
+              }/${MIN_SPANISH_SUMMARY_CHARS}`
+            ),
+          });
         }
       }
 
@@ -1936,17 +2007,22 @@ serve(async (req) => {
         embeddingPayload = `[${embedding.join(",")}]`;
       }
 
+      // isUsableSpanishSummary, matching the guard above. With isValidSummary
+      // here, a short-but-real Spanish level that the guard had just accepted
+      // was silently nulled on its way to the database -- the guard said "keep
+      // this" and the payload dropped it, which is how a bill ended up stored
+      // with no Spanish and no error anywhere.
       const spanishFinal = {
         simple: existingSpanishSimple ??
-          (isValidSummary(spanishTrimmed?.simple)
+          (isUsableSpanishSummary(spanishTrimmed?.simple)
             ? spanishTrimmed!.simple
             : null),
         medium: existingSpanishMedium ??
-          (isValidSummary(spanishTrimmed?.medium)
+          (isUsableSpanishSummary(spanishTrimmed?.medium)
             ? spanishTrimmed!.medium
             : null),
         complex: existingSpanishComplex ??
-          (isValidSummary(spanishTrimmed?.complex)
+          (isUsableSpanishSummary(spanishTrimmed?.complex)
             ? spanishTrimmed!.complex
             : null),
       };
