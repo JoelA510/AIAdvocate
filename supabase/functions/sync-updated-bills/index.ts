@@ -393,7 +393,28 @@ const formatLegislationText = (raw: string): string => {
   let working = raw;
 
   // 1. HTML Parsing (if applicable)
-  if (working.trim().startsWith("<")) {
+  //
+  // DOMParser here is the same construct that OOMed the leginfo scrape: it
+  // materialises a full node tree and then walks it recursively, which costs
+  // multiples of the source size and has no ceiling of its own. The scrape was
+  // rewritten to strings; this path was not, and it matters more now than it
+  // did, because extractLeginfoBillText's "refuse rather than truncate" branch
+  // deliberately routes the LARGEST documents to the LegiScan getBillText
+  // fallback -- whose payload is HTML and lands right here. The one case the
+  // ceiling exists to protect would have been handed straight to the hazard.
+  //
+  // Above the threshold, fall back to the string pipeline the scrape uses. It
+  // loses some of the block-level niceties below (table pipes, list bullets)
+  // but preserves paragraph structure, and a slightly plainer rendering of a
+  // huge bill beats a killed isolate and a lease stranded for its 900s TTL.
+  const trimmedRaw = working.trim();
+  if (trimmedRaw.startsWith("<") && working.length > MAX_DOM_PARSE_CHARS) {
+    console.warn("Bill text too large for DOMParser; using string extraction", {
+      chars: working.length,
+      ceiling: MAX_DOM_PARSE_CHARS,
+    });
+    working = stripHtmlToText(working);
+  } else if (trimmedRaw.startsWith("<")) {
     try {
       const doc = new DOMParser().parseFromString(working, "text/html");
       const walk = (node: any, acc: string[] = []): string[] => {
@@ -606,9 +627,17 @@ const decodeHtmlEntities = (input: string): string =>
     // silently decoded it to the wrong character, which is worse than leaving it
     // alone. The lowercase pass is kept as a lenient fallback for sloppy markup
     // (&NBSP;, &AMP;), where there is no ambiguity to get wrong.
+    //
+    // Object.hasOwn, not a bare index. A plain object literal inherits from
+    // Object.prototype, so "&constructor;", "&toString;" and "&valueOf;" all
+    // resolved to real values and would be stringified into the stored bill
+    // text -- "function Object() { [native code] }" dropped into the middle of
+    // a statute -- rather than falling through to the documented passthrough.
     if (name) {
-      return NAMED_ENTITIES[name] ?? NAMED_ENTITIES[name.toLowerCase()] ??
-        match;
+      if (Object.hasOwn(NAMED_ENTITIES, name)) return NAMED_ENTITIES[name];
+      const lower = name.toLowerCase();
+      if (Object.hasOwn(NAMED_ENTITIES, lower)) return NAMED_ENTITIES[lower];
+      return match;
     }
     const code = dec ? Number(dec) : Number.parseInt(hex, 16);
     return Number.isFinite(code) && code > 0 && code < 0x110000
@@ -624,6 +653,25 @@ const SCRIPT_OR_STYLE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const BLOCK_BOUNDARY =
   /<\/?(?:p|div|br|tr|li|h[1-6]|table|caption|blockquote)\b[^>]*>/gi;
 const ANY_TAG = /<[^>]*>/g;
+
+// Markup -> readable text without building a node tree. Shared by the leginfo
+// scrape and by formatLegislationText's large-input path, so there is one
+// implementation to reason about rather than two that can drift.
+const stripHtmlToText = (html: string): string => {
+  const text = decodeHtmlEntities(
+    html
+      .replace(SCRIPT_OR_STYLE, " ")
+      .replace(BLOCK_BOUNDARY, "\n")
+      .replace(ANY_TAG, " "),
+  );
+  return collapseNLBlocks(collapseSpacesExceptNL(text)).trim();
+};
+
+// Ceiling above which formatLegislationText skips DOMParser. Well below the
+// 8 M that killed the isolate, and far above any normal LegiScan bill payload,
+// so the safe path is reserved for documents that actually threaten the
+// isolate rather than becoming the default rendering.
+const MAX_DOM_PARSE_CHARS = 500_000;
 
 const extractLeginfoBillText = (html: string): string | null => {
   const anchor = html.indexOf(LEGINFO_ANCHOR);
@@ -663,16 +711,7 @@ const extractLeginfoBillText = (html: string): string | null => {
     return null;
   }
 
-  const slice = html.slice(start);
-
-  const text = decodeHtmlEntities(
-    slice
-      .replace(SCRIPT_OR_STYLE, " ")
-      .replace(BLOCK_BOUNDARY, "\n")
-      .replace(ANY_TAG, " "),
-  );
-
-  const cleaned = collapseNLBlocks(collapseSpacesExceptNL(text)).trim();
+  const cleaned = stripHtmlToText(html.slice(start));
   return cleaned.length > 0 ? cleaned : null;
 };
 
@@ -1554,22 +1593,24 @@ serve(async (req) => {
                 0,
               );
 
+          // Scoped to the levels this response will actually contribute, for
+          // the same reason the guards below are: a level backed by an existing
+          // summary is discarded whatever comes back, so it must not veto an
+          // otherwise good retry. Checking all six unconditionally meant a retry
+          // that repaired the level we needed was thrown away because an unused
+          // one came back empty -- keeping the broken first response, which then
+          // threw, every run, forever.
           const isStorable = (candidate: typeof summaries | null): boolean => {
-            if (!candidate) return false;
+            if (!candidate?.english || !candidate?.spanish) return false;
             const { english, spanish } = candidate;
-            if (
-              !english?.simple || !english?.medium || !english?.complex ||
-              !spanish?.simple || !spanish?.medium || !spanish?.complex
-            ) {
-              return false;
-            }
-            // Only levels we will keep from this response need to clear the hard
-            // floor; a level backed by an existing summary is discarded either
-            // way and must not veto an otherwise good retry.
-            return (["simple", "medium", "complex"] as const).every((level) =>
-              keepExisting[level] ||
-              toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS
-            );
+            return (["simple", "medium", "complex"] as const).every((level) => {
+              const englishOk = keepExisting[level] ||
+                (Boolean(english[level]) &&
+                  toAscii(english[level]).length >= SUMMARY_HARD_FLOOR_CHARS);
+              const spanishOk = keepExistingSpanish[level] ||
+                Boolean(spanish[level]);
+              return englishOk && spanishOk;
+            });
           };
 
           if (retried) {
@@ -1619,14 +1660,23 @@ serve(async (req) => {
           (["simple", "medium", "complex"] as const)
             .filter((level) => !keepExistingSpanish[level]);
 
-        if (
-          generatedLevels.some((level) => !englishSummaries?.[level])
-        ) {
+        // The payload objects are asserted before the per-level loops. Scoping
+        // those loops to the generated levels removed the only check that these
+        // exist at all: a response missing `english` outright would raise a bare
+        // TypeError on the first property access below instead of the domain
+        // error, and when every level is kept the loops are empty, so nothing
+        // would have looked at the payload before it was dereferenced.
+        if (!englishSummaries) {
           throw new Error("Incomplete English summaries returned");
         }
-        if (
-          generatedSpanishLevels.some((level) => !spanishSummaries?.[level])
-        ) {
+        if (!spanishSummaries) {
+          throw new Error("Incomplete Spanish summaries returned");
+        }
+
+        if (generatedLevels.some((level) => !englishSummaries[level])) {
+          throw new Error("Incomplete English summaries returned");
+        }
+        if (generatedSpanishLevels.some((level) => !spanishSummaries[level])) {
           throw new Error("Incomplete Spanish summaries returned");
         }
 
