@@ -88,10 +88,17 @@ immediate (§1). These floors are therefore mandatory and are CI-checked:
   `SYNC_USE_LEGISCAN=true` those five workers can call LegiScan simultaneously,
   and nothing in the code serialises them: `reserve_legiscan_api_call` bounds
   per-resource cooldowns and daily/monthly totals, not instantaneous rate.
-  Today this is latent because `SYNC_USE_LEGISCAN` defaults to `false` and that
-  path scrapes leginfo instead. **Before enabling it**, either reduce the fan-out
-  or add a shared rate gate. The same caveat applies to leginfo: five parallel
-  workers plus the verification pass can exceed the ≥250 ms spacing in §5.
+  This gap is **live, not latent**. `SYNC_USE_LEGISCAN` defaults to `false` in
+  code, but production has it set to `true` (verified 2026-08-13 from the
+  `legiscan.enabled` field in a `sync-updated-bills` response). It stays quiet
+  only because leginfo normally succeeds first, so the fallback is never
+  reached — an assumption that fails exactly when it matters. A leginfo outage
+  would send all five parallel workers to LegiScan at once, unserialised. That
+  is the *rate* condition that locked the key previously, not the quota
+  condition the ledger guards. **Fix before relying on the fallback**: reduce the
+  fan-out or add a shared rate gate. The same caveat applies to leginfo: five
+  parallel workers plus the verification pass can exceed the ≥250 ms spacing
+  in §5.
 - **Abort the whole sweep on the first API-level error.** A LegiScan response of
   `status: "ERROR"` (locked key, exhausted quota, malformed query) will repeat
   for every subsequent call. Stop; do not continue to the next item.

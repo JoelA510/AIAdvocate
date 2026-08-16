@@ -203,9 +203,16 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
     }
 
     const enriched = lookupEntries.map(({ lookup, person, providerId }) => {
+      // Prefer a provider-id match, fall back to the name/district lookup key,
+      // and only then give up. Written as one ?? chain ending in null rather
+      // than two nested `?? null` ternaries: the inner `?? null` converted each
+      // miss to null only to have the outer ?? test it for nullishness again,
+      // which is the same result by a longer route -- and TypeScript 6 rejects
+      // the old form outright (TS2871) even though its type is number | null.
       const supabaseId =
-        (providerId ? (providerMatches.get(providerId) ?? null) : null) ??
-        (lookup ? (lookupMatches.get(lookup) ?? null) : null);
+        (providerId ? providerMatches.get(providerId) : undefined) ??
+        (lookup ? lookupMatches.get(lookup) : undefined) ??
+        null;
       return {
         ...person,
         lookupKey: lookup,

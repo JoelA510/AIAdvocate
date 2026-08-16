@@ -22,5 +22,11 @@
     "**/sucrase/glob": "10.5.0",
     "terser-webpack-plugin": "5.5.0",
     "**/xcode/uuid": "14.0.0"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
+  },
+  "scripts": {
+    "postinstall": "patch-package"
   }
 }

@@ -3,11 +3,10 @@
   "compilerOptions": {
     "types": ["expo-router", "jest", "./types/react-native-paper", "node"],
     "strict": true,
-    "baseUrl": ".",
     "moduleResolution": "bundler",
     "paths": {
-      "@/*": ["src/*"],
-      "~/*": ["*"]
+      "@/*": ["./src/*"],
+      "~/*": ["./*"]
     },
     "resolveJsonModule": true
   },

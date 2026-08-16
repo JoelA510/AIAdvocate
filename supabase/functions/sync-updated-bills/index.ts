@@ -605,12 +605,15 @@ const formatLegislationText = (raw: string): string => {
 // processing rather than raising the ceiling.
 // Tolerant of quoting and spacing rather than a byte-exact substring.
 // getElementById did not care whether leginfo wrote id="bill_all", id='bill_all'
-// or id = bill_all; a literal 'id="bill_all"' search does, and this is the only
-// way text reaches the app -- the LegiScan getBillText fallback is gated behind
-// SYNC_USE_LEGISCAN, which is off in production. So a purely cosmetic change to
-// leginfo's markup would silently stop text extraction for every California
-// bill, with nothing behind it. Matching the attribute instead of one rendering
-// of it costs nothing and removes that class of failure.
+// or id = bill_all; a literal 'id="bill_all"' search does, and this is the
+// primary way text reaches the app. The LegiScan getBillText fallback is gated
+// behind SYNC_USE_LEGISCAN, which is TRUE in production -- so a cosmetic change
+// to leginfo's markup does have a backstop, but not one that scales: the
+// fallback is rate- and quota-gated by reserve_legiscan_api_call (900/day,
+// 25000/month, one-year per-bill cooldown on getBillText), so it can absorb a
+// handful of misses, not every California bill at once. Matching the attribute
+// instead of one rendering of it costs nothing and removes that class of
+// failure.
 const LEGINFO_ANCHOR_PATTERN = /id\s*=\s*(?:"bill_all"|'bill_all'|bill_all\b)/i;
 
 // Ceiling on the markup considered, as a backstop against a pathological page.
@@ -838,8 +841,9 @@ const extractLeginfoBillText = (html: string): string | null => {
   //
   // Returning null leaves the bill with no text. Be clear about that: the
   // LegiScan getBillText path is gated behind SYNC_USE_LEGISCAN, which defaults
-  // to false and is off in production (docs/external-api-policy.md records why
-  // it cannot simply be switched on), so in practice there is no fallback here.
+  // to false in code but is set TRUE in production, so a fallback does exist --
+  // bounded by the quota ledger and a one-year per-bill getBillText cooldown
+  // (docs/external-api-policy.md §3), not something that can carry the queue.
   //
   // No text is still the better failure. `original_text IS NULL` sorts FIRST in
   // lease_next_bill's ORDER BY, so the bill stays at the head of the queue and
