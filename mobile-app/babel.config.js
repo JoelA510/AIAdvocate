@@ -5,10 +5,19 @@ module.exports = function (api) {
     presets: ["babel-preset-expo"],
     plugins: [
       // Path alias for "@/...". This resolves imports like "@/src/components".
+      //
+      // Deliberately no `root` option. Metro runs this config over node_modules
+      // too, and `root: ["./"]` makes module-resolver treat a bare `require(".")`
+      // in a dependency as a root-relative specifier: expo-router's
+      // build/navigationEvents/navigation.js does `require(".")` to reach its own
+      // sibling index, and root rewrote that to `require("../../../../mobile-app")`
+      // — the app's own entry, which has no `emit` export. Every navigation
+      // dispatch then threw "(0, _1.emit) is not a function" (blank web screen,
+      // instant native crash on any tab or bill tap). The aliases below do not
+      // need `root`, and nothing in this app imports root-relative bare paths.
       [
         "module-resolver",
         {
-          root: ["./"],
           alias: { "@": "./src", "~": "./" },
           extensions: [".tsx", ".ts", ".jsx", ".js", ".json"],
         },
