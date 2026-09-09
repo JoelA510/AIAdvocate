@@ -18,6 +18,14 @@ module.exports = {
       },
     ],
   },
+  overrides: [
+    {
+      // Node CommonJS config files. eslint-config-expo only grants the node
+      // env to metro.config.js, so __dirname reads as undefined in the others.
+      files: ["babel.config.js", "jest.config.js", ".eslintrc.js"],
+      env: { node: true },
+    },
+  ],
   settings: {
     "import/resolver": {
       // Let ESLint follow TS path aliases (reads ./tsconfig.json)
