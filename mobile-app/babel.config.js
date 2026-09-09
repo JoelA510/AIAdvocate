@@ -15,9 +15,17 @@ module.exports = function (api) {
       // dispatch then threw "(0, _1.emit) is not a function" (blank web screen,
       // instant native crash on any tab or bill tap). The aliases below do not
       // need `root`, and nothing in this app imports root-relative bare paths.
+      //
+      // `cwd` is pinned to this file's directory because module-resolver
+      // resolves relative alias targets against `opts.cwd || process.cwd()` —
+      // Babel's own `cwd` never reaches the plugin. Without it, running Metro
+      // or jest from the workspace root resolved "@/lib/paths" to the repo's
+      // top-level src/ instead of mobile-app/src/, which exists, so it failed
+      // silently rather than loudly.
       [
         "module-resolver",
         {
+          cwd: __dirname,
           alias: { "@": "./src", "~": "./" },
           extensions: [".tsx", ".ts", ".jsx", ".js", ".json"],
         },

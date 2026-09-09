@@ -11,8 +11,11 @@
  * native for any tab switch or bill tap.
  *
  * These cases pin both halves: dependency specifiers must survive untouched,
- * and the "@"/"~" aliases must still resolve for app code.
+ * and the "@"/"~" aliases must still resolve for app code -- from any working
+ * directory, since module-resolver resolves relative alias targets against its
+ * own `opts.cwd || process.cwd()` and never sees Babel's `cwd`.
  */
+import { execFileSync } from "child_process";
 import * as path from "path";
 
 import { transformSync } from "@babel/core";
@@ -90,5 +93,35 @@ describe("babel module-resolver", () => {
       path.join(PROJECT_ROOT, "app", "_layout.tsx"),
     );
     expect(output).toContain('require("@react-navigation/elements")');
+  });
+
+  it("resolves aliases the same way from the workspace root", () => {
+    // module-resolver memoizes its normalized options -- including the cwd it
+    // captured -- per (file directory, options object), so an in-process
+    // chdir would be reused from the first transform and prove nothing. A
+    // child process is the only way to observe a different starting cwd.
+    //
+    // This matters because the workspace root has its own src/ directory: an
+    // unpinned cwd resolves "@/lib/paths" to a real-but-wrong path there
+    // rather than throwing, so the breakage would be silent.
+    const script = `
+      const babel = require(${JSON.stringify(require.resolve("@babel/core"))});
+      const out = babel.transformSync('require("@/lib/paths"); require("~/constants/Colors");', {
+        filename: ${JSON.stringify(path.join(PROJECT_ROOT, "app", "_layout.tsx"))},
+        configFile: ${JSON.stringify(CONFIG_FILE)},
+        babelrc: false,
+        presets: [],
+        plugins: [],
+      });
+      process.stdout.write(out.code);
+    `;
+
+    const output = execFileSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(PROJECT_ROOT, ".."),
+      encoding: "utf8",
+    });
+
+    expect(output).toContain('require("../src/lib/paths")');
+    expect(output).toContain('require("../constants/Colors")');
   });
 });
