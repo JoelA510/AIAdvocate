@@ -51,10 +51,18 @@ describe("app.config public-env guard", () => {
   const originalEnv = { ...process.env };
   let warn: jest.SpyInstance;
 
+  beforeAll(() => {
+    // app.config.ts runs dotenv-flow at module scope, which repopulates
+    // EXPO_PUBLIC_* from a local .env / .env.local -- the file `eas env:pull`
+    // writes, so the standard developer setup has one. Load the module once
+    // here so that side effect lands before any beforeEach clears those keys;
+    // jest caches it, so no later evaluate() can re-run it.
+    loadConfig();
+  });
+
   beforeEach(() => {
     warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    // dotenv-flow populates process.env at import time from any local .env, so
-    // clear the keys explicitly rather than trusting the ambient environment.
+    // Clear explicitly rather than trusting the ambient environment.
     for (const key of REQUIRED) delete process.env[key];
     delete process.env.EAS_BUILD_PROFILE;
   });
@@ -77,6 +85,16 @@ describe("app.config public-env guard", () => {
       // extra.publicEnv is skipped by fingerprint.config.js, so an empty one
       // cannot move the runtime version.
       process.argv = ARGV.fingerprint;
+      expect(evaluate().extra?.publicEnv).toEqual({ supabaseUrl: "", supabaseAnonKey: "" });
+    });
+
+    it("resolves for the fingerprint loader even on an EAS builder", () => {
+      // The loader swallows a throw and emits a hash from a partial source set,
+      // so refusing there produces a fabricated runtime version rather than an
+      // error anyone sees. A build missing these values still fails loudly on
+      // the paths that embed the config into the native projects.
+      process.argv = ARGV.fingerprint;
+      process.env.EAS_BUILD_PROFILE = "production";
       expect(evaluate().extra?.publicEnv).toEqual({ supabaseUrl: "", supabaseAnonKey: "" });
     });
 
@@ -119,13 +137,25 @@ describe("app.config public-env guard", () => {
     // blocks, and the literal text shipped as v1.6-1.7's Supabase URL.
     it.each([
       ["expo config", ARGV.expoConfig],
-      ["@expo/fingerprint", ARGV.fingerprint],
       ["expo export", ARGV.expoExport],
+      ["an unrecognized entry point", ARGV.unknown],
     ])("throws for %s", (_label, argv) => {
       process.argv = argv;
       process.env.EXPO_PUBLIC_SUPABASE_URL = "${EXPO_PUBLIC_SUPABASE_URL}";
       process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
       expect(evaluate).toThrow(/Unexpanded environment variables for build/);
+    });
+
+    it("does not throw for the fingerprint loader, and never emits the literal", () => {
+      // Throwing here would hand back the fabricated 55-source hash instead of
+      // an error, which is the failure this whole path exists to avoid.
+      process.argv = ARGV.fingerprint;
+      process.env.EXPO_PUBLIC_SUPABASE_URL = "${EXPO_PUBLIC_SUPABASE_URL}";
+      process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+      expect(evaluate().extra?.publicEnv).toEqual({
+        supabaseUrl: "",
+        supabaseAnonKey: "anon-key",
+      });
     });
 
     it("is reported as unexpanded rather than missing", () => {

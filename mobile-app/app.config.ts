@@ -49,34 +49,44 @@ function isUnusable(value: string | undefined): boolean {
 // Exactly two entry points resolve this config without turning the result into
 // something that ships, and both are allowlisted by the process that loaded it:
 //
+//   - @expo/fingerprint's ExpoConfigLoader computes the runtime version.
 //   - `expo config` prints the config and exits. This is the one eas-cli runs
 //     to resolve the project before it injects --environment.
-//   - @expo/fingerprint's ExpoConfigLoader computes the runtime version.
-//     fingerprint.config.js skips ExpoConfigExtraSection, so extra.publicEnv is
-//     provably not an input — the hash is byte-identical whatever these values
-//     are, and a degraded config cannot mis-target an update. Allowing it fixes
-//     a sharper failure than the one above: the loader SWALLOWS a config-eval
-//     error and emits a hash computed from a partial source set (55 sources
-//     rather than 122 — an entirely different runtime version) with nothing on
-//     stderr, so on a clean checkout `expo-updates fingerprint:generate`
-//     silently reported a runtime version no shipped binary carries.
 //
-// Every other entry point (expo export, expo start, expo run:*, and the export
-// that `eas update` performs) turns the result into a bundle and still throws,
-// and anything evaluating this config some other way falls through to the
-// strict path — the default stays safe.
+// The fingerprint loader is unconditional — it never throws here, for any
+// reason. It SWALLOWS a config-eval error and emits a hash computed from a
+// partial source set (55 sources rather than 122 — an entirely different
+// runtime version) with nothing on stderr, so on that path "fatal" does not
+// mean the operator sees an error, it means they are handed a fabricated
+// runtime version that reads as "no shipped binary can take this update".
+// Refusing to resolve is strictly worse than resolving, and there is nothing
+// to protect: fingerprint.config.js skips ExpoConfigExtraSection, so
+// extra.publicEnv is provably not an input and the hash is byte-identical
+// across empty, placeholder and real values.
+//
+// Every other entry point (expo export, expo start, expo run:*, the export
+// that `eas update` performs, expo-constants' getAppConfig.js and
+// expo-updates' createUpdatesResources.js, which embed the config into the
+// native projects) turns the result into something that ships and still
+// throws. So does any unrecognized entry point — the default stays safe.
 //
 // EAS_BUILD_PROFILE means a real build is under way, where nothing may resolve
 // degraded — not even `expo config`, which eas-cli also runs on the builder.
+// It does not reach the fingerprint loader, which fingerprints on the builder
+// too; a build missing these values still fails, loudly, on the paths above.
+function isFingerprintResolution(): boolean {
+  const entryPoint = process.argv[1];
+  if (typeof entryPoint !== "string") return false;
+  return entryPoint.replace(/\\/g, "/").includes("/@expo/fingerprint/");
+}
+
 function isMetadataOnlyResolution(): boolean {
+  if (isFingerprintResolution()) return true;
   if (process.env.EAS_BUILD_PROFILE) return false;
 
   const [, entryPoint, subcommand] = process.argv;
   if (typeof entryPoint !== "string") return false;
-  const entry = entryPoint.replace(/\\/g, "/");
-
-  if (entry.includes("/@expo/fingerprint/")) return true;
-  return entry.includes("expo") && subcommand === "config";
+  return entryPoint.replace(/\\/g, "/").includes("expo") && subcommand === "config";
 }
 
 // Every read of process.env in this file goes through a computed lookup rather
@@ -103,6 +113,12 @@ function optionalEnv(value: string | undefined): string | undefined {
 const STORE_PROFILES = new Set(["production", "internal-apk"]);
 
 function assertStoreBuildHasSentryDsn(): void {
+  // Not on the fingerprint path: that loader swallows a throw into a hash built
+  // from a partial source set, so raising here would corrupt the runtime
+  // version instead of failing the build. The build still fails on the paths
+  // that embed the config into the native projects, where the error is visible.
+  if (isFingerprintResolution()) return;
+
   const profile = process.env.EAS_BUILD_PROFILE;
   if (profile && STORE_PROFILES.has(profile) && isUnusable(readEnv("EXPO_PUBLIC_SENTRY_DSN"))) {
     throw new Error(
@@ -114,8 +130,8 @@ function assertStoreBuildHasSentryDsn(): void {
 }
 
 function collectPublicEnv(): PublicEnv {
-  const unexpanded = REQUIRED_KEYS.filter((key) => isUnexpanded(process.env[key]));
-  if (unexpanded.length) {
+  const unexpanded = REQUIRED_KEYS.filter((key) => isUnexpanded(readEnv(key)));
+  if (unexpanded.length && !isFingerprintResolution()) {
     throw new Error(
       `Unexpanded environment variables for build: ${unexpanded.join(", ")}. ` +
         `A value containing "\${" means an eas.json env block is using \${VAR} ` +
@@ -124,7 +140,9 @@ function collectPublicEnv(): PublicEnv {
     );
   }
 
-  const missing = REQUIRED_KEYS.filter((key) => isBlank(process.env[key]));
+  const missing = REQUIRED_KEYS.filter(
+    (key) => isBlank(readEnv(key)) || isUnexpanded(readEnv(key)),
+  );
   if (missing.length) {
     if (!isMetadataOnlyResolution()) {
       throw new Error(
@@ -145,8 +163,12 @@ function collectPublicEnv(): PublicEnv {
   assertStoreBuildHasSentryDsn();
 
   return {
-    supabaseUrl: readEnv("EXPO_PUBLIC_SUPABASE_URL")?.trim() ?? "",
-    supabaseAnonKey: readEnv("EXPO_PUBLIC_SUPABASE_ANON_KEY")?.trim() ?? "",
+    // optionalEnv, not a bare trim: on the fingerprint path the throws above are
+    // skipped, so this is what keeps a "${VAR}" literal out of extra.publicEnv.
+    // On every other path the checks above already guarantee a usable value, so
+    // this is the same string either way.
+    supabaseUrl: optionalEnv(readEnv("EXPO_PUBLIC_SUPABASE_URL")) ?? "",
+    supabaseAnonKey: optionalEnv(readEnv("EXPO_PUBLIC_SUPABASE_ANON_KEY")) ?? "",
     recaptchaSiteKey: optionalEnv(readEnv("EXPO_PUBLIC_RECAPTCHA_SITE_KEY")),
     firebaseWebConfigJson: optionalEnv(readEnv("EXPO_PUBLIC_FIREBASE_WEB_CONFIG")),
     lnfUrl: optionalEnv(readEnv("EXPO_PUBLIC_LNF_URL")),
