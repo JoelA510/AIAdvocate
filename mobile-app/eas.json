@@ -60,7 +60,7 @@
         "metadataPath": "./store.config.json"
       },
       "android": {
-        "track": "internal"
+        "track": "production"
       }
     }
   }
