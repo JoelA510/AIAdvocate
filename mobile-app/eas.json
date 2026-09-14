@@ -60,7 +60,8 @@
         "metadataPath": "./store.config.json"
       },
       "android": {
-        "track": "production"
+        "track": "production",
+        "releaseStatus": "completed"
       }
     }
   }
