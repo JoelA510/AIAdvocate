@@ -42,7 +42,7 @@ eas build --platform android --profile production
 
 1.  Go to the [Google Play Console](https://play.google.com/console).
 2.  Create a new app.
-3.  Navigate to **Testing > Internal testing** (or Production).
+3.  Navigate to **Production** (this project no longer uses the Internal testing track — see the `eas submit` note below; a first upload landing on Internal testing strands the release and burns the versionCode).
 4.  Create a new release.
 5.  Upload the `.aab` file you downloaded.
 6.  Complete the store listing details (screenshots, description, privacy policy).
@@ -56,7 +56,13 @@ Once the first build is manually uploaded, you can automate future submissions:
 eas submit -p android
 ```
 
-> **Important**: `eas submit` uploads to the **Internal testing** track (`submit.production.android.track: "internal"` in `eas.json`) — it does **not** go live. After smoke-testing the internal build, promote it in Play Console: **Testing > Internal testing > Promote release > Production**. Smoke-test every internal build before promoting: launch past the splash screen, push notifications, sign-in, hCaptcha, popup menus, toasts, and the admin login keyboard.
+> **Important**: `eas submit` uploads to the **Production** track (`submit.production.android.track: "production"` in `eas.json`) and, once Google's review passes, it **goes live to all users** with no further action. There is no promote step to catch a bad binary, so the smoke test moved earlier: it is now a gate on **submitting**, not on promoting. Smoke-test before every `eas submit -p android`: launch past the splash screen, push notifications, sign-in, hCaptcha, popup menus, toasts, and the admin login keyboard.
+>
+> This traded a safety net away deliberately — submissions used to land on **Internal testing** and every one of them stopped there, because the manual Play Console promote was never performed. v1.8.0 (vc16 and vc17) sat on the internal track from 2026-08-16 onward and never reached a single production user; the OTA that fixed the SDK 57 navigation crash targeted vc17's runtime version, so it could only ever reach internal testers. Shipping nothing is a worse failure mode than shipping unreviewed, but the review burden is now real.
+>
+> **Know what the pre-submit smoke test does not cover.** It runs against a sideloaded `internal-apk` (a universal APK from `:app:assembleRelease`), while production ships an AAB from `:app:bundleRelease` — a separate R8 and resource-shrinker invocation, which Play then re-signs and splits by density/ABI/language. Those paths are now exercised for the first time in production. The `internal-apk` profile also pins `"channel": "internal-diagnostic"`, so the gate never exercises the `production` update channel either: a bad `production`-channel update passes the smoke test untested and reaches the whole fleet on first cold start.
+>
+> **Bounding the blast radius.** `releaseStatus` is pinned to `"completed"` in `eas.json` — a stated decision, not an inherited default — so a submission reaches 100% of users once review passes. The alternative is `"releaseStatus": "inProgress"` with a `"rollout"` fraction: that still goes live **automatically**, to that fraction of users, with no human action; only _widening_ to 100% is manual. It is the right setting for any release carrying real R8, native-dependency or AAB risk, and it does not reintroduce the failure this section exists to prevent (a release reaching nobody), because a staged release is still a live release.
 >
 > **Startup diagnostics**: the 1.7.0 builds hung on the native splash screen on-device, and none of the native suspects were to blame — the cause was the `eas.json` `${}` placeholder incident (see postmortem below). That bug was present in _every_ bisect build, which is why flipping native flags never produced a signal: each trial was "fatally broken config + one flag off", so the flag under test could never matter. R8, the Sentry AGP, edge-to-edge, and expo-updates are therefore **exonerated as the cause of that incident**. Note the precise claim: the bisect withdrew the evidence _against_ these flags, it did not produce evidence _for_ them. No build of this app has ever been observed launching on a device with them on — every binary of that era was poisoned — so the ladder below is an experiment with a strong prior, not a restoration of verified-good settings.
 >
@@ -82,31 +88,32 @@ eas submit -p android
 >
 > **Batch B revert order.** Batch B is also two independent mechanisms with disjoint failure signatures, so revert the right half rather than disabling R8 wholesale: a **missing image, blank icon, or `Resources$NotFoundException`** is the _resource_ shrinker → set `enableShrinkResourcesInReleaseBuilds: false` first (a ProGuard `-keep` provably cannot fix a stripped resource). A **`ClassNotFoundException`/`NoSuchMethodError`/soft failure like "session doesn't persist"** is the _code_ shrinker → add a targeted `-keep` via `extraProguardRules`, and only then consider `enableProguardInReleaseBuilds: false`.
 >
-> **The diagnostic APK does not fully clear the store artifact.** `internal-apk` builds `:app:assembleRelease` (universal APK); `production` builds `:app:bundleRelease` (AAB). These are separate R8 and resource-shrinker invocations producing separate `mapping.txt` files, and Play then re-signs and splits the AAB by density/ABI/language — paths the universal APK never exercises. A green sideload test is necessary but not sufficient; still smoke-test the Play **internal testing track** build before promoting to production. (Note the word "internal" is overloaded here: the `internal-apk` EAS profile is a sideloadable APK; the Play "Internal testing" track receives the AAB.)
+> **The diagnostic APK does not fully clear the store artifact.** `internal-apk` builds `:app:assembleRelease` (universal APK); `production` builds `:app:bundleRelease` (AAB). These are separate R8 and resource-shrinker invocations producing separate `mapping.txt` files, and Play then re-signs and splits the AAB by density/ABI/language — paths the universal APK never exercises. A green sideload test is necessary but not sufficient — and since submissions now go straight to the Production track, there is no longer an internal-track AAB to test in between. Treat a sideload pass as the strongest signal available before submitting, and use a staged `rollout` when a release carries real R8 or dependency risk. (Note the word "internal" is overloaded here: the `internal-apk` EAS profile is a sideloadable APK; the Play "Internal testing" track, which this project no longer submits to, receives the AAB.)
 >
 > **Expected visual change to verify on device (edge-to-edge).** The scaffold already consumes safe-area insets (`HeaderBanner` uses `insets.top + 24`, `FooterNav` uses `Math.max(bottom, 12)`) **and** most screens add `insets.top`/`insets.bottom` again inside it (`app/(tabs)/index.tsx`, `lnf.tsx`, `active.tsx`, `saved.tsx`, `advocacy.tsx`, `legislator/[id].tsx`). On Android those insets were `0` before edge-to-edge, so the duplication was invisible; now it is real. **Expect extra blank bands under the header and above the footer — fix by removing the per-screen inset padding, not by reverting edge-to-edge.** Also check the two pre-provider screens in `_layout.tsx` (Configuration Error, pre-ready logo): they render outside `SafeAreaProvider` with a hardcoded `paddingTop: 64` and no `<StatusBar>`, so verify them on a large-cutout device.
 >
 > **Edge-to-edge is not optional long-term**: Android 16 / `targetSdkVersion` 36 removes the opt-out entirely (on API 35 it is still opt-out-able via `android:windowOptOutEdgeToEdgeEnforcement`), and Play's API 36 deadline lands with SDK 54 — see the deadline note in Troubleshooting.
 >
-> ### 🚧 Pending release: 1.8.0 (blocked on EAS quota until 2026-08-01)
+> ### 🚧 Pending release: 1.8.0 (built and submitted, never promoted)
 >
-> `main` carries the complete ladder and is release-ready. The 1.8.0 production build was **blocked by the EAS free-plan monthly Android build quota**, which resets **2026-08-01**. Nothing is wrong with the code.
+> `main` carries the complete ladder and is release-ready. The original blocker was the EAS free-plan monthly Android build quota (reset 2026-08-01); that cleared, and vc16 and vc17 were both built and submitted on 2026-08-16. Neither reached production: `eas submit` targeted the Internal testing track and the manual promote was never performed. Nothing is wrong with the code.
 >
-> **Currently live in production:** vc13 / 1.7.0 — the binary that fixed the `${}` placeholder incident. It works; there is no urgency.
+> **Currently live in production:** vc13 / 1.7.0 — the binary that fixed the `${}` placeholder incident. It works, but it predates the SDK 57 migration, so it is not covered by any update published from current `main`.
 >
 > **What 1.8.0 adds over vc13:** #72 boot hardening, #73 Batch A (OTA, edge-to-edge, Sentry AGP, iOS `useFrameworks` dropped), #74 Batch B (R8 + resource shrinking), #76 safe-area inset fix, #77 version bump.
 >
 > **To pick it up:**
 >
-> 1. `eas build --platform android --profile production` → this will be **vc16** (see the counter-gap note in Troubleshooting).
-> 2. `eas submit -p android` → lands on the Play **internal testing** track.
-> 3. Smoke-test the internal build against the full list at the top of this section. The AAB is a _separate_ R8 + resource-shrinker invocation from the sideloaded APK, so the earlier device pass does not clear it.
-> 4. Promote internal → production in Play Console (or via the Play Developer API).
-> 5. `eas build --platform ios --profile production && eas submit -p ios` → **iOS still has no device pass** since `ios.useFrameworks: "static"` was dropped in Batch A. Verify on TestFlight before submitting for review.
+> vc16 and vc17 already exist and are both stranded on the Internal testing track. **Neither can be rescued by re-submitting**: the Play Publishing API rejects a bundle whose versionCode is already uploaded, so `eas submit` against those builds fails outright. The only ways to get v1.8.0 live are a manual Play Console promote of the stranded release, or a fresh build — which is the path below. Halt or supersede the stranded internal releases so they do not shadow the new one.
+>
+> 1. `eas build --platform android --profile internal-apk` → sideload it and smoke-test against the full list at the top of this section. Do this **first**: the `production` profile has `autoIncrement: true` with `appVersionSource: "remote"`, so a production build consumes its versionCode on EAS whether or not it later passes, widening the counter gap documented in Troubleshooting.
+> 2. `eas build --platform android --profile production` → the next versionCode is **vc18** (vc16 and vc17 are spent; see the counter-gap note in Troubleshooting).
+> 3. `eas submit -p android` → lands on the Play **Production** track and goes live once review passes.
+> 4. `eas build --platform ios --profile production && eas submit -p ios` → **iOS still has no device pass** since `ios.useFrameworks: "static"` was dropped in Batch A. Verify on TestFlight before submitting for review.
 >
 > **Verification status carried into this release:** Android device-verified for Batch A and Batch B (sideloaded APKs, 2026-07-24). **Not** device-verified: the #76 inset fix (merged after those APKs were built) and everything on iOS.
 >
-> **Sentry AGP requires `SENTRY_AUTH_TOKEN`** in the EAS environment used by the build, or the upload task fails the build. It is present in the **production** environment (which `production` and `internal-apk` both pin); `development`/`preview` set `SENTRY_DISABLE_AUTO_UPLOAD=true` in `eas.json`, which the plugin's `shouldSentryAutoUpload()` gate respects. **Local release builds** (`npx expo run:android --variant release`) set neither, so export `SENTRY_DISABLE_AUTO_UPLOAD=true` first or Gradle fails on an unauthenticated upload. `internal-apk` sets `SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD=true` so throwaway diagnostic builds don't push hundreds of MB of `.so` symbols.
+> **Sentry AGP requires `SENTRY_AUTH_TOKEN`** in the EAS environment used by the build, or the upload task fails the build. It is present in the **production** environment (which `production` and `internal-apk` both pin); `development`/`preview` set `SENTRY_DISABLE_AUTO_UPLOAD=true` in `eas.json`, which the plugin's `shouldSentryAutoUpload()` gate respects. **Local release builds** (`npx expo run:android --variant release`) set neither, so export `SENTRY_DISABLE_AUTO_UPLOAD=true` first or Gradle fails on an unauthenticated upload. `internal-apk` declares no `env` block of its own and inherits `production`'s, so it sets **neither** Sentry flag and does upload native `.so` symbols — budget for that on every smoke-test build now that the sideload is the pre-submit gate.
 
 ---
 
@@ -182,6 +189,7 @@ eas update --branch production --environment production --message "Fix: summary 
 
 - **JS/asset-only change** → fingerprint unchanged → `eas update` reaches current builds. ✅
 - **Any native-affecting change** (add/upgrade a dependency with native code, change plugins or native `app.json` fields) → new fingerprint → existing installs **cannot** receive the update; ship a store build first (Steps 1 & 2 above), then OTA works again for the new builds.
+- **`eas.json` is hashed whole-file**, under the `easBuild` source — the same trap as the raw `package.json` noted in Troubleshooting. `sourceSkips` cannot exclude it, and it does not matter whether the edited key could affect a binary: changing the submit track, a build profile, the Node pin or a `buildType` all rotate the runtime version. Measured, not theoretical — the submit-block edit that switched the track to `production` and pinned `releaseStatus` moved the Android fingerprint from `b01715e5…` to `5a915b93…` (iOS: `5b576ebb…` → `f20c120c…`), orphaning every binary built before that commit. Those two keys cannot affect a binary at all; they still re-segmented the fleet. Recompute after **any** `eas.json` edit and ship a store build before relying on OTA again.
 - Run `npx expo-updates fingerprint:generate --platform android` before/after a change (or `eas fingerprint:compare`) if you're unsure whether it re-segmented.
 - `fingerprint.config.js` excludes the whole `extra` config section (env-injected values plus the static EAS project/router identifiers) and the `version` string from the hash, so env differences and marketing-version bumps do **not** break OTA targeting. A genuine EAS project migration (changing `extra.eas.projectId`) is _not_ caught by the fingerprint either — treat that as a native change and ship a full build. Publish updates from an environment where the config evaluates (`.env` present), or the command fails.
 
