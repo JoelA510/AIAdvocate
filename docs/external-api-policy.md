@@ -99,6 +99,14 @@ immediate (§1). These floors are therefore mandatory and are CI-checked:
   fan-out or add a shared rate gate. The same caveat applies to leginfo: five
   parallel workers plus the verification pass can exceed the ≥250 ms spacing
   in §5.
+  **Update 2026-10-27: the fallback is now the normal path.** leginfo serves a
+  Cloudflare challenge to cloud egress (Supabase Edge and other datacenter
+  IPs), so every bill without stored text goes to LegiScan. Within one
+  invocation `sync-updated-bills` now holds the §3 floors itself
+  (`sync-updated-bills/legiscanPacer.ts`: ≥ 1000 ms gap, ≤ 6 calls, getBill and
+  getBillText reserved only as a pair). Across invocations it still does not.
+  In practice the exposure is bounded by how many textless bills exist, since
+  fetched text is now persisted before summarisation and never re-fetched.
 - **Abort the whole sweep on the first API-level error.** A LegiScan response of
   `status: "ERROR"` (locked key, exhausted quota, malformed query) will repeat
   for every subsequent call. Stop; do not continue to the next item.
@@ -170,6 +178,8 @@ env-configurable, so an incident can be contained without a redeploy:
 | `BULK_IMPORT_VERIFY_PER_RUN` | `8` | Leginfo verifications per invocation |
 | `BULK_IMPORT_PINNED_BILLS` | unset | Bill numbers to ingest directly, e.g. `AB1705\|AB1568` (max 25) |
 | `LEGISCAN_MASTERLIST_COOLDOWN_SECONDS` | `86400` | Cooldown for the pinned-bill `getMasterList` lookup (never below 3600) |
+| `LEGISCAN_SYNC_DELAY_MS` | `1500` | `sync-updated-bills`: gap between its LegiScan calls (never below 1000) |
+| `LEGISCAN_SYNC_MAX_CALLS_PER_RUN` | `6` | `sync-updated-bills`: LegiScan calls per invocation (never above 6) |
 
 The search sweep visits phrases least-recently-searched first (from
 `legiscan_api_call_log`), so the per-run cap rotates through the whole list
