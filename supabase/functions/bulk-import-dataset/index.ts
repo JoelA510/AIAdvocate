@@ -6,6 +6,21 @@ import JSZip from "npm:jszip";
 import { ensureEnv, getServiceKey } from "../_shared/utils.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
+import {
+  buildVerifyRegex,
+  type CallPacer,
+  createCallPacer,
+  isBotChallenge,
+  matchPinnedFromMasterList,
+  orderPhrasesByLastSearched,
+  pacerCanCall,
+  pacerRecordCall,
+  pacerWaitMs,
+  parsePinnedBillNumbers,
+  phraseSetKey,
+  RELEVANT_SEARCH_PHRASES,
+  searchResourceKey,
+} from "./discovery.ts";
 
 const LEGISCAN_API_HEADERS = {
   Accept: "application/json",
@@ -32,30 +47,8 @@ const RELEVANT_KEYWORDS = [
 
 const KEYWORD_REGEX = new RegExp(`\\b(${RELEVANT_KEYWORDS.join("|")})\\b`, "i");
 
-// The LegiScan dataset only carries bill metadata (title + the "An act to
-// amend …" description), so a title/description keyword match cannot see terms
-// that appear in the operative bill text. CA AB2691 ("Elections: elective
-// office: felony conviction.") is the canonical example: the disqualifying
-// crimes "sexual assault" and "human trafficking" only appear in Section 1.
-// These phrases are therefore run through LegiScan's full-text search engine,
-// which indexes the bill text itself.
-const RELEVANT_SEARCH_PHRASES = [
-  "human trafficking",
-  "sex trafficking",
-  "labor trafficking",
-  "trafficking victim",
-  "commercial sexual exploitation",
-  "sexual exploitation",
-  "sexual assault",
-  "sexual abuse",
-  "sexual violence",
-  "child sexual abuse",
-  "domestic violence",
-  "intimate partner violence",
-  "forced labor",
-  "involuntary servitude",
-  "prostitution",
-];
+// RELEVANT_SEARCH_PHRASES (the full-text sweep's vocabulary) lives in
+// ./discovery.ts with the other pure discovery helpers.
 
 // LegiScan's search engine ranks by relevance rather than matching the quoted
 // phrase exactly, so a raw search hit is a *candidate*, not a match: a dry run
@@ -67,9 +60,7 @@ const RELEVANT_SEARCH_PHRASES = [
 // it was pinned to the built-in constant, overriding BULK_IMPORT_SEARCH_PHRASES
 // made discovery search the new terms while verification still only accepted
 // the old ones — every hit failed and was written to the permanent rejection
-// cache.
-const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// cache. buildVerifyRegex (./discovery.ts) takes that list as its argument.
 
 // Omnibus appropriations vehicles are a systematic false positive for the
 // text-verification gate below, and the gate is working correctly when it lets
@@ -128,9 +119,6 @@ const isExcludedVehicle = (title: string | null | undefined): boolean => {
   return pattern.test(title);
 };
 
-const buildVerifyRegex = (phrases: string[]): RegExp =>
-  new RegExp(`(${phrases.map(escapeRegExp).join("|")})`, "i");
-
 const BROWSER_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -154,6 +142,14 @@ const MAX_SEARCH_PAGES_PER_PHRASE = 20;
 // cooldown means unqueried phrases are simply picked up on a later run.
 const DEFAULT_SEARCH_DELAY_MS = 1_500;
 const DEFAULT_SEARCH_MAX_CALLS_PER_RUN = 6;
+// docs/external-api-policy.md §3 floors. Env overrides may tighten the two
+// defaults above but never loosen past these.
+const POLICY_MIN_LEGISCAN_GAP_MS = 1_000;
+const POLICY_MAX_LEGISCAN_CALLS_PER_INVOCATION = 6;
+// getMasterList's documented refresh interval is 1 hour (§2); once a day is
+// all the pinned-bill lookup needs.
+const DEFAULT_MASTERLIST_COOLDOWN_SECONDS = 24 * 60 * 60;
+const POLICY_MIN_MASTERLIST_COOLDOWN_SECONDS = 60 * 60;
 const DEFAULT_VERIFY_PER_RUN = 8;
 const DEFAULT_VERIFY_DELAY_MS = 250;
 const MAX_PENDING_QUEUE = 2_000;
@@ -226,6 +222,8 @@ type SearchDiscoveryStats = {
   rejected_count: number;
   unverifiable_count: number;
   verify_unavailable: number;
+  verify_blocked: number;
+  rejected_cache_reset: boolean;
   excluded_vehicle_count: number;
   error_count: number;
   errors: string[];
@@ -425,21 +423,54 @@ const getSearchMaxNewBills = (): number =>
   );
 
 const getSearchDelayMs = (): number =>
-  parsePositiveInt(
-    Deno.env.get("LEGISCAN_SEARCH_DELAY_MS"),
-    DEFAULT_SEARCH_DELAY_MS,
-    10_000,
+  Math.max(
+    POLICY_MIN_LEGISCAN_GAP_MS,
+    parsePositiveInt(
+      Deno.env.get("LEGISCAN_SEARCH_DELAY_MS"),
+      DEFAULT_SEARCH_DELAY_MS,
+      10_000,
+    ),
   );
 
+// Despite the name, this caps every LegiScan call in the invocation, not just
+// getSearch -- see CallPacer.
 const getSearchMaxCallsPerRun = (): number =>
   parsePositiveInt(
     Deno.env.get("LEGISCAN_SEARCH_MAX_CALLS_PER_RUN"),
     DEFAULT_SEARCH_MAX_CALLS_PER_RUN,
-    50,
+    POLICY_MAX_LEGISCAN_CALLS_PER_INVOCATION,
+  );
+
+const getMasterListCooldownSeconds = (): number =>
+  Math.max(
+    POLICY_MIN_MASTERLIST_COOLDOWN_SECONDS,
+    parsePositiveInt(
+      Deno.env.get("LEGISCAN_MASTERLIST_COOLDOWN_SECONDS"),
+      DEFAULT_MASTERLIST_COOLDOWN_SECONDS,
+      31 * 24 * 60 * 60,
+    ),
   );
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The only way this function issues a LegiScan request. The caller must have
+ * checked pacerCanCall() and reserved the call first; this enforces the gap
+ * since the previous call and counts the call even if the request throws.
+ */
+const pacedLegiScanFetch = async (
+  pacer: CallPacer,
+  url: string,
+): Promise<Response> => {
+  const wait = pacerWaitMs(pacer, Date.now());
+  if (wait > 0) await delay(wait);
+  try {
+    return await fetch(url, { headers: LEGISCAN_API_HEADERS });
+  } finally {
+    pacerRecordCall(pacer, Date.now());
+  }
+};
 
 const getSearchCooldownSeconds = (): number =>
   parsePositiveInt(
@@ -767,6 +798,9 @@ const getVerifyDelayMs = (): number =>
 type PendingState = {
   rows: BillSeedRow[];
   rejected: number[];
+  // phraseSetKey() of the list the rejections were judged against; null when
+  // the cache predates this field.
+  phrase_set: string | null;
 };
 
 const pendingKey = (state: string, sessionId: number): string =>
@@ -790,6 +824,9 @@ const getPendingState = async (
     rejected: Array.isArray(cursor.rejected)
       ? (cursor.rejected as unknown[]).map(Number).filter(Number.isFinite)
       : [],
+    phrase_set: typeof cursor.phrase_set === "string"
+      ? cursor.phrase_set
+      : null,
   };
 };
 
@@ -807,6 +844,7 @@ const setPendingState = async (
         cursor: {
           rows: state.rows.slice(0, MAX_PENDING_QUEUE),
           rejected: state.rejected.slice(-MAX_REJECTED_TRACKED),
+          phrase_set: state.phrase_set,
           updated_at: nowIso,
         },
         updated_at: nowIso,
@@ -823,8 +861,16 @@ const setPendingState = async (
  * `unavailable` is distinct from `rejected` so a transient leginfo failure
  * retries later, while `unverifiable` (no usable link — a condition retrying
  * can never fix) drops the row instead of parking it in the queue forever.
+ * `blocked` (a Cloudflare bot challenge) also keeps the row, but tells the
+ * caller to stop fetching: every further request from this egress gets the
+ * same challenge.
  */
-type VerifyOutcome = "match" | "rejected" | "unavailable" | "unverifiable";
+type VerifyOutcome =
+  | "match"
+  | "rejected"
+  | "unavailable"
+  | "unverifiable"
+  | "blocked";
 
 const billTextMentionsTopic = async (
   stateLink: string | null,
@@ -845,12 +891,24 @@ const billTextMentionsTopic = async (
       `https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${billId}`,
       { headers: BROWSER_HEADERS },
     );
-    if (!response.ok) return "unavailable";
-
     const html = await response.text();
-    const anchor = html.indexOf('id="bill_all"');
-    // No text published yet (introduced but not printed): worth retrying.
-    if (anchor < 0) return "unavailable";
+    const anchor = response.ok ? html.indexOf('id="bill_all"') : -1;
+    if (anchor < 0) {
+      // Checked only when the bill text is absent: a real page may itself load
+      // Cloudflare scripts, so the challenge markers alone are not conclusive.
+      if (
+        isBotChallenge(
+          response.status,
+          response.headers.get("cf-mitigated"),
+          html,
+        )
+      ) {
+        return "blocked";
+      }
+      // Non-2xx, or no text published yet (introduced but not printed): worth
+      // retrying.
+      return "unavailable";
+    }
 
     const text = html
       .slice(anchor)
@@ -863,6 +921,227 @@ const billTextMentionsTopic = async (
     console.warn("leginfo verification fetch failed", { error: String(error) });
     return "unavailable";
   }
+};
+
+// Bounds the call-log read. A phrase not searched within this window sorts as
+// never searched, which is the right priority for it anyway.
+const SEARCH_ROTATION_LOOKBACK_DAYS = 31;
+
+/**
+ * Most recent page-1 search per phrase, from the reservation log -- the only
+ * record of when each phrase was actually searched.
+ */
+const getLastSearchedMs = async (
+  supabaseAdmin: SupabaseAdminClient,
+  state: string,
+  sessionId: number,
+  phrases: string[],
+): Promise<Map<string, number>> => {
+  const phraseByKey = new Map(
+    phrases.map((phrase) => [
+      searchResourceKey(state, sessionId, phrase, 1),
+      phrase,
+    ]),
+  );
+  const since = new Date(
+    Date.now() - SEARCH_ROTATION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const { data, error } = await supabaseAdmin
+    .from("legiscan_api_call_log")
+    .select("resource_key, created_at")
+    .eq("endpoint", "getSearch")
+    .in("resource_key", Array.from(phraseByKey.keys()))
+    .gte("created_at", since);
+
+  if (error) throw error;
+
+  const lastSearched = new Map<string, number>();
+  for (
+    const row of (data ?? []) as Array<
+      { resource_key: string; created_at: string }
+    >
+  ) {
+    const phrase = phraseByKey.get(row.resource_key);
+    const at = Date.parse(row.created_at);
+    if (!phrase || !Number.isFinite(at)) continue;
+    if (at > (lastSearched.get(phrase) ?? Number.NEGATIVE_INFINITY)) {
+      lastSearched.set(phrase, at);
+    }
+  }
+  return lastSearched;
+};
+
+type PinnedBillsStats = {
+  enabled: true;
+  dry_run: boolean;
+  requested: string[];
+  invalid: string[];
+  already_present: string[];
+  missing: string[];
+  lookup: "not_needed" | "dry_run" | "called" | "skipped";
+  skipped_reason: string | null;
+  retry_after_seconds: number | null;
+  aborted: string | null;
+  abort_message: string | null;
+  inserted: Array<{ id: number; bill_number: string; title: string }>;
+  not_found: string[];
+  errors: string[];
+};
+
+/**
+ * Operator-pinned bills (BULK_IMPORT_PINNED_BILLS) bypass topic discovery: an
+ * operator has already decided they belong, so they are inserted without the
+ * search sweep or the leginfo verification gate. Their numeric LegiScan
+ * bill_id -- which bills.id must be, because sync-updated-bills passes it to
+ * getBill -- is resolved with ONE getMasterList call for the whole set, and
+ * only when a pinned bill is missing. Once all are present this costs a single
+ * bills query per run and no API call, so leaving the variable set is cheap.
+ */
+const resolvePinnedBills = async (
+  supabaseAdmin: SupabaseAdminClient,
+  legiscanApiKey: string,
+  options: {
+    sessionId: number;
+    state: string;
+    yearStart: number | null;
+    yearEnd: number | null;
+    dryRun: boolean;
+    pacer: CallPacer;
+    reserveCalls: number;
+    legiscanCalls: LegiScanReservation[];
+  },
+): Promise<PinnedBillsStats | { enabled: false }> => {
+  const { valid, invalid } = parsePinnedBillNumbers(
+    Deno.env.get("BULK_IMPORT_PINNED_BILLS"),
+  );
+  if (valid.length === 0 && invalid.length === 0) return { enabled: false };
+
+  const stats: PinnedBillsStats = {
+    enabled: true,
+    dry_run: options.dryRun,
+    requested: valid,
+    invalid,
+    already_present: [],
+    missing: [],
+    lookup: "not_needed",
+    skipped_reason: null,
+    retry_after_seconds: null,
+    aborted: null,
+    abort_message: null,
+    inserted: [],
+    not_found: [],
+    errors: [],
+  };
+  if (valid.length === 0) return stats;
+
+  // Present means present in *this* session: a same-numbered bill from an
+  // earlier session must not satisfy the pin.
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from("bills")
+    .select("bill_number, state_link")
+    .in("bill_number", valid);
+  if (existingError) throw existingError;
+
+  const present = new Set<string>();
+  for (
+    const row of (existing ?? []) as Array<
+      { bill_number: string; state_link: string | null }
+    >
+  ) {
+    const sessionYears = options.yearStart !== null && options.yearEnd !== null
+      ? `${options.yearStart}${options.yearEnd}`
+      : null;
+    if (
+      !sessionYears ||
+      (row.state_link ?? "").includes(
+        `bill_id=${sessionYears}0${row.bill_number}`,
+      )
+    ) {
+      present.add(row.bill_number);
+    }
+  }
+  stats.already_present = valid.filter((number) => present.has(number));
+  stats.missing = valid.filter((number) => !present.has(number));
+  if (stats.missing.length === 0) return stats;
+
+  // A dry run must not spend the lookup: the reservation cooldown would then
+  // block the real run that follows it.
+  if (options.dryRun) {
+    stats.lookup = "dry_run";
+    return stats;
+  }
+
+  if (!pacerCanCall(options.pacer, options.reserveCalls)) {
+    stats.lookup = "skipped";
+    stats.skipped_reason = "invocation_call_budget_spent";
+    return stats;
+  }
+
+  const reservation = await reserveLegiScanCall(
+    supabaseAdmin,
+    "getMasterList",
+    `${options.state}:${options.sessionId}`,
+    getMasterListCooldownSeconds(),
+  );
+  options.legiscanCalls.push(reservation);
+  if (!reservation.allowed) {
+    stats.lookup = "skipped";
+    stats.skipped_reason = reservation.reason ?? "reservation_denied";
+    stats.retry_after_seconds = reservation.retry_after_seconds ?? null;
+    return stats;
+  }
+
+  stats.lookup = "called";
+  const masterListUrl = `https://api.legiscan.com/?key=${legiscanApiKey}` +
+    `&op=getMasterList&id=${options.sessionId}`;
+  const response = await pacedLegiScanFetch(options.pacer, masterListUrl);
+  const json = await response.json().catch(() => null);
+
+  if (json?.status !== "OK" || !json?.masterlist) {
+    // Same rule as the search sweep: an API-level error repeats for every
+    // later call, so the caller stops all LegiScan traffic for this run.
+    stats.aborted = "legiscan_error";
+    stats.abort_message = toNullableString(json?.alert?.message) ??
+      `LegiScan getMasterList returned ${json?.status ?? response.status}`;
+    stats.errors.push(stats.abort_message);
+    return stats;
+  }
+
+  const matches = matchPinnedFromMasterList(json.masterlist, stats.missing);
+  const found = new Set(matches.map((match) => match.number));
+  stats.not_found = stats.missing.filter((number) => !found.has(number));
+
+  const rows: BillSeedRow[] = matches.map((match) => ({
+    id: match.bill_id,
+    bill_number: match.number,
+    title: match.title ?? match.number,
+    description: match.description,
+    status: null,
+    state_link: buildCaStateLink(
+      match.number,
+      options.yearStart,
+      options.yearEnd,
+    ),
+    change_hash: match.change_hash,
+    summary_simple: null,
+  }));
+
+  if (rows.length > 0) {
+    // Insert-only, as in the search path: sync-updated-bills owns every field
+    // after this, including the text and summaries.
+    const { data: inserted, error } = await supabaseAdmin
+      .from("bills")
+      .upsert(rows, { onConflict: "id", ignoreDuplicates: true })
+      .select("id, bill_number, title");
+    if (error) {
+      stats.errors.push(`insert: ${error.message ?? String(error)}`);
+    } else {
+      stats.inserted = (inserted ?? []) as PinnedBillsStats["inserted"];
+    }
+  }
+
+  return stats;
 };
 
 /**
@@ -882,6 +1161,8 @@ const runSearchDiscovery = async (
     yearEnd: number | null;
     dryRun: boolean;
     stopAt: number;
+    pacer: CallPacer;
+    reserveCalls: number;
   },
 ): Promise<SearchDiscoveryStats> => {
   const stats: SearchDiscoveryStats = {
@@ -903,6 +1184,8 @@ const runSearchDiscovery = async (
     rejected_count: 0,
     unverifiable_count: 0,
     verify_unavailable: 0,
+    verify_blocked: 0,
+    rejected_cache_reset: false,
     excluded_vehicle_count: 0,
     error_count: 0,
     errors: [],
@@ -915,17 +1198,35 @@ const runSearchDiscovery = async (
   };
 
   const phrases = getSearchPhrases();
+  // A failed lookup costs fairness, not correctness: the reservation cooldowns
+  // still bound every call, so fall back to list order and report it.
+  let sweepOrder = phrases;
+  try {
+    sweepOrder = orderPhrasesByLastSearched(
+      phrases,
+      await getLastSearchedMs(
+        supabaseAdmin,
+        options.state,
+        options.sessionId,
+        phrases,
+      ),
+    );
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : (error as { message?: string })?.message ?? String(error);
+    console.error("Search rotation lookup failed; using list order", {
+      error: message,
+    });
+    pushError(`search rotation lookup: ${message}`);
+  }
   const pagesPerPhrase = getSearchPagesPerPhrase();
   const minRelevance = getSearchMinRelevance();
   const cooldownSeconds = getSearchCooldownSeconds();
-  const delayMs = getSearchDelayMs();
-  const maxCallsPerRun = getSearchMaxCallsPerRun();
   const candidates = new Map<number, BillSeedRow>();
 
-  let callsMade = 0;
-
   phraseLoop:
-  for (const phrase of phrases) {
+  for (const phrase of sweepOrder) {
     if (Date.now() >= options.stopAt - DEADLINE_GUARD_MS) break;
 
     let queriedPhrase = false;
@@ -934,7 +1235,7 @@ const runSearchDiscovery = async (
     for (let page = 1; page <= Math.min(pagesPerPhrase, pageTotal); page += 1) {
       if (Date.now() >= options.stopAt - DEADLINE_GUARD_MS) break;
 
-      if (callsMade >= maxCallsPerRun) {
+      if (!pacerCanCall(options.pacer, options.reserveCalls)) {
         stats.aborted = "max_calls_per_run";
         break phraseLoop;
       }
@@ -942,7 +1243,7 @@ const runSearchDiscovery = async (
       const reservation = await reserveLegiScanCall(
         supabaseAdmin,
         "getSearch",
-        `${options.state}:${options.sessionId}:${phrase}:p${page}`,
+        searchResourceKey(options.state, options.sessionId, phrase, page),
         cooldownSeconds,
       );
 
@@ -951,18 +1252,13 @@ const runSearchDiscovery = async (
         break;
       }
 
-      // Throttle: LegiScan locks keys for bursty traffic.
-      if (callsMade > 0) await delay(delayMs);
-      callsMade += 1;
-
       const searchUrl = `https://api.legiscan.com/?key=${legiscanApiKey}` +
         `&op=getSearch&id=${options.sessionId}` +
         `&query=${encodeURIComponent(`"${phrase}"`)}&page=${page}`;
 
       try {
-        const response = await fetch(searchUrl, {
-          headers: LEGISCAN_API_HEADERS,
-        });
+        // Throttled by the pacer: LegiScan locks keys for bursty traffic.
+        const response = await pacedLegiScanFetch(options.pacer, searchUrl);
         const json = await response.json();
 
         if (json?.status !== "OK" || !json?.searchresult) {
@@ -1073,7 +1369,20 @@ const runSearchDiscovery = async (
   // (which is rate-limited by LegiScan) runs at its own pace.
   const queueKey = pendingKey(options.state, options.sessionId);
   const pending = await getPendingState(supabaseAdmin, queueKey);
-  const rejected = new Set<number>(pending.rejected);
+  // Rejections were judged against the phrase list in force at the time. When
+  // the list changes (code default or BULK_IMPORT_SEARCH_PHRASES), a bill
+  // rejected under the old list may match the new one, so the cache is
+  // discarded and candidates are re-verified as the sweep surfaces them again.
+  // Costs leginfo fetches only, metered by BULK_IMPORT_VERIFY_PER_RUN.
+  const phraseSet = phraseSetKey(phrases);
+  const keepRejected = pending.phrase_set === phraseSet;
+  if (!keepRejected && pending.rejected.length > 0) {
+    stats.rejected_cache_reset = true;
+    console.log("Phrase list changed; discarding rejected cache", {
+      discarded: pending.rejected.length,
+    });
+  }
+  const rejected = new Set<number>(keepRejected ? pending.rejected : []);
   const queued = new Map<number, BillSeedRow>(
     pending.rows.map((row) => [row.id, row]),
   );
@@ -1146,6 +1455,18 @@ const runSearchDiscovery = async (
 
     const outcome = await billTextMentionsTopic(row.state_link, verifyRegex);
 
+    if (outcome === "blocked") {
+      // Keep the row and stop: every remaining fetch this run would hit the
+      // same challenge, and would read as `unavailable` if counted as such.
+      stats.verify_blocked += 1;
+      deferred.push(row);
+      pushError(
+        "leginfo returned a Cloudflare bot challenge; verification stopped for this run",
+      );
+      index += 1;
+      break;
+    }
+
     if (outcome === "unavailable") {
       // Text not published yet, or a transient leginfo failure. Keep it queued
       // and retry on a later run rather than dropping or wrongly admitting it.
@@ -1200,13 +1521,14 @@ const runSearchDiscovery = async (
   await setPendingState(supabaseAdmin, queueKey, {
     rows: remaining,
     rejected: Array.from(rejected),
+    phrase_set: phraseSet,
   });
 
   return stats;
 };
 
 console.log(
-  "Initializing bulk-import-dataset v40: full-text discovery + bounded cursor import",
+  "Initializing bulk-import-dataset v42: pinned bills + rotating full-text discovery + bounded cursor import",
 );
 
 serve(async (req) => {
@@ -1239,6 +1561,10 @@ serve(async (req) => {
 
     const state = "CA";
     const legiscanCalls: LegiScanReservation[] = [];
+    const pacer = createCallPacer(
+      getSearchMaxCallsPerRun(),
+      getSearchDelayMs(),
+    );
     const datasetListCooldownSeconds = getDatasetListCooldownSeconds();
     const datasetListCache = await getDatasetListCache(supabaseAdmin, state);
     let datasetListSource = "api";
@@ -1280,9 +1606,10 @@ serve(async (req) => {
       const datasetListUrl =
         `https://api.legiscan.com/?key=${legiscanApiKey}&op=getDatasetList&state=${state}`;
 
-      const datasetListResponse = await fetch(datasetListUrl, {
-        headers: LEGISCAN_API_HEADERS,
-      });
+      const datasetListResponse = await pacedLegiScanFetch(
+        pacer,
+        datasetListUrl,
+      );
       const datasetListJson = await datasetListResponse.json();
 
       if (datasetListJson.status !== "OK") {
@@ -1307,38 +1634,8 @@ serve(async (req) => {
     const accessKey = activeDataset.access_key;
     if (!accessKey) throw new Error("Active dataset access_key is missing.");
 
-    // Full-text discovery runs first and commits its own rows, so a later
-    // failure in the (much heavier) dataset pass cannot discard it.
-    const searchDiscovery: SearchDiscoveryStats | { enabled: false } =
-      options.skip_search || !searchDiscoveryEnabled()
-        ? { enabled: false }
-        : await runSearchDiscovery(supabaseAdmin, legiscanApiKey, {
-          sessionId,
-          state,
-          yearStart: toNullableInt(activeDataset.year_start),
-          yearEnd: toNullableInt(activeDataset.year_end),
-          dryRun: options.dry_run,
-          stopAt,
-        });
-
-    // Newly discovered bills carry metadata only; `sync-updated-bills` fetches
-    // their text and summaries. Enqueue here so discovery still drives the
-    // downstream pipeline on the (now common) runs where the dataset pass is
-    // skipped.
-    const discoverySummarySync = "inserted_count" in searchDiscovery &&
-        searchDiscovery.inserted_count > 0
-      ? await enqueueSummarySyncs(
-        supabaseAdmin,
-        getSummarySyncInvocationCount(searchDiscovery.inserted_count),
-      )
-      : null;
-
-    const respond = (body: Record<string, unknown>, status = 200) =>
-      jsonResponse({
-        ...body,
-        search_discovery: searchDiscovery,
-        discovery_summary_sync: discoverySummarySync,
-      }, status);
+    const yearStart = toNullableInt(activeDataset.year_start);
+    const yearEnd = toNullableInt(activeDataset.year_end);
 
     const datasetHash = activeDataset.dataset_hash ?? null;
     const datasetSize = toNullableInt(activeDataset.dataset_size);
@@ -1353,10 +1650,104 @@ serve(async (req) => {
       existingCursor?.state === state &&
       existingCursor?.dataset_hash === datasetHash;
 
+    // Decided before discovery runs so the dataset download keeps a slot in the
+    // shared call budget whenever it will actually be attempted; the branches
+    // below act on these same values.
+    const datasetCursorComplete = !options.force_restart &&
+      sameCursorDataset && Boolean(existingCursor?.completed_at);
+    const datasetPassDisabled = options.skip_dataset || !datasetPassEnabled();
+    const maxDatasetBytes = getMaxDatasetBytes();
+    const datasetTooLarge = datasetSize !== null &&
+      datasetSize > maxDatasetBytes;
+    const callsReservedForDataset =
+      datasetCursorComplete || datasetPassDisabled || datasetTooLarge ? 0 : 1;
+
+    // Pinned bills go first so they get this invocation's call budget ahead of
+    // the sweep.
+    const pinnedBills = await resolvePinnedBills(
+      supabaseAdmin,
+      legiscanApiKey,
+      {
+        sessionId,
+        state,
+        yearStart,
+        yearEnd,
+        dryRun: options.dry_run,
+        pacer,
+        reserveCalls: callsReservedForDataset,
+        legiscanCalls,
+      },
+    );
+
+    if ("aborted" in pinnedBills && pinnedBills.aborted) {
+      return jsonResponse({
+        message:
+          "LegiScan returned an API error; stopped all LegiScan calls for this run.",
+        session_id: sessionId,
+        pinned_bills: pinnedBills,
+        legiscan: {
+          dataset_list_source: datasetListSource,
+          calls: legiscanCalls,
+        },
+      });
+    }
+
+    // Full-text discovery runs first and commits its own rows, so a later
+    // failure in the (much heavier) dataset pass cannot discard it.
+    const searchDiscovery: SearchDiscoveryStats | { enabled: false } =
+      options.skip_search || !searchDiscoveryEnabled()
+        ? { enabled: false }
+        : await runSearchDiscovery(supabaseAdmin, legiscanApiKey, {
+          sessionId,
+          state,
+          yearStart,
+          yearEnd,
+          dryRun: options.dry_run,
+          stopAt,
+          pacer,
+          reserveCalls: callsReservedForDataset,
+        });
+
+    // Newly discovered bills carry metadata only; `sync-updated-bills` fetches
+    // their text and summaries. Enqueue here so discovery still drives the
+    // downstream pipeline on the (now common) runs where the dataset pass is
+    // skipped.
+    const discoveredCount = ("inserted_count" in searchDiscovery
+      ? searchDiscovery.inserted_count
+      : 0) +
+      ("inserted" in pinnedBills ? pinnedBills.inserted.length : 0);
+    const discoverySummarySync = discoveredCount > 0
+      ? await enqueueSummarySyncs(
+        supabaseAdmin,
+        getSummarySyncInvocationCount(discoveredCount),
+      )
+      : null;
+
+    const respond = (body: Record<string, unknown>, status = 200) =>
+      jsonResponse({
+        ...body,
+        pinned_bills: pinnedBills,
+        search_discovery: searchDiscovery,
+        discovery_summary_sync: discoverySummarySync,
+      }, status);
+
     if (
-      !options.force_restart && sameCursorDataset &&
-      existingCursor?.completed_at
+      "aborted" in searchDiscovery &&
+      searchDiscovery.aborted === "legiscan_error"
     ) {
+      return respond({
+        message:
+          "LegiScan returned an API error; stopped all LegiScan calls for this run.",
+        session_id: sessionId,
+        skipped_download: true,
+        legiscan: {
+          dataset_list_source: datasetListSource,
+          calls: legiscanCalls,
+        },
+      });
+    }
+
+    if (datasetCursorComplete) {
       const summarySync = await enqueueSummarySyncs(
         supabaseAdmin,
         getSummarySyncInvocationCount(0),
@@ -1374,14 +1765,14 @@ serve(async (req) => {
         },
         continuation: {
           has_more: false,
-          next_index: existingCursor.next_index ?? 0,
-          total_files: existingCursor.total_files ?? 0,
+          next_index: existingCursor?.next_index ?? 0,
+          total_files: existingCursor?.total_files ?? 0,
         },
         summary_sync: summarySync,
       });
     }
 
-    if (options.skip_dataset || !datasetPassEnabled()) {
+    if (datasetPassDisabled) {
       return respond({
         message: "Dataset pass disabled; full-text discovery only.",
         session_id: sessionId,
@@ -1400,8 +1791,7 @@ serve(async (req) => {
       });
     }
 
-    const maxDatasetBytes = getMaxDatasetBytes();
-    if (datasetSize !== null && datasetSize > maxDatasetBytes) {
+    if (datasetTooLarge) {
       // Downloading and base64-decoding a snapshot this large terminates the
       // worker before the cursor can be written, so the pass would never
       // advance and the LegiScan call would be spent for nothing.
@@ -1453,6 +1843,26 @@ serve(async (req) => {
       existingCursor?.state === state &&
       !existingCursor?.completed_at;
 
+    if (!pacerCanCall(pacer)) {
+      return respond({
+        message:
+          "Skipped LegiScan dataset download: this invocation's LegiScan call budget is spent.",
+        session_id: sessionId,
+        cursor_key: cursorKey,
+        dataset_hash_present: Boolean(datasetHash),
+        skipped_download: true,
+        legiscan: {
+          dataset_list_source: datasetListSource,
+          calls: legiscanCalls,
+        },
+        continuation: {
+          has_more: true,
+          next_index: existingCursor?.next_index ?? 0,
+          total_files: existingCursor?.total_files ?? 0,
+        },
+      });
+    }
+
     const datasetReservation = await reserveLegiScanCall(
       supabaseAdmin,
       "getDataset",
@@ -1486,9 +1896,7 @@ serve(async (req) => {
     const legiscanUrl =
       `https://api.legiscan.com/?op=getDataset&id=${sessionId}&key=${legiscanApiKey}&access_key=${accessKey}`;
 
-    const legiscanResponse = await fetch(legiscanUrl, {
-      headers: LEGISCAN_API_HEADERS,
-    });
+    const legiscanResponse = await pacedLegiScanFetch(pacer, legiscanUrl);
     const legiscanJson = await legiscanResponse.json();
 
     if (!legiscanJson?.dataset?.zip) {
@@ -1500,7 +1908,9 @@ serve(async (req) => {
     });
 
     const billFiles = Object.values(zip.files)
-      .filter((file) => file.name.includes("/bill/") && !file.dir)
+      .filter((file) =>
+        file.name.includes("/bill/") && !file.dir
+      )
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const totalFiles = billFiles.length;
