@@ -142,6 +142,19 @@ Deno.test("pacer enforces the gap from the previous call and the per-invocation 
   assertFalse(pacerCanCall(pacer));
 });
 
+Deno.test("pacer reserve keeps a slot for a later call site", () => {
+  const pacer = createCallPacer(6, 1000);
+  for (let i = 0; i < 5; i += 1) {
+    assert(pacerCanCall(pacer, 1));
+    pacerRecordCall(pacer, i * 1000);
+  }
+  // Search stops at 5 so the dataset download still gets the 6th.
+  assertFalse(pacerCanCall(pacer, 1));
+  assert(pacerCanCall(pacer));
+  pacerRecordCall(pacer, 6000);
+  assertFalse(pacerCanCall(pacer));
+});
+
 Deno.test("parsePinnedBillNumbers normalizes, dedupes and reports junk", () => {
   assertEquals(
     parsePinnedBillNumbers(" AB 1705 | ab1568,AB2749 |AB1705||DROP TABLE"),

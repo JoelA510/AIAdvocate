@@ -1008,6 +1008,7 @@ const resolvePinnedBills = async (
     yearEnd: number | null;
     dryRun: boolean;
     pacer: CallPacer;
+    reserveCalls: number;
     legiscanCalls: LegiScanReservation[];
   },
 ): Promise<PinnedBillsStats | { enabled: false }> => {
@@ -1071,7 +1072,7 @@ const resolvePinnedBills = async (
     return stats;
   }
 
-  if (!pacerCanCall(options.pacer)) {
+  if (!pacerCanCall(options.pacer, options.reserveCalls)) {
     stats.lookup = "skipped";
     stats.skipped_reason = "invocation_call_budget_spent";
     return stats;
@@ -1161,6 +1162,7 @@ const runSearchDiscovery = async (
     dryRun: boolean;
     stopAt: number;
     pacer: CallPacer;
+    reserveCalls: number;
   },
 ): Promise<SearchDiscoveryStats> => {
   const stats: SearchDiscoveryStats = {
@@ -1233,7 +1235,7 @@ const runSearchDiscovery = async (
     for (let page = 1; page <= Math.min(pagesPerPhrase, pageTotal); page += 1) {
       if (Date.now() >= options.stopAt - DEADLINE_GUARD_MS) break;
 
-      if (!pacerCanCall(options.pacer)) {
+      if (!pacerCanCall(options.pacer, options.reserveCalls)) {
         stats.aborted = "max_calls_per_run";
         break phraseLoop;
       }
@@ -1635,6 +1637,31 @@ serve(async (req) => {
     const yearStart = toNullableInt(activeDataset.year_start);
     const yearEnd = toNullableInt(activeDataset.year_end);
 
+    const datasetHash = activeDataset.dataset_hash ?? null;
+    const datasetSize = toNullableInt(activeDataset.dataset_size);
+    const cursorKey = buildCursorKey(state, sessionId);
+
+    const existingCursor = options.force_restart
+      ? null
+      : await getCursor(supabaseAdmin, cursorKey);
+
+    const sameCursorDataset = Boolean(datasetHash) &&
+      existingCursor?.session_id === sessionId &&
+      existingCursor?.state === state &&
+      existingCursor?.dataset_hash === datasetHash;
+
+    // Decided before discovery runs so the dataset download keeps a slot in the
+    // shared call budget whenever it will actually be attempted; the branches
+    // below act on these same values.
+    const datasetCursorComplete = !options.force_restart &&
+      sameCursorDataset && Boolean(existingCursor?.completed_at);
+    const datasetPassDisabled = options.skip_dataset || !datasetPassEnabled();
+    const maxDatasetBytes = getMaxDatasetBytes();
+    const datasetTooLarge = datasetSize !== null &&
+      datasetSize > maxDatasetBytes;
+    const callsReservedForDataset =
+      datasetCursorComplete || datasetPassDisabled || datasetTooLarge ? 0 : 1;
+
     // Pinned bills go first so they get this invocation's call budget ahead of
     // the sweep.
     const pinnedBills = await resolvePinnedBills(
@@ -1647,6 +1674,7 @@ serve(async (req) => {
         yearEnd,
         dryRun: options.dry_run,
         pacer,
+        reserveCalls: callsReservedForDataset,
         legiscanCalls,
       },
     );
@@ -1677,6 +1705,7 @@ serve(async (req) => {
           dryRun: options.dry_run,
           stopAt,
           pacer,
+          reserveCalls: callsReservedForDataset,
         });
 
     // Newly discovered bills carry metadata only; `sync-updated-bills` fetches
@@ -1718,23 +1747,7 @@ serve(async (req) => {
       });
     }
 
-    const datasetHash = activeDataset.dataset_hash ?? null;
-    const datasetSize = toNullableInt(activeDataset.dataset_size);
-    const cursorKey = buildCursorKey(state, sessionId);
-
-    const existingCursor = options.force_restart
-      ? null
-      : await getCursor(supabaseAdmin, cursorKey);
-
-    const sameCursorDataset = Boolean(datasetHash) &&
-      existingCursor?.session_id === sessionId &&
-      existingCursor?.state === state &&
-      existingCursor?.dataset_hash === datasetHash;
-
-    if (
-      !options.force_restart && sameCursorDataset &&
-      existingCursor?.completed_at
-    ) {
+    if (datasetCursorComplete) {
       const summarySync = await enqueueSummarySyncs(
         supabaseAdmin,
         getSummarySyncInvocationCount(0),
@@ -1752,14 +1765,14 @@ serve(async (req) => {
         },
         continuation: {
           has_more: false,
-          next_index: existingCursor.next_index ?? 0,
-          total_files: existingCursor.total_files ?? 0,
+          next_index: existingCursor?.next_index ?? 0,
+          total_files: existingCursor?.total_files ?? 0,
         },
         summary_sync: summarySync,
       });
     }
 
-    if (options.skip_dataset || !datasetPassEnabled()) {
+    if (datasetPassDisabled) {
       return respond({
         message: "Dataset pass disabled; full-text discovery only.",
         session_id: sessionId,
@@ -1778,8 +1791,7 @@ serve(async (req) => {
       });
     }
 
-    const maxDatasetBytes = getMaxDatasetBytes();
-    if (datasetSize !== null && datasetSize > maxDatasetBytes) {
+    if (datasetTooLarge) {
       // Downloading and base64-decoding a snapshot this large terminates the
       // worker before the cursor can be written, so the pass would never
       // advance and the LegiScan call would be spent for nothing.

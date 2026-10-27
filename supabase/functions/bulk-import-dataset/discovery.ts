@@ -137,8 +137,13 @@ export const createCallPacer = (
   minGapMs: number,
 ): CallPacer => ({ maxCalls, minGapMs, calls: 0, lastCallAt: null });
 
-export const pacerCanCall = (pacer: CallPacer): boolean =>
-  pacer.calls < pacer.maxCalls;
+/**
+ * `reserve` holds slots back for a later call site in the same invocation, so
+ * an earlier one cannot spend the whole budget (the search sweep would
+ * otherwise starve the dataset download every run).
+ */
+export const pacerCanCall = (pacer: CallPacer, reserve = 0): boolean =>
+  pacer.calls + reserve < pacer.maxCalls;
 
 export const pacerWaitMs = (pacer: CallPacer, now: number): number =>
   pacer.lastCallAt === null
