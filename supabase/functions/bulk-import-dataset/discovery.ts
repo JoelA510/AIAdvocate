@@ -110,8 +110,11 @@ export const isBotChallenge = (
   if (status !== 403 && status !== 429 && status !== 503 && status !== 200) {
     return false;
   }
+  // Markers of the interstitial itself, as served by leginfo on 2026-10-27.
+  // A hostname substring would be weaker: ordinary pages can load scripts from
+  // Cloudflare's challenge host.
   return /<title>\s*Just a moment\.\.\.\s*<\/title>/i.test(body) ||
-    body.includes("challenges.cloudflare.com");
+    /\/cdn-cgi\/challenge-platform\/|\b_cf_chl_opt\b/.test(body);
 };
 
 /**

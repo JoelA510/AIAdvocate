@@ -104,6 +104,14 @@ Deno.test("detects the Cloudflare challenge leginfo served on 2026-10-27", () =>
   assert(isBotChallenge(403, null, CHALLENGE_PAGE));
   assert(isBotChallenge(403, "challenge", ""));
   assert(isBotChallenge(200, null, CHALLENGE_PAGE));
+  // Untitled variant: the challenge-platform script alone is conclusive.
+  assert(
+    isBotChallenge(
+      403,
+      null,
+      '<script>window._cf_chl_opt={};</script><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>',
+    ),
+  );
 });
 
 Deno.test("ordinary failures are not treated as a challenge", () => {
@@ -113,6 +121,14 @@ Deno.test("ordinary failures are not treated as a challenge", () => {
   assertFalse(isBotChallenge(500, null, "Internal Server Error"));
   assertFalse(isBotChallenge(404, null, CHALLENGE_PAGE));
   assertFalse(isBotChallenge(200, null, '<div id="bill_all">text</div>'));
+  // Loading a Cloudflare-hosted script is not a challenge.
+  assertFalse(
+    isBotChallenge(
+      403,
+      null,
+      '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>',
+    ),
+  );
 });
 
 Deno.test("pacer enforces the gap from the previous call and the per-invocation cap", () => {
