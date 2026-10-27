@@ -161,13 +161,15 @@ env-configurable, so an incident can be contained without a redeploy:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BULK_IMPORT_SEARCH_DISCOVERY` | `true` | Kill switch for the full-text sweep |
-| `LEGISCAN_SEARCH_DELAY_MS` | `1500` | Gap between LegiScan search calls |
-| `LEGISCAN_SEARCH_MAX_CALLS_PER_RUN` | `6` | Hard cap per invocation |
+| `LEGISCAN_SEARCH_DELAY_MS` | `1500` | Gap between any two LegiScan calls in an invocation (never below 1000) |
+| `LEGISCAN_SEARCH_MAX_CALLS_PER_RUN` | `6` | Hard cap on all LegiScan calls per invocation (never above 6) |
 | `LEGISCAN_SEARCH_COOLDOWN_SECONDS` | `72000` | Per (phrase, page) cooldown |
 | `LEGISCAN_DAILY_QUERY_LIMIT` | `900` | Daily budget ceiling |
 | `LEGISCAN_MONTHLY_QUERY_LIMIT` | `25000` | Monthly budget ceiling (below the 30k limit) |
 | `BULK_IMPORT_DATASET_PASS` | `true` | Kill switch for the dataset download pass |
 | `BULK_IMPORT_VERIFY_PER_RUN` | `8` | Leginfo verifications per invocation |
+| `BULK_IMPORT_PINNED_BILLS` | unset | Bill numbers to ingest directly, e.g. `AB1705\|AB1568` (max 25) |
+| `LEGISCAN_MASTERLIST_COOLDOWN_SECONDS` | `86400` | Cooldown for the pinned-bill `getMasterList` lookup (never below 3600) |
 
 The search sweep visits phrases least-recently-searched first (from
 `legiscan_api_call_log`), so the per-run cap rotates through the whole list
@@ -176,6 +178,17 @@ list (code default or `BULK_IMPORT_SEARCH_PHRASES`) discards the verification
 rejection cache once, so bills rejected under the old list are re-checked. A
 leginfo Cloudflare challenge is reported as `search_discovery.verify_blocked`
 and stops verification for that run.
+
+Every LegiScan request in `bulk-import-dataset` (`getDatasetList`,
+`getMasterList`, `getSearch`, `getDataset`) draws from one per-invocation
+budget, so the cap and spacing above hold across call sites, not per site. Env
+overrides can tighten them but not loosen them past the §3 floors. A
+`status: "ERROR"` from any of them ends all LegiScan traffic for the run.
+
+Pinned bills skip topic discovery and leginfo verification. Their LegiScan
+`bill_id` comes from a single `getMasterList` call for the whole set, made only
+while a pinned bill is missing from `bills`. Once every pinned bill is present
+the lookup stops, so leaving the variable set costs nothing.
 
 To stop **all** LegiScan traffic immediately without a deploy, disable the
 `daily-bill-sync` cron job:

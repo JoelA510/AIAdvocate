@@ -113,3 +113,113 @@ export const isBotChallenge = (
   return /<title>\s*Just a moment\.\.\.\s*<\/title>/i.test(body) ||
     body.includes("challenges.cloudflare.com");
 };
+
+/**
+ * Per-invocation LegiScan budget shared by every call site in the function
+ * (getDatasetList, getMasterList, getSearch, getDataset), so the policy floors
+ * in docs/external-api-policy.md §3 hold for the invocation as a whole rather
+ * than per call site. Callers check pacerCanCall() before reserving, wait
+ * pacerWaitMs() before fetching, and pacerRecordCall() once the request
+ * returns.
+ */
+export type CallPacer = {
+  maxCalls: number;
+  minGapMs: number;
+  calls: number;
+  lastCallAt: number | null;
+};
+
+export const createCallPacer = (
+  maxCalls: number,
+  minGapMs: number,
+): CallPacer => ({ maxCalls, minGapMs, calls: 0, lastCallAt: null });
+
+export const pacerCanCall = (pacer: CallPacer): boolean =>
+  pacer.calls < pacer.maxCalls;
+
+export const pacerWaitMs = (pacer: CallPacer, now: number): number =>
+  pacer.lastCallAt === null
+    ? 0
+    : Math.max(0, pacer.lastCallAt + pacer.minGapMs - now);
+
+export const pacerRecordCall = (pacer: CallPacer, now: number): void => {
+  pacer.calls += 1;
+  pacer.lastCallAt = now;
+};
+
+const BILL_NUMBER_RE = /^[A-Z]{1,4}\d{1,5}$/;
+export const MAX_PINNED_BILLS = 25;
+
+/**
+ * Parses BULK_IMPORT_PINNED_BILLS ("AB1705|AB 1568, ab2749"). Entries are
+ * separated by "|" or ","; internal whitespace is dropped and case folded so
+ * "AB 1705" matches LegiScan's "AB1705".
+ */
+export const parsePinnedBillNumbers = (
+  raw: string | null | undefined,
+): { valid: string[]; invalid: string[] } => {
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  for (const entry of (raw ?? "").split(/[|,]/)) {
+    const number = entry.replace(/\s+/g, "").toUpperCase();
+    if (!number) continue;
+    if (!BILL_NUMBER_RE.test(number)) {
+      invalid.push(entry.trim());
+    } else if (!valid.includes(number)) {
+      valid.push(number);
+    }
+  }
+  return {
+    valid: valid.slice(0, MAX_PINNED_BILLS),
+    invalid: [...invalid, ...valid.slice(MAX_PINNED_BILLS)],
+  };
+};
+
+export type MasterListMatch = {
+  bill_id: number;
+  number: string;
+  title: string | null;
+  description: string | null;
+  change_hash: string | null;
+};
+
+const textOrNull = (value: unknown): string | null =>
+  typeof value === "string" && value.length > 0 ? value : null;
+
+/**
+ * Picks the wanted bills out of a getMasterList `masterlist` object, whose
+ * entries are keyed "0".."N" next to a non-bill "session" entry.
+ */
+export const matchPinnedFromMasterList = (
+  masterlist: unknown,
+  wanted: string[],
+): MasterListMatch[] => {
+  if (!masterlist || typeof masterlist !== "object") return [];
+  const wantedSet = new Set(wanted);
+  const matches = new Map<string, MasterListMatch>();
+
+  for (const value of Object.values(masterlist as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as Record<string, unknown>;
+    const number = typeof entry.number === "string"
+      ? entry.number.replace(/\s+/g, "").toUpperCase()
+      : "";
+    if (!wantedSet.has(number) || matches.has(number)) continue;
+
+    const billId = Number(entry.bill_id);
+    if (!Number.isSafeInteger(billId) || billId <= 0) continue;
+
+    matches.set(number, {
+      bill_id: billId,
+      number,
+      title: textOrNull(entry.title),
+      description: textOrNull(entry.description),
+      change_hash: textOrNull(entry.change_hash),
+    });
+  }
+
+  return wanted.flatMap((number) => {
+    const match = matches.get(number);
+    return match ? [match] : [];
+  });
+};
