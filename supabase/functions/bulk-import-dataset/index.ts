@@ -6,6 +6,14 @@ import JSZip from "npm:jszip";
 import { ensureEnv, getServiceKey } from "../_shared/utils.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
+import {
+  buildVerifyRegex,
+  isBotChallenge,
+  orderPhrasesByLastSearched,
+  phraseSetKey,
+  RELEVANT_SEARCH_PHRASES,
+  searchResourceKey,
+} from "./discovery.ts";
 
 const LEGISCAN_API_HEADERS = {
   Accept: "application/json",
@@ -32,30 +40,8 @@ const RELEVANT_KEYWORDS = [
 
 const KEYWORD_REGEX = new RegExp(`\\b(${RELEVANT_KEYWORDS.join("|")})\\b`, "i");
 
-// The LegiScan dataset only carries bill metadata (title + the "An act to
-// amend …" description), so a title/description keyword match cannot see terms
-// that appear in the operative bill text. CA AB2691 ("Elections: elective
-// office: felony conviction.") is the canonical example: the disqualifying
-// crimes "sexual assault" and "human trafficking" only appear in Section 1.
-// These phrases are therefore run through LegiScan's full-text search engine,
-// which indexes the bill text itself.
-const RELEVANT_SEARCH_PHRASES = [
-  "human trafficking",
-  "sex trafficking",
-  "labor trafficking",
-  "trafficking victim",
-  "commercial sexual exploitation",
-  "sexual exploitation",
-  "sexual assault",
-  "sexual abuse",
-  "sexual violence",
-  "child sexual abuse",
-  "domestic violence",
-  "intimate partner violence",
-  "forced labor",
-  "involuntary servitude",
-  "prostitution",
-];
+// RELEVANT_SEARCH_PHRASES (the full-text sweep's vocabulary) lives in
+// ./discovery.ts with the other pure discovery helpers.
 
 // LegiScan's search engine ranks by relevance rather than matching the quoted
 // phrase exactly, so a raw search hit is a *candidate*, not a match: a dry run
@@ -67,9 +53,7 @@ const RELEVANT_SEARCH_PHRASES = [
 // it was pinned to the built-in constant, overriding BULK_IMPORT_SEARCH_PHRASES
 // made discovery search the new terms while verification still only accepted
 // the old ones — every hit failed and was written to the permanent rejection
-// cache.
-const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// cache. buildVerifyRegex (./discovery.ts) takes that list as its argument.
 
 // Omnibus appropriations vehicles are a systematic false positive for the
 // text-verification gate below, and the gate is working correctly when it lets
@@ -127,9 +111,6 @@ const isExcludedVehicle = (title: string | null | undefined): boolean => {
   // "i" -- no /g, so .test() has no lastIndex state to carry between titles.
   return pattern.test(title);
 };
-
-const buildVerifyRegex = (phrases: string[]): RegExp =>
-  new RegExp(`(${phrases.map(escapeRegExp).join("|")})`, "i");
 
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -226,6 +207,8 @@ type SearchDiscoveryStats = {
   rejected_count: number;
   unverifiable_count: number;
   verify_unavailable: number;
+  verify_blocked: number;
+  rejected_cache_reset: boolean;
   excluded_vehicle_count: number;
   error_count: number;
   errors: string[];
@@ -767,6 +750,9 @@ const getVerifyDelayMs = (): number =>
 type PendingState = {
   rows: BillSeedRow[];
   rejected: number[];
+  // phraseSetKey() of the list the rejections were judged against; null when
+  // the cache predates this field.
+  phrase_set: string | null;
 };
 
 const pendingKey = (state: string, sessionId: number): string =>
@@ -790,6 +776,9 @@ const getPendingState = async (
     rejected: Array.isArray(cursor.rejected)
       ? (cursor.rejected as unknown[]).map(Number).filter(Number.isFinite)
       : [],
+    phrase_set: typeof cursor.phrase_set === "string"
+      ? cursor.phrase_set
+      : null,
   };
 };
 
@@ -807,6 +796,7 @@ const setPendingState = async (
         cursor: {
           rows: state.rows.slice(0, MAX_PENDING_QUEUE),
           rejected: state.rejected.slice(-MAX_REJECTED_TRACKED),
+          phrase_set: state.phrase_set,
           updated_at: nowIso,
         },
         updated_at: nowIso,
@@ -823,8 +813,16 @@ const setPendingState = async (
  * `unavailable` is distinct from `rejected` so a transient leginfo failure
  * retries later, while `unverifiable` (no usable link — a condition retrying
  * can never fix) drops the row instead of parking it in the queue forever.
+ * `blocked` (a Cloudflare bot challenge) also keeps the row, but tells the
+ * caller to stop fetching: every further request from this egress gets the
+ * same challenge.
  */
-type VerifyOutcome = "match" | "rejected" | "unavailable" | "unverifiable";
+type VerifyOutcome =
+  | "match"
+  | "rejected"
+  | "unavailable"
+  | "unverifiable"
+  | "blocked";
 
 const billTextMentionsTopic = async (
   stateLink: string | null,
@@ -845,12 +843,24 @@ const billTextMentionsTopic = async (
       `https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${billId}`,
       { headers: BROWSER_HEADERS },
     );
-    if (!response.ok) return "unavailable";
-
     const html = await response.text();
-    const anchor = html.indexOf('id="bill_all"');
-    // No text published yet (introduced but not printed): worth retrying.
-    if (anchor < 0) return "unavailable";
+    const anchor = response.ok ? html.indexOf('id="bill_all"') : -1;
+    if (anchor < 0) {
+      // Checked only when the bill text is absent: a real page may itself load
+      // Cloudflare scripts, so the challenge markers alone are not conclusive.
+      if (
+        isBotChallenge(
+          response.status,
+          response.headers.get("cf-mitigated"),
+          html,
+        )
+      ) {
+        return "blocked";
+      }
+      // Non-2xx, or no text published yet (introduced but not printed): worth
+      // retrying.
+      return "unavailable";
+    }
 
     const text = html
       .slice(anchor)
@@ -863,6 +873,55 @@ const billTextMentionsTopic = async (
     console.warn("leginfo verification fetch failed", { error: String(error) });
     return "unavailable";
   }
+};
+
+// Bounds the call-log read. A phrase not searched within this window sorts as
+// never searched, which is the right priority for it anyway.
+const SEARCH_ROTATION_LOOKBACK_DAYS = 31;
+
+/**
+ * Most recent page-1 search per phrase, from the reservation log -- the only
+ * record of when each phrase was actually searched.
+ */
+const getLastSearchedMs = async (
+  supabaseAdmin: SupabaseAdminClient,
+  state: string,
+  sessionId: number,
+  phrases: string[],
+): Promise<Map<string, number>> => {
+  const phraseByKey = new Map(
+    phrases.map((phrase) => [
+      searchResourceKey(state, sessionId, phrase, 1),
+      phrase,
+    ]),
+  );
+  const since = new Date(
+    Date.now() - SEARCH_ROTATION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const { data, error } = await supabaseAdmin
+    .from("legiscan_api_call_log")
+    .select("resource_key, created_at")
+    .eq("endpoint", "getSearch")
+    .in("resource_key", Array.from(phraseByKey.keys()))
+    .gte("created_at", since);
+
+  if (error) throw error;
+
+  const lastSearched = new Map<string, number>();
+  for (
+    const row of (data ?? []) as Array<
+      { resource_key: string; created_at: string }
+    >
+  ) {
+    const phrase = phraseByKey.get(row.resource_key);
+    const at = Date.parse(row.created_at);
+    if (!phrase || !Number.isFinite(at)) continue;
+    if (at > (lastSearched.get(phrase) ?? Number.NEGATIVE_INFINITY)) {
+      lastSearched.set(phrase, at);
+    }
+  }
+  return lastSearched;
 };
 
 /**
@@ -903,6 +962,8 @@ const runSearchDiscovery = async (
     rejected_count: 0,
     unverifiable_count: 0,
     verify_unavailable: 0,
+    verify_blocked: 0,
+    rejected_cache_reset: false,
     excluded_vehicle_count: 0,
     error_count: 0,
     errors: [],
@@ -915,6 +976,28 @@ const runSearchDiscovery = async (
   };
 
   const phrases = getSearchPhrases();
+  // A failed lookup costs fairness, not correctness: the reservation cooldowns
+  // still bound every call, so fall back to list order and report it.
+  let sweepOrder = phrases;
+  try {
+    sweepOrder = orderPhrasesByLastSearched(
+      phrases,
+      await getLastSearchedMs(
+        supabaseAdmin,
+        options.state,
+        options.sessionId,
+        phrases,
+      ),
+    );
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : (error as { message?: string })?.message ?? String(error);
+    console.error("Search rotation lookup failed; using list order", {
+      error: message,
+    });
+    pushError(`search rotation lookup: ${message}`);
+  }
   const pagesPerPhrase = getSearchPagesPerPhrase();
   const minRelevance = getSearchMinRelevance();
   const cooldownSeconds = getSearchCooldownSeconds();
@@ -925,7 +1008,7 @@ const runSearchDiscovery = async (
   let callsMade = 0;
 
   phraseLoop:
-  for (const phrase of phrases) {
+  for (const phrase of sweepOrder) {
     if (Date.now() >= options.stopAt - DEADLINE_GUARD_MS) break;
 
     let queriedPhrase = false;
@@ -942,7 +1025,7 @@ const runSearchDiscovery = async (
       const reservation = await reserveLegiScanCall(
         supabaseAdmin,
         "getSearch",
-        `${options.state}:${options.sessionId}:${phrase}:p${page}`,
+        searchResourceKey(options.state, options.sessionId, phrase, page),
         cooldownSeconds,
       );
 
@@ -1073,7 +1156,20 @@ const runSearchDiscovery = async (
   // (which is rate-limited by LegiScan) runs at its own pace.
   const queueKey = pendingKey(options.state, options.sessionId);
   const pending = await getPendingState(supabaseAdmin, queueKey);
-  const rejected = new Set<number>(pending.rejected);
+  // Rejections were judged against the phrase list in force at the time. When
+  // the list changes (code default or BULK_IMPORT_SEARCH_PHRASES), a bill
+  // rejected under the old list may match the new one, so the cache is
+  // discarded and candidates are re-verified as the sweep surfaces them again.
+  // Costs leginfo fetches only, metered by BULK_IMPORT_VERIFY_PER_RUN.
+  const phraseSet = phraseSetKey(phrases);
+  const keepRejected = pending.phrase_set === phraseSet;
+  if (!keepRejected && pending.rejected.length > 0) {
+    stats.rejected_cache_reset = true;
+    console.log("Phrase list changed; discarding rejected cache", {
+      discarded: pending.rejected.length,
+    });
+  }
+  const rejected = new Set<number>(keepRejected ? pending.rejected : []);
   const queued = new Map<number, BillSeedRow>(
     pending.rows.map((row) => [row.id, row]),
   );
@@ -1146,6 +1242,18 @@ const runSearchDiscovery = async (
 
     const outcome = await billTextMentionsTopic(row.state_link, verifyRegex);
 
+    if (outcome === "blocked") {
+      // Keep the row and stop: every remaining fetch this run would hit the
+      // same challenge, and would read as `unavailable` if counted as such.
+      stats.verify_blocked += 1;
+      deferred.push(row);
+      pushError(
+        "leginfo returned a Cloudflare bot challenge; verification stopped for this run",
+      );
+      index += 1;
+      break;
+    }
+
     if (outcome === "unavailable") {
       // Text not published yet, or a transient leginfo failure. Keep it queued
       // and retry on a later run rather than dropping or wrongly admitting it.
@@ -1200,13 +1308,14 @@ const runSearchDiscovery = async (
   await setPendingState(supabaseAdmin, queueKey, {
     rows: remaining,
     rejected: Array.from(rejected),
+    phrase_set: phraseSet,
   });
 
   return stats;
 };
 
 console.log(
-  "Initializing bulk-import-dataset v40: full-text discovery + bounded cursor import",
+  "Initializing bulk-import-dataset v41: rotating full-text discovery + bounded cursor import",
 );
 
 serve(async (req) => {

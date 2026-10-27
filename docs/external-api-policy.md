@@ -169,6 +169,14 @@ env-configurable, so an incident can be contained without a redeploy:
 | `BULK_IMPORT_DATASET_PASS` | `true` | Kill switch for the dataset download pass |
 | `BULK_IMPORT_VERIFY_PER_RUN` | `8` | Leginfo verifications per invocation |
 
+The search sweep visits phrases least-recently-searched first (from
+`legiscan_api_call_log`), so the per-run cap rotates through the whole list
+instead of re-spending it on the leading phrases every day. Changing the phrase
+list (code default or `BULK_IMPORT_SEARCH_PHRASES`) discards the verification
+rejection cache once, so bills rejected under the old list are re-checked. A
+leginfo Cloudflare challenge is reported as `search_discovery.verify_blocked`
+and stops verification for that run.
+
 To stop **all** LegiScan traffic immediately without a deploy, disable the
 `daily-bill-sync` cron job:
 
