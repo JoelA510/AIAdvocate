@@ -7,6 +7,14 @@ import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { getOptionalOpenAiKey, getServiceKey } from "../_shared/utils.ts";
+import {
+  createLegiScanPacer,
+  legiScanBudgetLeft,
+  type LegiScanPacer,
+  legiScanPairFits,
+  legiScanWaitMs,
+  recordLegiScanCall,
+} from "./legiscanPacer.ts";
 
 interface SummaryPayload {
   english: {
@@ -78,6 +86,15 @@ class HttpError extends Error {
   ) {
     super(message);
     this.name = "HttpError";
+  }
+}
+
+// Thrown instead of issuing a request once the invocation's LegiScan budget is
+// spent. withRetries does not retry it: waiting cannot refill the budget.
+class LegiScanBudgetSpentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LegiScanBudgetSpentError";
   }
 }
 
@@ -1062,7 +1079,9 @@ const withRetries = async <T>(
       return await fn(attempt, controller.signal);
     } catch (error) {
       lastError = error;
-      if (attempt === attempts) throw error;
+      if (attempt === attempts || error instanceof LegiScanBudgetSpentError) {
+        throw error;
+      }
       const retryAfterMs =
         error instanceof HttpError && typeof error.retryAfterMs === "number"
           ? error.retryAfterMs
@@ -1100,10 +1119,25 @@ const fetchJsonWithRetries = async <T>(
   name: string,
   headers: Record<string, string> = BROWSER_HEADERS,
   deadlineAt = Number.POSITIVE_INFINITY,
+  pacer: LegiScanPacer,
 ): Promise<T> => {
   return withRetries<T>(
     async (_attempt, signal) => {
-      const res = await fetch(url, { headers, signal });
+      if (!legiScanBudgetLeft(pacer)) {
+        throw new LegiScanBudgetSpentError(
+          `${name} skipped: ${pacer.maxCalls} LegiScan calls already made this invocation`,
+        );
+      }
+      const wait = legiScanWaitMs(pacer, Date.now());
+      if (wait > 0) await sleep(wait);
+      let res: Response;
+      try {
+        res = await fetch(url, { headers, signal });
+      } finally {
+        // Counted even when the request throws: it may still have reached
+        // LegiScan.
+        recordLegiScanCall(pacer, Date.now());
+      }
       if (!res.ok) {
         throw new HttpError(
           `${name} ${res.status}`,
@@ -1122,6 +1156,19 @@ const fetchJsonWithRetries = async <T>(
     3,
     deadlineAt,
   );
+};
+
+// OpenAI's error code (e.g. insufficient_quota vs rate_limit_exceeded) for a
+// non-2xx response. A bare "429" cannot tell a billing problem, which no retry
+// fixes, from a transient rate limit.
+const openAiErrorSuffix = async (res: Response): Promise<string> => {
+  try {
+    const body = await res.json();
+    const code = body?.error?.code ?? body?.error?.type;
+    return typeof code === "string" && code ? ` (${code})` : "";
+  } catch {
+    return "";
+  }
 };
 
 const callSummarizer = async (
@@ -1187,7 +1234,7 @@ const callSummarizer = async (
 
   if (!res.ok) {
     throw new HttpError(
-      `openai chat ${res.status}`,
+      `openai chat ${res.status}${await openAiErrorSuffix(res)}`,
       res.status,
       parseRetryAfter(res.headers.get("retry-after")),
     );
@@ -1227,7 +1274,7 @@ const callEmbedding = async (
 
   if (!res.ok) {
     throw new HttpError(
-      `openai embedding ${res.status}`,
+      `openai embedding ${res.status}${await openAiErrorSuffix(res)}`,
       res.status,
       parseRetryAfter(res.headers.get("retry-after")),
     );
@@ -1368,6 +1415,24 @@ const mergeBillDataWithExisting = (
   };
 };
 
+// Legislative/source columns of a bills row, shared by the early source-text
+// persist and the final upsert so the two cannot drift apart.
+const sourceFieldsFromBillData = (
+  billData: Record<string, any>,
+): Record<string, unknown> => ({
+  bill_number: billData.bill_number,
+  title: billData.title,
+  description: billData.description,
+  status: billData.status !== undefined ? String(billData.status) : null,
+  status_text: billData.status_text ?? null,
+  status_date: billData.status_date ?? null,
+  state_link: billData.state_link,
+  change_hash: billData.change_hash,
+  progress: Array.isArray(billData.progress) ? billData.progress : [],
+  calendar: Array.isArray(billData.calendar) ? billData.calendar : [],
+  history: Array.isArray(billData.history) ? billData.history : [],
+});
+
 const reuseEmbedding = (value: unknown): string | null => {
   if (Array.isArray(value)) return `[${value.join(",")}]`;
   if (typeof value === "string") return value;
@@ -1471,6 +1536,11 @@ serve(async (req) => {
     };
     const legiscanReservations: LegiScanReservation[] = [];
     let legiscanRuntimeDisabledReason: string | null = null;
+    // Per invocation, like runDeadlineAt: isolates are shared across requests.
+    const legiscanPacer = createLegiScanPacer(
+      Deno.env.get("LEGISCAN_SYNC_DELAY_MS"),
+      Deno.env.get("LEGISCAN_SYNC_MAX_CALLS_PER_RUN"),
+    );
 
     const leaseNextBillId = async (): Promise<number | null> => {
       const { data, error } = await supabaseAdmin.rpc("lease_next_bill", {
@@ -1519,6 +1589,8 @@ serve(async (req) => {
         existingBillMeta as ExistingBillRow,
       );
       let decodedText: string | undefined;
+      let textReused = false;
+      let billDetailsFetched = false;
 
       const existingText =
         isUsableBillText(existingBillMeta.original_text_formatted)
@@ -1530,6 +1602,7 @@ serve(async (req) => {
           bill_number: billData.bill_number,
         });
         decodedText = existingText ?? undefined;
+        textReused = true;
       }
 
       if (!decodedText && billData.state_link) {
@@ -1542,11 +1615,14 @@ serve(async (req) => {
             undefined;
       }
 
+      const legiscanBudgetForBill = legiScanPairFits(legiscanPacer);
+
       if (
         !isUsableBillText(decodedText) &&
         legiscanDetailsEnabled &&
         legiscanApiKey &&
-        !legiscanRuntimeDisabledReason
+        !legiscanRuntimeDisabledReason &&
+        legiscanBudgetForBill
       ) {
         try {
           const billReservation = await reserveLegiScanCall(
@@ -1572,6 +1648,7 @@ serve(async (req) => {
               "legiscan getBill",
               LEGISCAN_API_HEADERS,
               runDeadlineAt,
+              legiscanPacer,
             );
             if (res.status === "ERROR") {
               throw new Error(
@@ -1582,13 +1659,23 @@ serve(async (req) => {
               res.bill,
               existingBillMeta as ExistingBillRow,
             );
+            billDetailsFetched = true;
 
             const latestTextDoc =
               Array.isArray(billData.texts) && billData.texts.length > 0
                 ? billData.texts[billData.texts.length - 1]
                 : null;
 
-            if (latestTextDoc?.doc_id) {
+            if (latestTextDoc?.doc_id && !legiScanBudgetLeft(legiscanPacer)) {
+              // Only reachable after getBill retries spent the slot held for
+              // this call. Checked before reserving: a getBillText reservation
+              // holds for a year, so spending one without the request strands
+              // the bill's text.
+              console.warn(
+                "- LegiScan getBillText skipped: invocation call budget spent",
+                { bill_id: billId, doc_id: latestTextDoc.doc_id },
+              );
+            } else if (latestTextDoc?.doc_id) {
               const textReservation = await reserveLegiScanCall(
                 supabaseAdmin,
                 "getBillText",
@@ -1617,6 +1704,7 @@ serve(async (req) => {
                   "legiscan getBillText",
                   LEGISCAN_API_HEADERS,
                   runDeadlineAt,
+                  legiscanPacer,
                 );
                 if (textRes.status === "ERROR") {
                   throw new Error(
@@ -1671,6 +1759,18 @@ serve(async (req) => {
             reason: legiscanRuntimeDisabledReason,
           },
         );
+      } else if (
+        !isUsableBillText(decodedText) && legiscanDetailsEnabled &&
+        !legiscanBudgetForBill
+      ) {
+        console.warn(
+          "- LegiScan skipped: invocation call budget spent; bill rolls over to the next run",
+          {
+            bill_id: billId,
+            calls: legiscanPacer.calls,
+            max_calls: legiscanPacer.maxCalls,
+          },
+        );
       }
 
       if (!isUsableBillText(decodedText)) {
@@ -1692,6 +1792,33 @@ serve(async (req) => {
       const originalTextFormatted = formatLegislationText(originalTextRaw);
       if (!isUsableBillText(originalTextFormatted)) {
         throw new Error("Formatter returned empty or too-short bill text");
+      }
+
+      // Persist freshly fetched source data now, before summarization, so a
+      // summarizer failure cannot discard it. Before this, everything was
+      // written in the single upsert at the end: on 2026-10-27 three bills
+      // fetched getBillText, failed on an OpenAI 429, and lost the text -- and
+      // the getBillText reservation holds for a year, so the next run could not
+      // fetch it again. Source columns only; summaries stay with the final
+      // upsert. Not fatal: that upsert writes the same columns if it is reached.
+      if (!textReused) {
+        const sourceUpdate: Record<string, unknown> = {
+          original_text: originalTextRaw,
+          original_text_formatted: originalTextFormatted,
+        };
+        if (billDetailsFetched) {
+          Object.assign(sourceUpdate, sourceFieldsFromBillData(billData));
+        }
+        const { error: sourceUpdateError } = await supabaseAdmin
+          .from("bills")
+          .update(sourceUpdate)
+          .eq("id", billId);
+        if (sourceUpdateError) {
+          console.warn("- Early source-text persist failed", {
+            bill_id: billId,
+            error: errorToMessage(sourceUpdateError),
+          });
+        }
       }
 
       const { data: existingSpanish, error: existingSpanishError } =
@@ -2284,26 +2411,9 @@ serve(async (req) => {
         }
       }
 
-      const statusText = billData.status_text ?? null;
-      const statusDate = billData.status_date ?? null;
-      const progress = Array.isArray(billData.progress)
-        ? billData.progress
-        : [];
-      const calendar = Array.isArray(billData.calendar)
-        ? billData.calendar
-        : [];
-      const history = Array.isArray(billData.history) ? billData.history : [];
-
       const billPayload: Record<string, unknown> = {
         id: billData.bill_id,
-        bill_number: billData.bill_number,
-        title: billData.title,
-        description: billData.description,
-        status: billData.status !== undefined ? String(billData.status) : null,
-        status_text: statusText,
-        status_date: statusDate,
-        state_link: billData.state_link,
-        change_hash: billData.change_hash,
+        ...sourceFieldsFromBillData(billData),
         original_text: originalTextRaw,
         original_text_formatted: originalTextFormatted,
         summary_simple: englishFinal.simple!,
@@ -2312,9 +2422,6 @@ serve(async (req) => {
         summary_ok: true,
         summary_len_simple: summaryLenSimple,
         summary_hash: summaryHash,
-        progress,
-        calendar,
-        history,
       };
 
       if (embeddingPayload !== null) {

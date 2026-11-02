@@ -61,6 +61,19 @@ const THROTTLE_FLOORS = [
     max: 6,
     unit: "LegiScan calls per invocation",
   },
+  {
+    file: "supabase/functions/sync-updated-bills/legiscanPacer.ts",
+    constant: "DEFAULT_SYNC_LEGISCAN_DELAY_MS",
+    min: 1000,
+    unit: "ms between LegiScan calls",
+  },
+  {
+    file: "supabase/functions/sync-updated-bills/legiscanPacer.ts",
+    constant: "DEFAULT_SYNC_LEGISCAN_MAX_CALLS_PER_RUN",
+    min: null,
+    max: 6,
+    unit: "LegiScan calls per invocation",
+  },
 ];
 
 const failures = [];
