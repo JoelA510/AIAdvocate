@@ -5,6 +5,9 @@
 // challenge to cloud egress, so every bill without stored text reaches the
 // fallback. Env can tighten these but never loosen them past the floors, as in
 // bulk-import-dataset. CI checks the defaults (check-external-api-usage.js).
+// The gap itself is now enforced across invocations by the shared gate
+// (_shared/legiscanGate.ts), which takes minGapMs from here; this module keeps
+// the per-invocation call cap.
 
 export const POLICY_MIN_LEGISCAN_GAP_MS = 1000;
 export const POLICY_MAX_LEGISCAN_CALLS_PER_INVOCATION = 6;

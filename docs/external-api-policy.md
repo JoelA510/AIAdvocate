@@ -83,15 +83,21 @@ immediate (§1). These floors are therefore mandatory and are CI-checked:
   requests inside `Promise.all`, `runConcurrent`, or any parallel map.
   Sequential only.
 - **Cross-invocation spacing is enforced by a shared gate.** Every LegiScan
-  request, from any function and any invocation, first claims a slot from
-  `public.claim_legiscan_slot()` (migration `20261109120000`) and sleeps until
-  it. Slots are handed out ≥ 1500 ms apart (never below 1000 ms) in one
-  row-locked update, so parallel `sync-updated-bills` workers and
-  `bulk-import-dataset` are serialised against each other. Use
-  `claimLegiScanSlot()` from `supabase/functions/_shared/legiscanGate.ts`
-  immediately before the fetch, for every attempt including retries; CI fails
-  any LegiScan call site that does not. If the gate cannot be reached the call
-  **fails closed**: no request is sent and the run stops its LegiScan traffic.
+  request, from any function and any invocation, passes the database gate from
+  migration `20261109120000`. The first attempt reserves through
+  `reserveGatedLegiScanCall()` (`supabase/functions/_shared/legiscanGate.ts` ->
+  `public.reserve_legiscan_api_call_gated`), which takes the cooldown/quota
+  reservation and a rate slot in one transaction: a busy gate returns
+  `rate_gate` and reserves nothing, so a one-year `getBillText` reservation can
+  never be spent without its request. Retries of an already-sent request claim
+  a fresh slot with `claimLegiScanSlot()`. Slots are granted only when due,
+  ≥ 1500 ms apart (never below 1000 ms), and the caller sends immediately; a
+  grant whose round trip exceeded gap − 1000 ms is re-claimed on the retry path
+  and logged ("grant arrived late") on the reservation path, so spacing stays
+  ≥ 1000 ms. Waits honour the caller's deadline and abort signal. CI fails any
+  LegiScan call site that does not reserve through the gate or that calls the
+  ungated RPC directly. If the gate cannot be reached the call **fails closed**:
+  nothing is reserved or sent, and the run stops its LegiScan traffic.
   History: before the gate, `invoke_full_legislative_refresh`'s parallel
   workers fell back to LegiScan together whenever leginfo failed. leginfo has
   served a Cloudflare challenge to cloud egress since at least 2026-10-27, and
