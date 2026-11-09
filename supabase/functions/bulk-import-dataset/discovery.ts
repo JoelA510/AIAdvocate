@@ -50,6 +50,16 @@ export const buildVerifyRegex = (phrases: string[]): RegExp =>
   new RegExp(`(${phrases.map(escapeRegExp).join("|")})`, "i");
 
 /**
+ * How many times the bill text mentions any topic phrase. Verification admits
+ * a bill only at or above a minimum count: one mention is usually a
+ * cross-reference (Penal Code bills cite "sexual assault" in lists of
+ * offenses), which over the 2026-11-09 queue admitted 205 of 231 candidates
+ * -- arbitration, veterans and theft bills among them.
+ */
+export const countTopicMentions = (text: string, verifyRegex: RegExp): number =>
+  (text.match(new RegExp(verifyRegex.source, "gi")) ?? []).length;
+
+/**
  * Order-insensitive identity of a phrase list, persisted next to the rejected
  * cache. A bill is rejected because its text matched none of the phrases *at
  * the time*; once the list changes that verdict is stale, so a mismatch here
@@ -94,28 +104,6 @@ export const orderPhrasesByLastSearched = (
     }))
     .sort((a, b) => (a.last === b.last ? a.index - b.index : a.last - b.last))
     .map((entry) => entry.phrase);
-
-/**
- * True when leginfo answered with a Cloudflare bot challenge instead of the
- * page. Distinct from a transient failure: retrying from the same egress keeps
- * hitting the challenge, so the caller stops fetching for the rest of the run
- * and reports it rather than burning the verification budget.
- */
-export const isBotChallenge = (
-  status: number,
-  cfMitigated: string | null,
-  body: string,
-): boolean => {
-  if (cfMitigated?.toLowerCase() === "challenge") return true;
-  if (status !== 403 && status !== 429 && status !== 503 && status !== 200) {
-    return false;
-  }
-  // Markers of the interstitial itself, as served by leginfo on 2026-10-27.
-  // A hostname substring would be weaker: ordinary pages can load scripts from
-  // Cloudflare's challenge host.
-  return /<title>\s*Just a moment\.\.\.\s*<\/title>/i.test(body) ||
-    /\/cdn-cgi\/challenge-platform\/|\b_cf_chl_opt\b/.test(body);
-};
 
 /**
  * Per-invocation LegiScan budget shared by every call site in the function

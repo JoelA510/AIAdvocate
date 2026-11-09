@@ -6,8 +6,8 @@ import {
 
 import {
   buildVerifyRegex,
+  countTopicMentions,
   createCallPacer,
-  isBotChallenge,
   matchPinnedFromMasterList,
   MAX_PINNED_BILLS,
   orderPhrasesByLastSearched,
@@ -94,41 +94,6 @@ Deno.test("does not mutate the input list", () => {
   const phrases = ["a", "b"];
   orderPhrasesByLastSearched(phrases, new Map([["a", 1]]));
   assertEquals(phrases, ["a", "b"]);
-});
-
-const CHALLENGE_PAGE =
-  '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>' +
-  '<meta http-equiv="content-security-policy" content="script-src https://challenges.cloudflare.com">';
-
-Deno.test("detects the Cloudflare challenge leginfo served on 2026-10-27", () => {
-  assert(isBotChallenge(403, null, CHALLENGE_PAGE));
-  assert(isBotChallenge(403, "challenge", ""));
-  assert(isBotChallenge(200, null, CHALLENGE_PAGE));
-  // Untitled variant: the challenge-platform script alone is conclusive.
-  assert(
-    isBotChallenge(
-      403,
-      null,
-      '<script>window._cf_chl_opt={};</script><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>',
-    ),
-  );
-});
-
-Deno.test("ordinary failures are not treated as a challenge", () => {
-  assertFalse(
-    isBotChallenge(403, null, "<html><title>Forbidden</title></html>"),
-  );
-  assertFalse(isBotChallenge(500, null, "Internal Server Error"));
-  assertFalse(isBotChallenge(404, null, CHALLENGE_PAGE));
-  assertFalse(isBotChallenge(200, null, '<div id="bill_all">text</div>'));
-  // Loading a Cloudflare-hosted script is not a challenge.
-  assertFalse(
-    isBotChallenge(
-      403,
-      null,
-      '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>',
-    ),
-  );
 });
 
 Deno.test("pacer enforces the gap from the previous call and the per-invocation cap", () => {
@@ -220,4 +185,28 @@ Deno.test("matchPinnedFromMasterList tolerates malformed responses", () => {
   assertEquals(matchPinnedFromMasterList(null, ["AB1705"]), []);
   assertEquals(matchPinnedFromMasterList("ERROR", ["AB1705"]), []);
   assertEquals(matchPinnedFromMasterList({ "0": null }, ["AB1705"]), []);
+});
+
+Deno.test("countTopicMentions counts every phrase occurrence, any case", () => {
+  const regex = buildVerifyRegex(RELEVANT_SEARCH_PHRASES);
+  // A cross-reference: one mention, below the default threshold of 5.
+  assertEquals(
+    countTopicMentions(
+      "Section 290 lists offenses including sexual assault and theft.",
+      regex,
+    ),
+    1,
+  );
+  assertEquals(
+    countTopicMentions(
+      "Sex Offender registry. A sex offender who ... sexual exploitation, " +
+        "commercial sexual exploitation, pornographic material.",
+      regex,
+    ),
+    5,
+  );
+  assertEquals(countTopicMentions("groundwater sustainability", regex), 0);
+  // The source regex is not global; counting must not depend on its state.
+  assert(regex.test("sexual abuse"));
+  assertEquals(countTopicMentions("sexual abuse, sexual abuse", regex), 2);
 });

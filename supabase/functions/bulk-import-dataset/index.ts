@@ -11,10 +11,18 @@ import {
   LegiScanGateError,
 } from "../_shared/legiscanGate.ts";
 import {
+  billIdFromStateLink,
+  loadPubinfoIndex,
+  PubinfoFetchError,
+  type PubinfoIndex,
+  pubinfoUrlForSession,
+  readBillText,
+} from "../_shared/pubinfo.ts";
+import {
   buildVerifyRegex,
   type CallPacer,
+  countTopicMentions,
   createCallPacer,
-  isBotChallenge,
   matchPinnedFromMasterList,
   orderPhrasesByLastSearched,
   pacerCanCall,
@@ -57,7 +65,7 @@ const KEYWORD_REGEX = new RegExp(`\\b(${RELEVANT_KEYWORDS.join("|")})\\b`, "i");
 // LegiScan's search engine ranks by relevance rather than matching the quoted
 // phrase exactly, so a raw search hit is a *candidate*, not a match: a dry run
 // surfaced a groundwater-sustainability act among the results. Every candidate
-// is therefore confirmed against the actual bill text on leginfo (free, no API
+// is therefore confirmed against the actual bill text from pubinfo (free, no API
 // quota) before it is written to `bills`.
 //
 // This must be derived from the same phrase list the sweep searches for. When
@@ -123,11 +131,6 @@ const isExcludedVehicle = (title: string | null | undefined): boolean => {
   return pattern.test(title);
 };
 
-const BROWSER_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-};
-
 const CURSOR_KEY_PREFIX = "bulk_import_dataset";
 const SEARCH_PENDING_KEY_PREFIX = "bulk_import_search_pending";
 const DEFAULT_FILES_PER_INVOCATION = 10000;
@@ -154,7 +157,37 @@ const POLICY_MAX_LEGISCAN_CALLS_PER_INVOCATION = 6;
 // all the pinned-bill lookup needs.
 const DEFAULT_MASTERLIST_COOLDOWN_SECONDS = 24 * 60 * 60;
 const POLICY_MIN_MASTERLIST_COOLDOWN_SECONDS = 60 * 60;
-const DEFAULT_VERIFY_PER_RUN = 8;
+// Raised from 8 when verification moved from leginfo page scrapes to pubinfo
+// range reads (~250 ms and ~40 KB each): the queue reached 235 while
+// verification was blocked, and 8 a day would take a month to drain it.
+const DEFAULT_VERIFY_PER_RUN = 30;
+// Minimum topic-phrase mentions in the bill text to admit a candidate; see
+// countTopicMentions. 5 admitted 59 of the 231 bills queued on 2026-11-09
+// (any mention: 205) and keeps all three operator-pinned bills (6, 19, 49).
+const DEFAULT_VERIFY_MIN_MENTIONS = 5;
+// Wall-clock budget for the background verification task, measured from when
+// it starts (after the response). Edge Functions allow 150 s of wall time per
+// request on the lowest plan and this starts at most ~26 s in; the pubinfo
+// index costs ~11 s, each read ~0.5 s with spacing.
+const VERIFY_BACKGROUND_BUDGET_MS = 90_000;
+
+declare const EdgeRuntime:
+  | { waitUntil(promise: Promise<unknown>): void }
+  | undefined;
+
+/**
+ * Keep `task` running after the response is sent (Supabase Edge Runtime
+ * background task). Outside the Edge Runtime (local Deno) the promise simply
+ * runs on; failures are logged either way, since nobody awaits it.
+ */
+const scheduleBackground = (label: string, task: () => Promise<unknown>) => {
+  const promise = task().catch((error) =>
+    console.error(`${label} failed`, { error: String(error) })
+  );
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+    EdgeRuntime.waitUntil(promise);
+  }
+};
 const DEFAULT_VERIFY_DELAY_MS = 250;
 const MAX_PENDING_QUEUE = 2_000;
 const MAX_REJECTED_TRACKED = 5_000;
@@ -216,17 +249,12 @@ type SearchDiscoveryStats = {
   results_seen: number;
   candidate_bills: number;
   new_bills: number;
-  inserted_count: number;
-  capped: boolean;
   aborted: string | null;
   abort_message: string | null;
   pending_queue_size: number;
-  verify_attempted: number;
-  verified_count: number;
-  rejected_count: number;
-  unverifiable_count: number;
-  verify_unavailable: number;
-  verify_blocked: number;
+  // Verification runs after the response (runQueuedVerification); its results
+  // are on the queue cursor row as `last_verification`.
+  verification: "background" | "not_run";
   rejected_cache_reset: boolean;
   excluded_vehicle_count: number;
   error_count: number;
@@ -796,6 +824,13 @@ const getVerifyPerRun = (): number =>
     100,
   );
 
+const getVerifyMinMentions = (): number =>
+  parsePositiveInt(
+    Deno.env.get("BULK_IMPORT_VERIFY_MIN_MENTIONS"),
+    DEFAULT_VERIFY_MIN_MENTIONS,
+    100,
+  );
+
 const getVerifyDelayMs = (): number =>
   parsePositiveInt(
     Deno.env.get("BULK_IMPORT_VERIFY_DELAY_MS"),
@@ -809,6 +844,8 @@ type PendingState = {
   // phraseSetKey() of the list the rejections were judged against; null when
   // the cache predates this field.
   phrase_set: string | null;
+  // Stats of the most recent background verification run, if any.
+  last_verification: unknown;
 };
 
 const pendingKey = (state: string, sessionId: number): string =>
@@ -835,6 +872,7 @@ const getPendingState = async (
     phrase_set: typeof cursor.phrase_set === "string"
       ? cursor.phrase_set
       : null,
+    last_verification: cursor.last_verification ?? null,
   };
 };
 
@@ -853,6 +891,7 @@ const setPendingState = async (
           rows: state.rows.slice(0, MAX_PENDING_QUEUE),
           rejected: state.rejected.slice(-MAX_REJECTED_TRACKED),
           phrase_set: state.phrase_set,
+          last_verification: state.last_verification ?? null,
           updated_at: nowIso,
         },
         updated_at: nowIso,
@@ -866,12 +905,12 @@ const setPendingState = async (
 /**
  * Outcome of confirming a candidate against the real bill text.
  *
- * `unavailable` is distinct from `rejected` so a transient leginfo failure
- * retries later, while `unverifiable` (no usable link — a condition retrying
- * can never fix) drops the row instead of parking it in the queue forever.
- * `blocked` (a Cloudflare bot challenge) also keeps the row, but tells the
- * caller to stop fetching: every further request from this egress gets the
- * same challenge.
+ * `unavailable` is distinct from `rejected` so a transient failure (or a bill
+ * the nightly pubinfo archive does not carry yet) retries later, while
+ * `unverifiable` (no usable bill id -- a condition retrying can never fix)
+ * drops the row instead of parking it in the queue forever. `blocked` (a
+ * Cloudflare challenge) also keeps the row, but tells the caller to stop
+ * fetching: every further request from this egress gets the same challenge.
  */
 type VerifyOutcome =
   | "match"
@@ -880,53 +919,32 @@ type VerifyOutcome =
   | "unverifiable"
   | "blocked";
 
+// Text comes from the Legislature's pubinfo archive (see _shared/pubinfo.ts):
+// leginfo's bill pages serve a Cloudflare challenge to cloud egress, which left
+// every candidate stuck in the queue from 2026-10-27 on.
 const billTextMentionsTopic = async (
+  index: PubinfoIndex,
   stateLink: string | null,
   verifyRegex: RegExp,
+  minMentions: number,
 ): Promise<VerifyOutcome> => {
-  if (!stateLink) return "unverifiable";
-
-  let billId: string | null;
-  try {
-    billId = new URL(stateLink).searchParams.get("bill_id");
-  } catch {
-    return "unverifiable";
-  }
+  const billId = billIdFromStateLink(stateLink);
   if (!billId) return "unverifiable";
 
   try {
-    const response = await fetch(
-      `https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${billId}`,
-      { headers: BROWSER_HEADERS },
-    );
-    const html = await response.text();
-    const anchor = response.ok ? html.indexOf('id="bill_all"') : -1;
-    if (anchor < 0) {
-      // Checked only when the bill text is absent: a real page may itself load
-      // Cloudflare scripts, so the challenge markers alone are not conclusive.
-      if (
-        isBotChallenge(
-          response.status,
-          response.headers.get("cf-mitigated"),
-          html,
-        )
-      ) {
-        return "blocked";
-      }
-      // Non-2xx, or no text published yet (introduced but not printed): worth
-      // retrying.
-      return "unavailable";
-    }
-
-    const text = html
-      .slice(anchor)
-      .replace(/<[^>]*>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/\s+/g, " ");
-
-    return verifyRegex.test(text) ? "match" : "rejected";
+    const text = await readBillText(index, billId);
+    if (text === null) return "unavailable";
+    return countTopicMentions(text, verifyRegex) >= minMentions
+      ? "match"
+      : "rejected";
   } catch (error) {
-    console.warn("leginfo verification fetch failed", { error: String(error) });
+    if (error instanceof PubinfoFetchError && error.challenged) {
+      return "blocked";
+    }
+    console.warn("pubinfo verification read failed", {
+      bill_id: billId,
+      error: String(error),
+    });
     return "unavailable";
   }
 };
@@ -1195,17 +1213,10 @@ const runSearchDiscovery = async (
     results_seen: 0,
     candidate_bills: 0,
     new_bills: 0,
-    inserted_count: 0,
-    capped: false,
     aborted: null,
     abort_message: null,
     pending_queue_size: 0,
-    verify_attempted: 0,
-    verified_count: 0,
-    rejected_count: 0,
-    unverifiable_count: 0,
-    verify_unavailable: 0,
-    verify_blocked: 0,
+    verification: "not_run",
     rejected_cache_reset: false,
     excluded_vehicle_count: 0,
     error_count: 0,
@@ -1377,7 +1388,7 @@ const runSearchDiscovery = async (
   // Filtering the map instead costs a regex per title per sweep and leaves no
   // persisted trace, so the exclusion stays reversible by configuration alone.
   // The original motivation still holds: these never reach billTextMentionsTopic,
-  // so no leginfo fetch is spent confirming a match we intend to reject.
+  // so no pubinfo read is spent confirming a match we intend to reject.
   //
   // The persisted queue is swept too -- vehicles queued before this filter
   // existed would otherwise sit there forever, since nothing else removes them.
@@ -1397,7 +1408,7 @@ const runSearchDiscovery = async (
   stats.candidate_bills = candidates.size;
 
   // Candidates are queued rather than inserted directly: verification costs a
-  // leginfo fetch per bill, so it is metered across runs while the search sweep
+  // pubinfo read per bill, so it is metered across runs while the search sweep
   // (which is rate-limited by LegiScan) runs at its own pace.
   const queueKey = pendingKey(options.state, options.sessionId);
   const pending = await getPendingState(supabaseAdmin, queueKey);
@@ -1405,8 +1416,10 @@ const runSearchDiscovery = async (
   // the list changes (code default or BULK_IMPORT_SEARCH_PHRASES), a bill
   // rejected under the old list may match the new one, so the cache is
   // discarded and candidates are re-verified as the sweep surfaces them again.
-  // Costs leginfo fetches only, metered by BULK_IMPORT_VERIFY_PER_RUN.
-  const phraseSet = phraseSetKey(phrases);
+  // Costs pubinfo reads only, metered by BULK_IMPORT_VERIFY_PER_RUN. The
+  // mention threshold is part of the key for the same reason: lowering it makes
+  // earlier rejections stale.
+  const phraseSet = `${phraseSetKey(phrases)}#min=${getVerifyMinMentions()}`;
   const keepRejected = pending.phrase_set === phraseSet;
   if (!keepRejected && pending.rejected.length > 0) {
     stats.rejected_cache_reset = true;
@@ -1461,48 +1474,152 @@ const runSearchDiscovery = async (
 
   if (options.dryRun) return stats;
 
+  // Verification and insertion run after the response, in
+  // runQueuedVerification: loading the pubinfo index alone takes ~11 s of
+  // network time, which does not fit the request budget that keeps this
+  // response inside pg_net's 30 s timeout.
+  await setPendingState(supabaseAdmin, queueKey, {
+    rows: queue,
+    rejected: Array.from(rejected),
+    phrase_set: phraseSet,
+    last_verification: pending.last_verification,
+  });
+  stats.verification = "background";
+  return stats;
+};
+
+type VerificationStats = {
+  source: "pubinfo";
+  min_mentions: number;
+  started_at: string;
+  finished_at: string | null;
+  queue_before: number;
+  queue_after: number;
+  attempted: number;
+  verified: number;
+  inserted: number;
+  rejected: number;
+  unverifiable: number;
+  unavailable: number;
+  blocked: number;
+  capped: boolean;
+  stopped_for_deadline: boolean;
+  summary_sync: SummarySyncEnqueueResult | null;
+  errors: string[];
+};
+
+/**
+ * Confirm queued search candidates against their bill text and insert the
+ * matches. Runs as a background task after bulk-import-dataset has responded
+ * (see scheduleBackground), with its own deadline; results are logged and
+ * stored on the queue's cursor row as `last_verification`.
+ */
+const runQueuedVerification = async (
+  supabaseAdmin: SupabaseAdminClient,
+  options: {
+    state: string;
+    sessionId: number;
+    yearStart: number;
+    phrases: string[];
+    deadlineAt: number;
+  },
+): Promise<VerificationStats> => {
+  const stats: VerificationStats = {
+    source: "pubinfo",
+    min_mentions: 0,
+    started_at: new Date().toISOString(),
+    finished_at: null,
+    queue_before: 0,
+    queue_after: 0,
+    attempted: 0,
+    verified: 0,
+    inserted: 0,
+    rejected: 0,
+    unverifiable: 0,
+    unavailable: 0,
+    blocked: 0,
+    capped: false,
+    stopped_for_deadline: false,
+    summary_sync: null,
+    errors: [],
+  };
+  const pushError = (message: string) => {
+    if (stats.errors.length < ERROR_PREVIEW_LIMIT) stats.errors.push(message);
+  };
+
+  const queueKey = pendingKey(options.state, options.sessionId);
+  const pending = await getPendingState(supabaseAdmin, queueKey);
+  const queue = pending.rows;
+  const rejected = new Set<number>(pending.rejected);
+  stats.queue_before = queue.length;
+
   const verifyPerRun = getVerifyPerRun();
   const verifyDelayMs = getVerifyDelayMs();
   const maxNewBills = getSearchMaxNewBills();
-
-  const verifyRegex = buildVerifyRegex(phrases);
+  const verifyRegex = buildVerifyRegex(options.phrases);
+  const minMentions = getVerifyMinMentions();
+  stats.min_mentions = minMentions;
   const verified: BillSeedRow[] = [];
   const deferred: BillSeedRow[] = [];
   let index = 0;
 
-  for (; index < queue.length; index += 1) {
-    if (stats.verify_attempted >= verifyPerRun) break;
-    if (Date.now() >= options.stopAt - DEADLINE_GUARD_MS) break;
+  let pubinfo: PubinfoIndex | null = null;
+  if (queue.length > 0 && verifyPerRun > 0) {
+    try {
+      pubinfo = await loadPubinfoIndex(pubinfoUrlForSession(options.yearStart));
+    } catch (error) {
+      if (error instanceof PubinfoFetchError && error.challenged) {
+        stats.blocked += 1;
+      }
+      pushError(
+        `pubinfo index unavailable; verification skipped: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  for (; pubinfo !== null && index < queue.length; index += 1) {
+    if (stats.attempted >= verifyPerRun) break;
+    if (Date.now() >= options.deadlineAt - DEADLINE_GUARD_MS) {
+      stats.stopped_for_deadline = true;
+      break;
+    }
     if (verified.length >= maxNewBills) break;
 
     const row = queue[index];
 
-    // No exclusion check here -- vehicles were filtered out of `candidates` and
-    // the persisted queue before this loop, so nothing reaching it can be one.
-    // See the note at the candidate-stage filter for why rejecting them here
-    // was wrong.
+    // No exclusion check here -- vehicles were filtered out of the queue by the
+    // search sweep before it was persisted. See the note at the candidate-stage
+    // filter for why rejecting them here was wrong.
 
-    if (stats.verify_attempted > 0) await delay(verifyDelayMs);
-    stats.verify_attempted += 1;
+    if (stats.attempted > 0) await delay(verifyDelayMs);
+    stats.attempted += 1;
 
-    const outcome = await billTextMentionsTopic(row.state_link, verifyRegex);
+    const outcome = await billTextMentionsTopic(
+      pubinfo,
+      row.state_link,
+      verifyRegex,
+      minMentions,
+    );
 
     if (outcome === "blocked") {
-      // Keep the row and stop: every remaining fetch this run would hit the
+      // Keep the row and stop: every remaining read this run would hit the
       // same challenge, and would read as `unavailable` if counted as such.
-      stats.verify_blocked += 1;
+      stats.blocked += 1;
       deferred.push(row);
       pushError(
-        "leginfo returned a Cloudflare bot challenge; verification stopped for this run",
+        "pubinfo returned a Cloudflare challenge; verification stopped for this run",
       );
       index += 1;
       break;
     }
 
     if (outcome === "unavailable") {
-      // Text not published yet, or a transient leginfo failure. Keep it queued
-      // and retry on a later run rather than dropping or wrongly admitting it.
-      stats.verify_unavailable += 1;
+      // Not in the nightly pubinfo archive yet, or a transient read failure.
+      // Keep it queued and retry on a later run rather than dropping or
+      // wrongly admitting it.
+      stats.unavailable += 1;
       deferred.push(row);
       continue;
     }
@@ -1513,13 +1630,13 @@ const runSearchDiscovery = async (
     }
 
     // "rejected" (text has none of the phrases) and "unverifiable" (no usable
-    // link, which retrying can never fix) both leave the queue for good.
-    stats.rejected_count += 1;
-    if (outcome === "unverifiable") stats.unverifiable_count += 1;
+    // bill id, which retrying can never fix) both leave the queue for good.
+    stats.rejected += 1;
+    if (outcome === "unverifiable") stats.unverifiable += 1;
     rejected.add(row.id);
   }
 
-  stats.verified_count = verified.length;
+  stats.verified = verified.length;
   stats.capped = verified.length >= maxNewBills;
 
   if (verified.length > 0) {
@@ -1541,19 +1658,30 @@ const runSearchDiscovery = async (
         continue;
       }
 
-      stats.inserted_count += chunk.length;
+      stats.inserted += chunk.length;
     }
   }
 
   // Everything not resolved this run stays queued, with deferred rows moved to
   // the back so one unreadable bill cannot block the queue.
   const remaining = [...queue.slice(index), ...deferred];
-  stats.pending_queue_size = remaining.length;
+  stats.queue_after = remaining.length;
 
+  // Newly inserted bills carry metadata only; `sync-updated-bills` fetches
+  // their text and summaries.
+  if (stats.inserted > 0) {
+    stats.summary_sync = await enqueueSummarySyncs(
+      supabaseAdmin,
+      getSummarySyncInvocationCount(stats.inserted),
+    );
+  }
+
+  stats.finished_at = new Date().toISOString();
   await setPendingState(supabaseAdmin, queueKey, {
     rows: remaining,
     rejected: Array.from(rejected),
-    phrase_set: phraseSet,
+    phrase_set: pending.phrase_set,
+    last_verification: stats,
   });
 
   return stats;
@@ -1742,14 +1870,37 @@ serve(async (req) => {
           reserveCalls: callsReservedForDataset,
         });
 
-    // Newly discovered bills carry metadata only; `sync-updated-bills` fetches
-    // their text and summaries. Enqueue here so discovery still drives the
-    // downstream pipeline on the (now common) runs where the dataset pass is
-    // skipped.
-    const discoveredCount = ("inserted_count" in searchDiscovery
-      ? searchDiscovery.inserted_count
-      : 0) +
-      ("inserted" in pinnedBills ? pinnedBills.inserted.length : 0);
+    // Queued search candidates are verified and inserted after the response;
+    // that task enqueues sync-updated-bills for what it inserts. It needs no
+    // LegiScan calls, so it runs even when the sweep stopped on a LegiScan
+    // error or the gate.
+    if (
+      "verification" in searchDiscovery &&
+      searchDiscovery.verification === "background"
+    ) {
+      if (yearStart === null) {
+        console.warn("Search verification skipped: session has no year_start");
+      } else {
+        const sessionYear = yearStart;
+        scheduleBackground("search verification", async () => {
+          const result = await runQueuedVerification(supabaseAdmin, {
+            state,
+            sessionId,
+            yearStart: sessionYear,
+            phrases: getSearchPhrases(),
+            deadlineAt: Date.now() + VERIFY_BACKGROUND_BUDGET_MS,
+          });
+          console.log("Search verification finished", result);
+        });
+      }
+    }
+
+    // Pinned bills carry metadata only; `sync-updated-bills` fetches their text
+    // and summaries. Enqueue here so they still drive the downstream pipeline on
+    // the (now common) runs where the dataset pass is skipped.
+    const discoveredCount = "inserted" in pinnedBills
+      ? pinnedBills.inserted.length
+      : 0;
     const discoverySummarySync = discoveredCount > 0
       ? await enqueueSummarySyncs(
         supabaseAdmin,
@@ -1948,9 +2099,7 @@ serve(async (req) => {
     });
 
     const billFiles = Object.values(zip.files)
-      .filter((file) =>
-        file.name.includes("/bill/") && !file.dir
-      )
+      .filter((file) => file.name.includes("/bill/") && !file.dir)
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const totalFiles = billFiles.length;
