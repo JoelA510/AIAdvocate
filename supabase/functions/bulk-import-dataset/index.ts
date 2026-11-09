@@ -7,6 +7,10 @@ import { ensureEnv, getServiceKey } from "../_shared/utils.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { isAuthorizedCronOrAdmin } from "../_shared/auth.ts";
 import {
+  claimLegiScanSlot,
+  LegiScanGateError,
+} from "../_shared/legiscanGate.ts";
+import {
   buildVerifyRegex,
   type CallPacer,
   createCallPacer,
@@ -457,14 +461,18 @@ const delay = (ms: number): Promise<void> =>
 /**
  * The only way this function issues a LegiScan request. The caller must have
  * checked pacerCanCall() and reserved the call first; this enforces the gap
- * since the previous call and counts the call even if the request throws.
+ * since the previous call, then claims a cross-invocation slot (throws
+ * LegiScanGateError, before any request, if the gate is unavailable), and
+ * counts the call even if the request throws.
  */
 const pacedLegiScanFetch = async (
+  supabaseAdmin: SupabaseAdminClient,
   pacer: CallPacer,
   url: string,
 ): Promise<Response> => {
   const wait = pacerWaitMs(pacer, Date.now());
   if (wait > 0) await delay(wait);
+  await claimLegiScanSlot(supabaseAdmin, pacer.minGapMs);
   try {
     return await fetch(url, { headers: LEGISCAN_API_HEADERS });
   } finally {
@@ -1095,7 +1103,20 @@ const resolvePinnedBills = async (
   stats.lookup = "called";
   const masterListUrl = `https://api.legiscan.com/?key=${legiscanApiKey}` +
     `&op=getMasterList&id=${options.sessionId}`;
-  const response = await pacedLegiScanFetch(options.pacer, masterListUrl);
+  let response: Response;
+  try {
+    response = await pacedLegiScanFetch(
+      supabaseAdmin,
+      options.pacer,
+      masterListUrl,
+    );
+  } catch (error) {
+    if (!(error instanceof LegiScanGateError)) throw error;
+    stats.aborted = "gate_unavailable";
+    stats.abort_message = error.message;
+    stats.errors.push(error.message);
+    return stats;
+  }
   const json = await response.json().catch(() => null);
 
   if (json?.status !== "OK" || !json?.masterlist) {
@@ -1258,7 +1279,11 @@ const runSearchDiscovery = async (
 
       try {
         // Throttled by the pacer: LegiScan locks keys for bursty traffic.
-        const response = await pacedLegiScanFetch(options.pacer, searchUrl);
+        const response = await pacedLegiScanFetch(
+          supabaseAdmin,
+          options.pacer,
+          searchUrl,
+        );
         const json = await response.json();
 
         if (json?.status !== "OK" || !json?.searchresult) {
@@ -1321,6 +1346,13 @@ const runSearchDiscovery = async (
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        if (error instanceof LegiScanGateError) {
+          // No spacing guarantee without the gate: stop the sweep, not just
+          // this phrase.
+          stats.aborted = "gate_unavailable";
+          stats.abort_message = error.message;
+          break phraseLoop;
+        }
         break;
       }
     }
@@ -1607,6 +1639,7 @@ serve(async (req) => {
         `https://api.legiscan.com/?key=${legiscanApiKey}&op=getDatasetList&state=${state}`;
 
       const datasetListResponse = await pacedLegiScanFetch(
+        supabaseAdmin,
         pacer,
         datasetListUrl,
       );
@@ -1681,8 +1714,9 @@ serve(async (req) => {
 
     if ("aborted" in pinnedBills && pinnedBills.aborted) {
       return jsonResponse({
-        message:
-          "LegiScan returned an API error; stopped all LegiScan calls for this run.",
+        message: pinnedBills.aborted === "gate_unavailable"
+          ? "LegiScan rate gate unavailable; stopped all LegiScan calls for this run."
+          : "LegiScan returned an API error; stopped all LegiScan calls for this run.",
         session_id: sessionId,
         pinned_bills: pinnedBills,
         legiscan: {
@@ -1733,11 +1767,13 @@ serve(async (req) => {
 
     if (
       "aborted" in searchDiscovery &&
-      searchDiscovery.aborted === "legiscan_error"
+      (searchDiscovery.aborted === "legiscan_error" ||
+        searchDiscovery.aborted === "gate_unavailable")
     ) {
       return respond({
-        message:
-          "LegiScan returned an API error; stopped all LegiScan calls for this run.",
+        message: searchDiscovery.aborted === "gate_unavailable"
+          ? "LegiScan rate gate unavailable; stopped all LegiScan calls for this run."
+          : "LegiScan returned an API error; stopped all LegiScan calls for this run.",
         session_id: sessionId,
         skipped_download: true,
         legiscan: {
@@ -1896,7 +1932,11 @@ serve(async (req) => {
     const legiscanUrl =
       `https://api.legiscan.com/?op=getDataset&id=${sessionId}&key=${legiscanApiKey}&access_key=${accessKey}`;
 
-    const legiscanResponse = await pacedLegiScanFetch(pacer, legiscanUrl);
+    const legiscanResponse = await pacedLegiScanFetch(
+      supabaseAdmin,
+      pacer,
+      legiscanUrl,
+    );
     const legiscanJson = await legiscanResponse.json();
 
     if (!legiscanJson?.dataset?.zip) {

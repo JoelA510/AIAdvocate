@@ -15,6 +15,10 @@ import {
   legiScanWaitMs,
   recordLegiScanCall,
 } from "./legiscanPacer.ts";
+import {
+  claimLegiScanSlot,
+  LegiScanGateError,
+} from "../_shared/legiscanGate.ts";
 
 interface SummaryPayload {
   english: {
@@ -1079,7 +1083,11 @@ const withRetries = async <T>(
       return await fn(attempt, controller.signal);
     } catch (error) {
       lastError = error;
-      if (attempt === attempts || error instanceof LegiScanBudgetSpentError) {
+      if (
+        attempt === attempts ||
+        error instanceof LegiScanBudgetSpentError ||
+        error instanceof LegiScanGateError
+      ) {
         throw error;
       }
       const retryAfterMs =
@@ -1120,6 +1128,9 @@ const fetchJsonWithRetries = async <T>(
   headers: Record<string, string> = BROWSER_HEADERS,
   deadlineAt = Number.POSITIVE_INFINITY,
   pacer: LegiScanPacer,
+  // Cross-invocation spacing; see _shared/legiscanGate.ts. Called for every
+  // attempt, retries included, after the per-invocation wait.
+  claimSlot: () => Promise<void>,
 ): Promise<T> => {
   return withRetries<T>(
     async (_attempt, signal) => {
@@ -1130,6 +1141,7 @@ const fetchJsonWithRetries = async <T>(
       }
       const wait = legiScanWaitMs(pacer, Date.now());
       if (wait > 0) await sleep(wait);
+      await claimSlot();
       let res: Response;
       try {
         res = await fetch(url, { headers, signal });
@@ -1541,6 +1553,8 @@ serve(async (req) => {
       Deno.env.get("LEGISCAN_SYNC_DELAY_MS"),
       Deno.env.get("LEGISCAN_SYNC_MAX_CALLS_PER_RUN"),
     );
+    const claimSlot = () =>
+      claimLegiScanSlot(supabaseAdmin, legiscanPacer.minGapMs);
 
     const leaseNextBillId = async (): Promise<number | null> => {
       const { data, error } = await supabaseAdmin.rpc("lease_next_bill", {
@@ -1649,6 +1663,7 @@ serve(async (req) => {
               LEGISCAN_API_HEADERS,
               runDeadlineAt,
               legiscanPacer,
+              claimSlot,
             );
             if (res.status === "ERROR") {
               throw new Error(
@@ -1705,6 +1720,7 @@ serve(async (req) => {
                   LEGISCAN_API_HEADERS,
                   runDeadlineAt,
                   legiscanPacer,
+                  claimSlot,
                 );
                 if (textRes.status === "ERROR") {
                   throw new Error(

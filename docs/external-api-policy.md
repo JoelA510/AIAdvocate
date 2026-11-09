@@ -82,31 +82,25 @@ immediate (§1). These floors are therefore mandatory and are CI-checked:
 - **No concurrent LegiScan calls within an invocation.** Never issue LegiScan
   requests inside `Promise.all`, `runConcurrent`, or any parallel map.
   Sequential only.
-- **Known gap — cross-invocation concurrency is not enforced.**
-  `invoke_full_legislative_refresh` enqueues five `sync-updated-bills`
-  invocations through `pg_net`, which run in parallel. With
-  `SYNC_USE_LEGISCAN=true` those five workers can call LegiScan simultaneously,
-  and nothing in the code serialises them: `reserve_legiscan_api_call` bounds
-  per-resource cooldowns and daily/monthly totals, not instantaneous rate.
-  This gap is **live, not latent**. `SYNC_USE_LEGISCAN` defaults to `false` in
-  code, but production has it set to `true` (verified 2026-08-13 from the
-  `legiscan.enabled` field in a `sync-updated-bills` response). It stays quiet
-  only because leginfo normally succeeds first, so the fallback is never
-  reached — an assumption that fails exactly when it matters. A leginfo outage
-  would send all five parallel workers to LegiScan at once, unserialised. That
-  is the *rate* condition that locked the key previously, not the quota
-  condition the ledger guards. **Fix before relying on the fallback**: reduce the
-  fan-out or add a shared rate gate. The same caveat applies to leginfo: five
-  parallel workers plus the verification pass can exceed the ≥250 ms spacing
-  in §5.
-  **Update 2026-10-27: the fallback is now the normal path.** leginfo serves a
-  Cloudflare challenge to cloud egress (Supabase Edge and other datacenter
-  IPs), so every bill without stored text goes to LegiScan. Within one
-  invocation `sync-updated-bills` now holds the §3 floors itself
-  (`sync-updated-bills/legiscanPacer.ts`: ≥ 1000 ms gap, ≤ 6 calls, getBill and
-  getBillText reserved only as a pair). Across invocations it still does not.
-  In practice the exposure is bounded by how many textless bills exist, since
-  fetched text is now persisted before summarisation and never re-fetched.
+- **Cross-invocation spacing is enforced by a shared gate.** Every LegiScan
+  request, from any function and any invocation, first claims a slot from
+  `public.claim_legiscan_slot()` (migration `20261109120000`) and sleeps until
+  it. Slots are handed out ≥ 1500 ms apart (never below 1000 ms) in one
+  row-locked update, so parallel `sync-updated-bills` workers and
+  `bulk-import-dataset` are serialised against each other. Use
+  `claimLegiScanSlot()` from `supabase/functions/_shared/legiscanGate.ts`
+  immediately before the fetch, for every attempt including retries; CI fails
+  any LegiScan call site that does not. If the gate cannot be reached the call
+  **fails closed**: no request is sent and the run stops its LegiScan traffic.
+  History: before the gate, `invoke_full_legislative_refresh`'s parallel
+  workers fell back to LegiScan together whenever leginfo failed. leginfo has
+  served a Cloudflare challenge to cloud egress since at least 2026-10-27, and
+  production logged three `getBill` calls 1-92 ms apart every day from
+  2026-10-28 to 2026-11-09, at times overlapping the `getSearch` sweep. Within
+  one invocation `sync-updated-bills` still holds its own floors as well
+  (`sync-updated-bills/legiscanPacer.ts`: ≤ 6 calls, getBill and getBillText
+  reserved only as a pair). The same caveat applies to leginfo: parallel
+  workers can exceed the ≥ 250 ms spacing in §5.
 - **Abort the whole sweep on the first API-level error.** A LegiScan response of
   `status: "ERROR"` (locked key, exhausted quota, malformed query) will repeat
   for every subsequent call. Stop; do not continue to the next item.

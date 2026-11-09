@@ -15,6 +15,9 @@
 //   2. Any file that fetches api.legiscan.com must route through the
 //      reserve_legiscan_api_call RPC (the only thing that records quota use).
 //   3. LegiScan throttle defaults must stay at or above the policy floors.
+//   4. Any file that fetches api.legiscan.com must claim a cross-invocation
+//      slot (claimLegiScanSlot / claim_legiscan_slot) so parallel invocations
+//      cannot burst.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -45,6 +48,7 @@ const SCAN_ROOTS = ["supabase/functions", "src", "scripts", "mobile-app"];
 const LEGISCAN_HOST_RE = /api\.legiscan\.com/;
 const OPENSTATES_HOST_RE = /openstates\.org\/graphql/;
 const RESERVE_RPC_RE = /reserve_legiscan_api_call/;
+const GATE_RE = /claimLegiScanSlot|claim_legiscan_slot/;
 
 // Policy floors from docs/external-api-policy.md §2-§3.
 const THROTTLE_FLOORS = [
@@ -128,6 +132,14 @@ for (const file of files) {
         `${relPath}: fetches api.legiscan.com without calling ` +
           `reserve_legiscan_api_call. Unmetered calls bypass the daily/monthly ` +
           `budget and leave no row in legiscan_api_call_log.`,
+      );
+    }
+
+    if (!GATE_RE.test(source)) {
+      failures.push(
+        `${relPath}: fetches api.legiscan.com without claimLegiScanSlot. ` +
+          `Per-invocation pacing cannot see parallel invocations; every ` +
+          `request must take a slot from the shared rate gate.`,
       );
     }
   }
