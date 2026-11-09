@@ -180,11 +180,12 @@ export const camlToText = (xml: string): string =>
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<[^>]*>/g, " ")
     .replace(/&nbsp;|&#160;/g, " ")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
+    // Last, so "&amp;lt;" decodes to the text "&lt;", not to "<".
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 

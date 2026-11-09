@@ -186,6 +186,8 @@ Deno.test("camlToText and billIdFromStateLink", () => {
     camlToText("<a>x</a><!-- c --><b>y&nbsp;&quot;z&quot;</b>"),
     'x y "z"',
   );
+  // Decoded once: an escaped entity stays literal text.
+  assertEquals(camlToText("a &amp;lt; b &amp;amp; c"), "a &lt; b &amp; c");
   assertEquals(
     billIdFromStateLink(
       "https://leginfo.legislature.ca.gov/faces/billStatusClient.xhtml?bill_id=202520260AB1568",
