@@ -12,9 +12,14 @@ import {
   legiScanBudgetLeft,
   type LegiScanPacer,
   legiScanPairFits,
-  legiScanWaitMs,
   recordLegiScanCall,
 } from "./legiscanPacer.ts";
+import {
+  claimLegiScanSlot,
+  type GateOptions,
+  LegiScanGateError,
+  reserveGatedLegiScanCall,
+} from "../_shared/legiscanGate.ts";
 
 interface SummaryPayload {
   english: {
@@ -414,40 +419,25 @@ const isAuthorizedRequest = async (
   return data === true;
 };
 
+// Reserves the call and takes a cross-invocation slot in one transaction (see
+// _shared/legiscanGate.ts); when allowed, the request must be sent right away.
+// Throws LegiScanGateError, with nothing reserved, when the gate is
+// unreachable or no slot arrives before the deadline; the caller's catch then
+// disables LegiScan for the rest of the run.
 const reserveLegiScanCall = async (
   supabaseAdmin: any,
   endpoint: string,
   resourceKey: string,
   cooldownSeconds: number,
-): Promise<LegiScanReservation> => {
-  const { data, error } = await supabaseAdmin.rpc("reserve_legiscan_api_call", {
-    p_endpoint: endpoint,
-    p_resource_key: resourceKey,
-    p_cooldown_seconds: cooldownSeconds,
-    p_daily_limit: getLegiScanDailyLimit(),
-    p_monthly_limit: getLegiScanMonthlyLimit(),
-  });
-
-  if (error) {
-    console.error("LegiScan API reservation failed; refusing external call", {
-      endpoint,
-      resource_key: resourceKey,
-      error: errorToMessage(error),
-    });
-    return {
-      allowed: false,
-      reason: "reservation_rpc_error",
-      endpoint,
-      resource_key: resourceKey,
-    };
-  }
-
-  return (data ??
-    {
-      allowed: false,
-      reason: "empty_reservation_response",
-    }) as LegiScanReservation;
-};
+  gate: GateOptions,
+): Promise<LegiScanReservation> =>
+  await reserveGatedLegiScanCall(supabaseAdmin, {
+    endpoint,
+    resourceKey,
+    cooldownSeconds,
+    dailyLimit: getLegiScanDailyLimit(),
+    monthlyLimit: getLegiScanMonthlyLimit(),
+  }, gate) as LegiScanReservation;
 
 console.log(
   "🚀 Initializing sync-updated-bills v3.0 (Bilingual summaries + batching)",
@@ -1079,7 +1069,11 @@ const withRetries = async <T>(
       return await fn(attempt, controller.signal);
     } catch (error) {
       lastError = error;
-      if (attempt === attempts || error instanceof LegiScanBudgetSpentError) {
+      if (
+        attempt === attempts ||
+        error instanceof LegiScanBudgetSpentError ||
+        error instanceof LegiScanGateError
+      ) {
         throw error;
       }
       const retryAfterMs =
@@ -1120,16 +1114,19 @@ const fetchJsonWithRetries = async <T>(
   headers: Record<string, string> = BROWSER_HEADERS,
   deadlineAt = Number.POSITIVE_INFINITY,
   pacer: LegiScanPacer,
+  // Cross-invocation spacing for retries; see _shared/legiscanGate.ts. The
+  // first attempt's slot came with its reservation (reserveLegiScanCall), so
+  // it is sent immediately; each retry claims a fresh slot first.
+  claimSlot: (signal: AbortSignal) => Promise<void>,
 ): Promise<T> => {
   return withRetries<T>(
-    async (_attempt, signal) => {
+    async (attempt, signal) => {
       if (!legiScanBudgetLeft(pacer)) {
         throw new LegiScanBudgetSpentError(
           `${name} skipped: ${pacer.maxCalls} LegiScan calls already made this invocation`,
         );
       }
-      const wait = legiScanWaitMs(pacer, Date.now());
-      if (wait > 0) await sleep(wait);
+      if (attempt > 1) await claimSlot(signal);
       let res: Response;
       try {
         res = await fetch(url, { headers, signal });
@@ -1541,6 +1538,12 @@ serve(async (req) => {
       Deno.env.get("LEGISCAN_SYNC_DELAY_MS"),
       Deno.env.get("LEGISCAN_SYNC_MAX_CALLS_PER_RUN"),
     );
+    const gate: GateOptions = {
+      minGapMs: legiscanPacer.minGapMs,
+      deadlineAt: runDeadlineAt,
+    };
+    const claimSlot = (signal: AbortSignal) =>
+      claimLegiScanSlot(supabaseAdmin, { ...gate, signal });
 
     const leaseNextBillId = async (): Promise<number | null> => {
       const { data, error } = await supabaseAdmin.rpc("lease_next_bill", {
@@ -1630,6 +1633,7 @@ serve(async (req) => {
             "getBill",
             String(billId),
             getLegiScanBillCooldownSeconds(),
+            gate,
           );
           legiscanReservations.push(billReservation);
 
@@ -1649,6 +1653,7 @@ serve(async (req) => {
               LEGISCAN_API_HEADERS,
               runDeadlineAt,
               legiscanPacer,
+              claimSlot,
             );
             if (res.status === "ERROR") {
               throw new Error(
@@ -1681,6 +1686,7 @@ serve(async (req) => {
                 "getBillText",
                 String(latestTextDoc.doc_id),
                 getLegiScanBillTextCooldownSeconds(),
+                gate,
               );
               legiscanReservations.push(textReservation);
 
@@ -1705,6 +1711,7 @@ serve(async (req) => {
                   LEGISCAN_API_HEADERS,
                   runDeadlineAt,
                   legiscanPacer,
+                  claimSlot,
                 );
                 if (textRes.status === "ERROR") {
                   throw new Error(
