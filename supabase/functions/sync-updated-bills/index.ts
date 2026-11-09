@@ -10,10 +10,19 @@ import { getOptionalOpenAiKey, getServiceKey } from "../_shared/utils.ts";
 import {
   createLegiScanPacer,
   legiScanBudgetLeft,
+  legiScanCallsFit,
   type LegiScanPacer,
-  legiScanPairFits,
   recordLegiScanCall,
 } from "./legiscanPacer.ts";
+import {
+  billIdFromStateLink,
+  camlBillToHtml,
+  ingestionCursorStore,
+  loadPubinfoIndexCached,
+  type PubinfoIndex,
+  pubinfoUrlForSession,
+  readBillXml,
+} from "../_shared/pubinfo.ts";
 import {
   claimLegiScanSlot,
   type GateOptions,
@@ -824,6 +833,10 @@ const MAX_DOM_PARSE_CHARS = 500_000;
 // in the bill path.
 const LEGINFO_FETCH_TIMEOUT_MS = 45_000;
 
+// Building the pubinfo index from scratch takes ~11 s; a cached one ~1 s. Don't
+// start either this close to the run deadline.
+const PUBINFO_MIN_RUN_TIME_LEFT_MS = 20_000;
+
 const extractLeginfoBillText = (html: string): string | null => {
   const anchorMatch = LEGINFO_ANCHOR_PATTERN.exec(html);
   if (!anchorMatch) return null;
@@ -1545,6 +1558,59 @@ serve(async (req) => {
     const claimSlot = (signal: AbortSignal) =>
       claimLegiScanSlot(supabaseAdmin, { ...gate, signal });
 
+    // Bill text from the Legislature's pubinfo archive (_shared/pubinfo.ts):
+    // free, not challenged, and no LegiScan quota. One index per session year
+    // per run, shared across runs through the ingestion_cursors cache. A failed
+    // load is remembered for the run so each bill doesn't retry it.
+    const pubinfoIndexes = new Map<number, Promise<PubinfoIndex | null>>();
+    const pubinfoIndexFor = (year: number) => {
+      let pending = pubinfoIndexes.get(year);
+      if (!pending) {
+        pending = loadPubinfoIndexCached(
+          ingestionCursorStore(supabaseAdmin),
+          pubinfoUrlForSession(year),
+        ).then(({ index, fromCache }) => {
+          console.log("- pubinfo index loaded", {
+            year,
+            from_cache: fromCache,
+            bills: index.latestLobByBill.size,
+          });
+          return index;
+        }).catch((error) => {
+          console.warn("- pubinfo index unavailable for this run", {
+            year,
+            error: errorToMessage(error),
+          });
+          return null;
+        });
+        pubinfoIndexes.set(year, pending);
+      }
+      return pending;
+    };
+    const fetchPubinfoText = async (
+      stateLink: string | null,
+    ): Promise<string | null> => {
+      const pubinfoBillId = billIdFromStateLink(stateLink);
+      const year = Number(pubinfoBillId?.slice(0, 4));
+      if (!pubinfoBillId || !Number.isInteger(year) || year < 1989) return null;
+      if (runDeadlineAt - Date.now() < PUBINFO_MIN_RUN_TIME_LEFT_MS) {
+        return null;
+      }
+      const index = await pubinfoIndexFor(year);
+      if (!index) return null;
+      try {
+        const xml = await readBillXml(index, pubinfoBillId);
+        const html = xml === null ? null : camlBillToHtml(xml);
+        return html === null ? null : stripHtmlToText(html) || null;
+      } catch (error) {
+        console.warn("- pubinfo read failed", {
+          bill_id: pubinfoBillId,
+          error: errorToMessage(error),
+        });
+        return null;
+      }
+    };
+
     const leaseNextBillId = async (): Promise<number | null> => {
       const { data, error } = await supabaseAdmin.rpc("lease_next_bill", {
         p_owner: owner,
@@ -1609,6 +1675,16 @@ serve(async (req) => {
       }
 
       if (!decodedText && billData.state_link) {
+        decodedText = await fetchPubinfoText(billData.state_link) ?? undefined;
+        if (decodedText) {
+          console.log("- Bill text from pubinfo", {
+            bill_id: billId,
+            chars: decodedText.length,
+          });
+        }
+      }
+
+      if (!decodedText && billData.state_link) {
         console.log("- Attempting Leginfo scrape", {
           bill_id: billId,
           link: billData.state_link,
@@ -1618,10 +1694,19 @@ serve(async (req) => {
             undefined;
       }
 
-      const legiscanBudgetForBill = legiScanPairFits(legiscanPacer);
+      // getBill is also where a newly discovered bill gets its status, dates
+      // and history. Text no longer has to come from LegiScan, so ask for the
+      // metadata on its own when the bill has never had it; getBillText only
+      // when no free source produced text.
+      const needsText = !isUsableBillText(decodedText);
+      const needsMetadata = !existingBillMeta.status_date;
+      const legiscanBudgetForBill = legiScanCallsFit(
+        legiscanPacer,
+        needsText ? 2 : 1,
+      );
 
       if (
-        !isUsableBillText(decodedText) &&
+        (needsText || needsMetadata) &&
         legiscanDetailsEnabled &&
         legiscanApiKey &&
         !legiscanRuntimeDisabledReason &&
@@ -1671,7 +1756,11 @@ serve(async (req) => {
                 ? billData.texts[billData.texts.length - 1]
                 : null;
 
-            if (latestTextDoc?.doc_id && !legiScanBudgetLeft(legiscanPacer)) {
+            if (!needsText) {
+              // Text came from pubinfo or leginfo; getBill was for metadata.
+            } else if (
+              latestTextDoc?.doc_id && !legiScanBudgetLeft(legiscanPacer)
+            ) {
               // Only reachable after getBill retries spent the slot held for
               // this call. Checked before reserving: a getBillText reservation
               // holds for a year, so spending one without the request strands
@@ -1782,7 +1871,7 @@ serve(async (req) => {
 
       if (!isUsableBillText(decodedText)) {
         console.warn(
-          "- No full bill text from LegiScan, Leginfo, or database",
+          "- No full bill text from pubinfo, LegiScan, Leginfo, or database",
           {
             bill_id: billData.bill_id,
             bill_number: billData.bill_number,
