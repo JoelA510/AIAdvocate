@@ -72,3 +72,7 @@ verify_jwt = false
 [functions.bulk-import-dataset]
 # Authorized in code via isAuthorizedCronOrAdmin() (see votes-backfill).
 verify_jwt = false
+
+[functions.refresh-bill-status]
+# Authorized in code via isAuthorizedCronOrAdmin() (see votes-backfill).
+verify_jwt = false

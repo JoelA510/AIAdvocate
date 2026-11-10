@@ -107,7 +107,9 @@ fallback is to process a fixed slice of tracked bills per run.
 ## 3. Work order (one PR each)
 
 1. **Daily archive + this plan.** Done in the PR that adds this file.
-2. **Status from pubinfo.** Parsers and mapping in `_shared/pubinfo.ts` with
+2. **Status from pubinfo.** *Implemented in the PR after #98; decisions A and B
+   below were accepted by the owner on 2026-11-10, along with a
+   `pubinfo_bill_id` column linking each bill to both providers.* Parsers and mapping in `_shared/pubinfo.ts` with
    tests pinned to real rows; `refresh-bill-status` function and its cron
    wrapper (migration + verification SQL); `sync-updated-bills` skips `getBill`
    when the bill already has status. Writes only source fields, never

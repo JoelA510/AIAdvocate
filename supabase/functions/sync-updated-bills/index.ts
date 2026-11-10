@@ -6,6 +6,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { isStatusRefreshHealthy } from "./statusRefresh.ts";
 import { getOptionalOpenAiKey, getServiceKey } from "../_shared/utils.ts";
 import {
   createLegiScanPacer,
@@ -1613,6 +1614,29 @@ serve(async (req) => {
       }
       return pending;
     };
+    // refresh-bill-status fills status, dates, history and hearings from
+    // pubinfo for every tracked bill once a day. While it is healthy (see
+    // isStatusRefreshHealthy), a bill whose text came from pubinfo needs no
+    // LegiScan getBill. Checked once per run; any doubt keeps the getBill
+    // path.
+    let statusRefreshActive: Promise<boolean> | null = null;
+    const isStatusRefreshActive = (): Promise<boolean> => {
+      statusRefreshActive ??= (async () => {
+        try {
+          const { data, error } = await supabaseAdmin
+            .from("ingestion_cursors")
+            .select("cursor")
+            .eq("key", "bill_status_refresh")
+            .maybeSingle();
+          if (error || !data) return false;
+          return isStatusRefreshHealthy(data.cursor, Date.now());
+        } catch {
+          return false;
+        }
+      })();
+      return statusRefreshActive;
+    };
+
     const fetchPubinfoText = async (
       stateLink: string | null,
     ): Promise<string | null> => {
@@ -1700,9 +1724,11 @@ serve(async (req) => {
         textReused = true;
       }
 
+      let textFromPubinfo = false;
       if (!decodedText && billData.state_link) {
         decodedText = await fetchPubinfoText(billData.state_link) ?? undefined;
         if (decodedText) {
+          textFromPubinfo = true;
           console.log("- Bill text from pubinfo", {
             bill_id: billId,
             chars: decodedText.length,
@@ -1725,7 +1751,8 @@ serve(async (req) => {
       // metadata on its own when the bill has never had it; getBillText only
       // when no free source produced text.
       const needsText = !isUsableBillText(decodedText);
-      const needsMetadata = !existingBillMeta.status_date;
+      const needsMetadata = !existingBillMeta.status_date &&
+        !(textFromPubinfo && await isStatusRefreshActive());
       const legiscanBudgetForBill = legiScanCallsFit(
         legiscanPacer,
         needsText ? 2 : 1,

@@ -259,6 +259,32 @@ const fetchRange = async (
   return new Uint8Array(await response.arrayBuffer());
 };
 
+// docs/external-api-policy.md section 5: requests to the Legislature's hosts
+// are sequential and at least 250 ms apart. Wraps a fetch so every request
+// made through it, including an entry's header and payload reads, is spaced.
+const PUBINFO_REQUEST_GAP_MS = 250;
+
+export const pacedFetch = (
+  fetchImpl: FetchLike,
+  gapMs = PUBINFO_REQUEST_GAP_MS,
+): FetchLike => {
+  let nextAt = 0;
+  let queue: Promise<unknown> = Promise.resolve();
+  return (url, init) => {
+    const run = queue.then(async () => {
+      const wait = nextAt - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      try {
+        return await fetchImpl(url, init);
+      } finally {
+        nextAt = Date.now() + gapMs;
+      }
+    });
+    queue = run.catch(() => undefined);
+    return run;
+  };
+};
+
 const inflateRaw = async (data: Uint8Array): Promise<Uint8Array> => {
   const stream = new Blob([new Uint8Array(data)]).stream().pipeThrough(
     new DecompressionStream("deflate-raw"),
@@ -347,8 +373,9 @@ export const headPubinfoArchive = async (
 const buildPubinfoIndex = async (
   url: string,
   archive: Pick<ArchiveHead, "length" | "version">,
-  fetchImpl: FetchLike,
+  unpacedFetch: FetchLike,
 ): Promise<PubinfoIndex> => {
+  const fetchImpl = pacedFetch(unpacedFetch);
   const { length } = archive;
   const tailStart = Math.max(0, length - TAIL_BYTES);
   const tail = await fetchRange(fetchImpl, url, tailStart, length - 1);
@@ -630,19 +657,13 @@ const indexCoversSession = (index: PubinfoIndex, yearStart: number) => {
 };
 
 /**
- * The index for a session, from the freshest daily archive when one is
- * recent and holds that session, otherwise from pubinfo_<yearStart>.zip.
- * A daily archive that is missing, stale, unreadable or for another session
- * (after a session rollover) falls back; a Cloudflare challenge does not,
- * since the session archive is on the same host.
+ * The fresher of today's and yesterday's daily archives, or null when
+ * neither is reachable and at most 3 days old. Throws on a challenge.
  */
-export const loadSessionPubinfoIndexCached = async (
-  store: PubinfoCacheStore,
-  yearStart: number,
+export const freshestDailyArchive = async (
   fetchImpl: FetchLike = fetch,
-  options: { waitForBuildMs?: number; pollMs?: number; now?: Date } = {},
-): Promise<{ index: PubinfoIndex; fromCache: boolean }> => {
-  const now = options.now ?? new Date();
+  now: Date = new Date(),
+): Promise<{ url: string; head: ArchiveHead } | null> => {
   let best: { url: string; head: ArchiveHead } | null = null;
   for (const url of dailyArchiveCandidates(now)) {
     try {
@@ -662,6 +683,23 @@ export const loadSessionPubinfoIndexCached = async (
       });
     }
   }
+  return best;
+};
+
+/**
+ * The index for a session, from the freshest daily archive when one is
+ * recent and holds that session, otherwise from pubinfo_<yearStart>.zip.
+ * A daily archive that is missing, stale, unreadable or for another session
+ * (after a session rollover) falls back; a Cloudflare challenge does not,
+ * since the session archive is on the same host.
+ */
+export const loadSessionPubinfoIndexCached = async (
+  store: PubinfoCacheStore,
+  yearStart: number,
+  fetchImpl: FetchLike = fetch,
+  options: { waitForBuildMs?: number; pollMs?: number; now?: Date } = {},
+): Promise<{ index: PubinfoIndex; fromCache: boolean }> => {
+  const best = await freshestDailyArchive(fetchImpl, options.now ?? new Date());
 
   if (best) {
     try {
@@ -755,4 +793,50 @@ export const camlBillToHtml = (xml: string): string | null => {
     // lines, law sections, content.
     .replace(/<\/?caml:Fragment\b[^>]*>/g, "")
     .replace(/<(\/?)caml:[A-Za-z]+\b[^>]*>/g, "<$1div>");
+};
+
+// --- whole tables -------------------------------------------------------------
+//
+// The status refresh reads a handful of .dat tables in full (BILL_TBL,
+// BILL_HISTORY_TBL, ...; ~2 MB compressed together). Once a day, one caller,
+// so the central directory is read directly instead of through the lob cache.
+
+const MAX_TABLE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The text of each named .dat table in the archive. A table missing from the
+ * archive is absent from the result; the caller decides whether that matters.
+ */
+export const loadPubinfoTables = async (
+  url: string,
+  head: Pick<ArchiveHead, "length">,
+  names: string[],
+  unpacedFetch: FetchLike = fetch,
+): Promise<Map<string, string>> => {
+  const fetchImpl = pacedFetch(unpacedFetch);
+  const wanted = new Set(names);
+  const tailStart = Math.max(0, head.length - TAIL_BYTES);
+  const tail = await fetchRange(fetchImpl, url, tailStart, head.length - 1);
+  const cd = parseEndOfCentralDirectory(tail);
+  if (cd.size <= 0 || cd.size > MAX_CENTRAL_DIRECTORY_BYTES) {
+    throw new Error(`pubinfo central directory size ${cd.size} out of range`);
+  }
+  const entries = parseCentralDirectory(
+    await fetchRange(fetchImpl, url, cd.offset, cd.offset + cd.size - 1),
+    (name) => wanted.has(name),
+  );
+
+  const tables = new Map<string, string>();
+  for (const name of names) {
+    const entry = entries.get(name);
+    if (!entry) continue;
+    if (entry.compressedSize > MAX_TABLE_BYTES) {
+      throw new Error(`pubinfo table ${name} too large`);
+    }
+    tables.set(
+      name,
+      new TextDecoder().decode(await readEntryBytes(fetchImpl, url, entry)),
+    );
+  }
+  return tables;
 };
