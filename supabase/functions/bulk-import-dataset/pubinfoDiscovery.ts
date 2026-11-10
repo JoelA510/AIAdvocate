@@ -5,15 +5,22 @@
 // since the last run is scored with the topic phrases, and a bill that passes
 // the same mention threshold as search verification is admitted. LegiScan is
 // needed for one thing only: bills.id is LegiScan's bill_id, so admitted bills
-// wait in `awaiting` until a single getMasterList call resolves their ids
+// wait in `awaiting` until a getMasterList call resolves their ids
 // (docs/plans/2026-11-10-pubinfo-primary-plan.md, decision A).
 //
-// The run is a background task with injected dependencies so it can be tested
-// without the archive, the database or LegiScan.
+// Two halves, both with injected dependencies so they can be tested without
+// the archive, the database or LegiScan:
+//   - runPubinfoDiscovery: background scoring. Makes no LegiScan call.
+//   - applyResolvedIds: the foreground half. The request handler makes the
+//     getMasterList call itself, in sequence with its other LegiScan calls
+//     and sharing the response with the pinned-bill lookup, then hands the
+//     matches here.
 
 import type { MasterListMatch } from "./discovery.ts";
 
-export type PendingCandidate = { bill: string; date: string };
+// `version` identifies the bill version ("YYYY-MM-DD#<version_num>"): two
+// versions can share an action date.
+export type PendingCandidate = { bill: string; date: string; version: string };
 export type AwaitingBill = {
   bill: string;
   number: string;
@@ -35,11 +42,16 @@ export type PubinfoDiscoveryStats = {
   blocked: boolean;
   stopped_for_deadline: boolean;
   awaiting: number;
-  lookup: "not_needed" | "called" | "skipped";
-  lookup_skipped_reason: string | null;
+  expired: number;
+  errors: string[];
+};
+
+export type ResolutionStats = {
+  at: string;
+  requested: number;
   inserted: number;
-  not_found: number;
   excluded: number;
+  not_found: number;
   expired: number;
   errors: string[];
 };
@@ -51,9 +63,10 @@ export type PubinfoDiscoveryState = {
   scanned_through: string | null;
   pending: PendingCandidate[];
   awaiting: AwaitingBill[];
-  // bill -> version date last scored, for the overlap window only.
+  // bill -> version last scored, for the overlap window only.
   scored: Record<string, string>;
   last_run: PubinfoDiscoveryStats | null;
+  last_resolution: ResolutionStats | null;
 };
 
 export const emptyDiscoveryState = (): PubinfoDiscoveryState => ({
@@ -62,6 +75,7 @@ export const emptyDiscoveryState = (): PubinfoDiscoveryState => ({
   awaiting: [],
   scored: {},
   last_run: null,
+  last_resolution: null,
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -89,14 +103,18 @@ export const billNumberFromPubinfoId = (
   return /^[A-Z]+\d+$/.test(number) ? number : null;
 };
 
+const versionDate = (version: string): string => version.slice(0, 10);
+
 /**
- * Adds bill versions newer than the state has considered to `pending`.
- * Skips tracked bills, bills already awaiting an id, special-session bills
- * and versions already scored. Returns how many candidates are new.
+ * Adds bill versions newer than the state has considered to the back of
+ * `pending`. Skips tracked bills, bills already awaiting an id,
+ * special-session bills and versions already scored. `latestVersionByBill`
+ * maps a pubinfo bill id to "YYYY-MM-DD#<version_num>". Returns how many
+ * candidates are new.
  */
 export const planCandidates = (
   state: PubinfoDiscoveryState,
-  latestDateByBill: ReadonlyMap<string, string>,
+  latestVersionByBill: ReadonlyMap<string, string>,
   tracked: ReadonlySet<string>,
   session: { yearStart: number; yearEnd: number },
   options: { today: string; lookbackDays: number },
@@ -107,9 +125,10 @@ export const planCandidates = (
   const awaiting = new Set(state.awaiting.map((a) => a.bill));
   const pendingByBill = new Map(state.pending.map((p) => [p.bill, p]));
 
-  let added = 0;
+  const fresh: PendingCandidate[] = [];
   let maxDate = state.scanned_through ?? floor;
-  for (const [bill, date] of latestDateByBill) {
+  for (const [bill, version] of latestVersionByBill) {
+    const date = versionDate(version);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
     // A date in the future is a data error; do not let it move the cursor.
     if (date > options.today) continue;
@@ -121,39 +140,35 @@ export const planCandidates = (
       continue;
     }
     if (tracked.has(bill) || awaiting.has(bill)) continue;
-    if (state.scored[bill] === date) continue;
+    if (state.scored[bill] === version) continue;
     const queued = pendingByBill.get(bill);
     if (queued) {
-      // Amended again while queued: score the newer version.
-      if (queued.date !== date) queued.date = date;
+      // Amended again while queued: score the newer version, in place.
+      queued.date = date;
+      queued.version = version;
       continue;
     }
-    const candidate = { bill, date };
-    state.pending.push(candidate);
-    pendingByBill.set(bill, candidate);
-    added += 1;
+    fresh.push({ bill, date, version });
   }
 
-  state.scanned_through = maxDate;
-  // Oldest first, bounded.
-  state.pending.sort((a, b) =>
+  // New candidates join the back, oldest first among themselves. The existing
+  // order is kept: runPubinfoDiscovery moves unreadable candidates behind the
+  // rest, and re-sorting here would put them back in front every run.
+  fresh.sort((a, b) =>
     a.date.localeCompare(b.date) || a.bill.localeCompare(b.bill)
   );
+  state.pending.push(...fresh);
   if (state.pending.length > MAX_PENDING) {
     state.pending = state.pending.slice(-MAX_PENDING);
   }
+  state.scanned_through = maxDate;
   // Keep the scored memory to the window it is needed for.
   const keepFrom = addDays(maxDate, -OVERLAP_DAYS);
-  for (const [bill, date] of Object.entries(state.scored)) {
-    if (date < keepFrom) delete state.scored[bill];
+  for (const [bill, version] of Object.entries(state.scored)) {
+    if (versionDate(version) < keepFrom) delete state.scored[bill];
   }
-  return added;
+  return fresh.length;
 };
-
-export type ResolveResult =
-  | { status: "ok"; matches: MasterListMatch[] }
-  | { status: "skipped"; reason: string }
-  | { status: "aborted"; reason: string };
 
 export type DiscoveredRow = {
   bill: string;
@@ -165,21 +180,26 @@ export type PubinfoDiscoveryDeps = {
   saveState: (state: PubinfoDiscoveryState) => Promise<void>;
   /** pubinfo ids of every bill already in public.bills. */
   trackedPubinfoIds: () => Promise<Set<string>>;
-  /** Latest version date per bill, plus a label for the archive read. */
-  loadVersionDates: () => Promise<
-    { dates: ReadonlyMap<string, string>; archive: string }
+  /**
+   * Latest version ("YYYY-MM-DD#<version_num>") per bill, plus a label for
+   * the archive read.
+   */
+  loadVersions: () => Promise<
+    { versions: ReadonlyMap<string, string>; archive: string }
   >;
   /**
    * Topic mentions in the bill's latest text; null when the archive has no
    * text for it yet. Throws ChallengedError on a Cloudflare challenge.
    */
   countMentions: (bill: string) => Promise<number | null>;
-  /** One LegiScan getMasterList lookup for these bill numbers. */
-  resolveIds: (numbers: string[]) => Promise<ResolveResult>;
+  now: () => number;
+};
+
+export type ResolutionDeps = {
+  trackedPubinfoIds: () => Promise<Set<string>>;
   isExcluded: (title: string | null) => boolean;
   /** Insert-only; returns the pubinfo ids actually inserted. */
   insertBills: (rows: DiscoveredRow[]) => Promise<string[]>;
-  onInserted: (count: number) => Promise<void>;
   now: () => number;
 };
 
@@ -192,9 +212,6 @@ export type PubinfoDiscoveryOptions = {
   perRun: number;
   lookbackDays: number;
   deadlineAt: number;
-  // False when LegiScan already failed in this invocation: scoring still
-  // runs, the id lookup waits for a later run.
-  legiscanAllowed: boolean;
 };
 
 const DEADLINE_GUARD_MS = 5_000;
@@ -219,11 +236,6 @@ export const runPubinfoDiscovery = async (
     blocked: false,
     stopped_for_deadline: false,
     awaiting: 0,
-    lookup: "not_needed",
-    lookup_skipped_reason: null,
-    inserted: 0,
-    not_found: 0,
-    excluded: 0,
     expired: 0,
     errors: [],
   };
@@ -237,22 +249,25 @@ export const runPubinfoDiscovery = async (
   stats.pending_before = state.pending.length;
 
   try {
-    let tracked = await deps.trackedPubinfoIds();
+    const tracked = await deps.trackedPubinfoIds();
 
     // 1. New versions since the last run.
     try {
-      const { dates, archive } = await deps.loadVersionDates();
+      const { versions, archive } = await deps.loadVersions();
       stats.archive = archive;
-      stats.new_candidates = planCandidates(state, dates, tracked, options, {
-        today,
-        lookbackDays: options.lookbackDays,
-      });
+      stats.new_candidates = planCandidates(
+        state,
+        versions,
+        tracked,
+        options,
+        { today, lookbackDays: options.lookbackDays },
+      );
     } catch (error) {
       if (error instanceof ChallengedError) throw error;
       pushError(`pubinfo index unavailable: ${message(error)}`);
     }
 
-    // 2. Score queued candidates, oldest first.
+    // 2. Score queued candidates in queue order.
     const still: PendingCandidate[] = [];
     let index = 0;
     for (; index < state.pending.length; index += 1) {
@@ -288,7 +303,7 @@ export const runPubinfoDiscovery = async (
       }
 
       stats.scored += 1;
-      state.scored[candidate.bill] = candidate.date;
+      state.scored[candidate.bill] = candidate.version;
       const number = billNumberFromPubinfoId(
         candidate.bill,
         options.yearStart,
@@ -309,79 +324,8 @@ export const runPubinfoDiscovery = async (
     // Unreadable candidates go to the back so they cannot block the queue.
     state.pending = [...state.pending.slice(index), ...still];
 
-    // 3. Resolve LegiScan ids for admitted bills and insert them.
+    // Admitted bills that reached public.bills another way are done.
     state.awaiting = state.awaiting.filter((a) => !tracked.has(a.bill));
-    if (state.awaiting.length > 0) {
-      if (!options.legiscanAllowed) {
-        stats.lookup = "skipped";
-        stats.lookup_skipped_reason = "legiscan_unavailable_this_run";
-      } else if (deps.now() >= options.deadlineAt - DEADLINE_GUARD_MS) {
-        stats.lookup = "skipped";
-        stats.lookup_skipped_reason = "deadline";
-      } else {
-        const result = await deps.resolveIds(
-          state.awaiting.map((a) => a.number),
-        );
-        if (result.status !== "ok") {
-          stats.lookup = "skipped";
-          stats.lookup_skipped_reason = result.reason;
-          if (result.status === "aborted") pushError(result.reason);
-        } else {
-          stats.lookup = "called";
-          const byNumber = new Map(result.matches.map((m) => [m.number, m]));
-          const rows: DiscoveredRow[] = [];
-          const excluded = new Set<string>();
-          for (const waiting of state.awaiting) {
-            const match = byNumber.get(waiting.number);
-            if (!match) continue;
-            if (deps.isExcluded(match.title)) {
-              excluded.add(waiting.bill);
-              continue;
-            }
-            rows.push({ bill: waiting.bill, match });
-          }
-          stats.excluded = excluded.size;
-
-          let inserted: string[] = [];
-          if (rows.length > 0) {
-            try {
-              inserted = await deps.insertBills(rows);
-            } catch (error) {
-              pushError(`insert: ${message(error)}`);
-            }
-          }
-          stats.inserted = inserted.length;
-          // Re-read rather than trust the insert result: a row that already
-          // existed is not returned by an insert-only upsert, and must leave
-          // the list too.
-          tracked = await deps.trackedPubinfoIds();
-          state.awaiting = state.awaiting.filter((a) =>
-            !tracked.has(a.bill) && !excluded.has(a.bill)
-          );
-          stats.not_found = state.awaiting.length;
-          if (inserted.length > 0) {
-            try {
-              await deps.onInserted(inserted.length);
-            } catch (error) {
-              pushError(`enqueue: ${message(error)}`);
-            }
-          }
-        }
-      }
-    }
-
-    const oldest = addDays(today, -AWAITING_MAX_AGE_DAYS);
-    const before = state.awaiting.length;
-    state.awaiting = state.awaiting.filter((a) => a.since >= oldest);
-    if (state.awaiting.length < before) {
-      stats.expired += before - state.awaiting.length;
-      pushError(
-        `${
-          before - state.awaiting.length
-        } admitted bill(s) dropped: LegiScan ` +
-          `did not list them within ${AWAITING_MAX_AGE_DAYS} days`,
-      );
-    }
   } catch (error) {
     if (error instanceof ChallengedError) {
       stats.blocked = true;
@@ -396,5 +340,84 @@ export const runPubinfoDiscovery = async (
   stats.finished_at = new Date(deps.now()).toISOString();
   state.last_run = stats;
   await deps.saveState(state);
+  return stats;
+};
+
+/**
+ * The bill numbers still waiting for a LegiScan id. The request handler adds
+ * them to its getMasterList lookup.
+ */
+export const awaitingNumbers = (state: PubinfoDiscoveryState): string[] =>
+  Array.from(new Set(state.awaiting.map((a) => a.number)));
+
+/**
+ * Foreground half: given the master-list matches for the awaiting numbers,
+ * insert the bills and update `state.awaiting` in place. Pass `matches: null`
+ * when no lookup was made this run (nothing is inserted, but bills that have
+ * waited too long still expire). The caller saves the state.
+ */
+export const applyResolvedIds = async (
+  state: PubinfoDiscoveryState,
+  matches: MasterListMatch[] | null,
+  deps: ResolutionDeps,
+): Promise<ResolutionStats> => {
+  const today = isoDay(deps.now());
+  const stats: ResolutionStats = {
+    at: new Date(deps.now()).toISOString(),
+    requested: state.awaiting.length,
+    inserted: 0,
+    excluded: 0,
+    not_found: 0,
+    expired: 0,
+    errors: [],
+  };
+  const message = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);
+
+  if (matches !== null && state.awaiting.length > 0) {
+    let tracked = await deps.trackedPubinfoIds();
+    const byNumber = new Map(matches.map((m) => [m.number, m]));
+    const rows: DiscoveredRow[] = [];
+    const excluded = new Set<string>();
+    for (const waiting of state.awaiting) {
+      if (tracked.has(waiting.bill)) continue;
+      const match = byNumber.get(waiting.number);
+      if (!match) continue;
+      if (deps.isExcluded(match.title)) {
+        excluded.add(waiting.bill);
+        continue;
+      }
+      rows.push({ bill: waiting.bill, match });
+    }
+    stats.excluded = excluded.size;
+
+    if (rows.length > 0) {
+      try {
+        stats.inserted = (await deps.insertBills(rows)).length;
+      } catch (error) {
+        stats.errors.push(`insert: ${message(error)}`);
+      }
+      // Re-read rather than trust the insert result: a row that already
+      // existed is not returned by an insert-only upsert, and must leave the
+      // list too.
+      tracked = await deps.trackedPubinfoIds();
+    }
+    state.awaiting = state.awaiting.filter((a) =>
+      !tracked.has(a.bill) && !excluded.has(a.bill)
+    );
+    stats.not_found = state.awaiting.length;
+  }
+
+  const oldest = addDays(today, -AWAITING_MAX_AGE_DAYS);
+  const before = state.awaiting.length;
+  state.awaiting = state.awaiting.filter((a) => a.since >= oldest);
+  stats.expired = before - state.awaiting.length;
+  if (stats.expired > 0) {
+    stats.errors.push(
+      `${stats.expired} admitted bill(s) dropped: LegiScan did not list ` +
+        `them within ${AWAITING_MAX_AGE_DAYS} days`,
+    );
+  }
+  state.last_resolution = stats;
   return stats;
 };

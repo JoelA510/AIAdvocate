@@ -175,16 +175,18 @@ pubinfo archive from an Edge Function.
   background task scores every bill version published since its last run
   (`bulk-import-dataset/pubinfoDiscovery.ts`) with the same phrases and
   mention threshold as search verification. Tracked bills, special-session
-  bills and versions already scored are skipped; a version is re-examined for
-  5 days after its action date because it can reach the archive late. An
-  admitted bill waits in `awaiting` until one `getMasterList` call resolves its
-  LegiScan `bill_id` (`bills.id`); that is the only LegiScan call discovery
-  makes, at most once a run, through the same gate, budget and cooldown as the
-  pinned-bill lookup, and never after a LegiScan error earlier in the run.
-  State and the last run's stats are on the
-  `pubinfo_discovery:<state>:<session>` row of `ingestion_cursors`. It runs
-  after search verification in the same task, on one paced fetch, so requests
-  to the Legislature's host stay sequential and ≥ 250 ms apart.
+  bills and versions already scored are skipped; a version is identified by
+  its action date and version number, and is re-examined for 5 days after its
+  action date because it can reach the archive late. The background task makes
+  **no LegiScan call**. An admitted bill waits in `awaiting`; on the next run
+  its number joins the pinned-bill `getMasterList` lookup in the foreground
+  (one call for both, in sequence with the run's other LegiScan calls, same
+  gate, budget and cooldown), which resolves its LegiScan `bill_id`
+  (`bills.id`), and the bill is inserted. State and stats are on the
+  `pubinfo_discovery:<state>:<session>` row of `ingestion_cursors` (`last_run`
+  for scoring, `last_resolution` for the id lookup). Scoring runs after search
+  verification in the same task, on one paced fetch, so requests to the
+  Legislature's host stay sequential and ≥ 250 ms apart.
 
 ### Monitoring
 
@@ -239,7 +241,7 @@ env-configurable, so an incident can be contained without a redeploy:
 | `BULK_IMPORT_VERIFY_PER_RUN` | `30` | Search candidates verified against pubinfo text per run (background task) |
 | `BULK_IMPORT_VERIFY_MIN_MENTIONS` | `5` | Topic-phrase mentions in a bill's text needed to admit it |
 | `BULK_IMPORT_PINNED_BILLS` | unset | Bill numbers to ingest directly, e.g. `AB1705\|AB1568` (max 25) |
-| `LEGISCAN_MASTERLIST_COOLDOWN_SECONDS` | `72000` | Cooldown for the `getMasterList` lookup used by pinned bills and pubinfo discovery (never below 3600) |
+| `LEGISCAN_MASTERLIST_COOLDOWN_SECONDS` | `72000` | Cooldown for the one `getMasterList` lookup shared by pinned bills and pubinfo discovery (never below 3600) |
 | `BULK_IMPORT_PUBINFO_DISCOVERY` | `true` | Kill switch for discovery from the pubinfo archive |
 | `BULK_IMPORT_PUBINFO_DISCOVERY_PER_RUN` | `60` | Bill versions scored per run (background task) |
 | `BULK_IMPORT_PUBINFO_DISCOVERY_LOOKBACK_DAYS` | `7` | How far back the first run looks; later runs continue from where the last stopped |

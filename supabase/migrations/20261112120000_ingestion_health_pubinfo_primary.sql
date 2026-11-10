@@ -16,6 +16,8 @@
 --   pubinfo_discovery_stale   no pubinfo discovery run finished in 36 h
 --   pubinfo_discovery_blocked its last run hit a Cloudflare challenge
 --   pubinfo_discovery_no_index  its last run could not load the index
+--   pubinfo_discovery_no_progress  its last run tried bill versions and
+--                             could read none
 --   pubinfo_discovery_awaiting_ids  admitted bills waiting > 7 days for a
 --                             LegiScan id
 --
@@ -208,6 +210,17 @@ BEGIN
         'code', 'pubinfo_discovery_no_index',
         'detail', COALESCE(discovery_run -> 'errors' ->> 0,
           'the last discovery run could not load the pubinfo index'));
+    END IF;
+    -- The index loaded but no bill text could be read (e.g. a changed lob
+    -- layout): reads were attempted and none was scored.
+    IF NOT COALESCE((discovery_run ->> 'blocked')::boolean, false)
+       AND COALESCE((discovery_run ->> 'scored')::integer, 0) = 0
+       AND COALESCE((discovery_run ->> 'unavailable')::integer, 0) > 0 THEN
+      problems := problems || jsonb_build_object(
+        'code', 'pubinfo_discovery_no_progress',
+        'detail', format('last discovery run tried %s bill versions and scored none%s',
+          discovery_run ->> 'unavailable',
+          COALESCE(': ' || (discovery_run -> 'errors' ->> 0), '')));
     END IF;
   END IF;
 

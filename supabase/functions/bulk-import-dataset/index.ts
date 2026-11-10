@@ -21,12 +21,14 @@ import {
   readBillText,
 } from "../_shared/pubinfo.ts";
 import {
+  applyResolvedIds,
+  awaitingNumbers,
   ChallengedError,
   type DiscoveredRow,
   emptyDiscoveryState,
   type PubinfoDiscoveryState,
   type PubinfoDiscoveryStats,
-  type ResolveResult,
+  type ResolutionStats,
   runPubinfoDiscovery,
 } from "./pubinfoDiscovery.ts";
 import {
@@ -34,6 +36,7 @@ import {
   type CallPacer,
   countTopicMentions,
   createCallPacer,
+  type MasterListMatch,
   matchPinnedFromMasterList,
   orderPhrasesByLastSearched,
   pacerCanCall,
@@ -1015,6 +1018,9 @@ type PinnedBillsStats = {
   inserted: Array<{ id: number; bill_number: string; title: string }>;
   not_found: string[];
   errors: string[];
+  // Master-list entries for `alsoResolve` (bills admitted by pubinfo
+  // discovery); null when no lookup was made this run.
+  also_resolved: MasterListMatch[] | null;
 };
 
 /**
@@ -1038,12 +1044,22 @@ const resolvePinnedBills = async (
     pacer: CallPacer;
     reserveCalls: number;
     legiscanCalls: LegiScanReservation[];
+    // Bill numbers admitted by pubinfo discovery that still need a LegiScan
+    // id. They ride on the same getMasterList call, so the lookup's cooldown
+    // can never starve them, and the call stays in this function's sequence
+    // of LegiScan requests. They are returned, not inserted, here.
+    alsoResolve: string[];
   },
 ): Promise<PinnedBillsStats | { enabled: false }> => {
   const { valid, invalid } = parsePinnedBillNumbers(
     Deno.env.get("BULK_IMPORT_PINNED_BILLS"),
   );
-  if (valid.length === 0 && invalid.length === 0) return { enabled: false };
+  const alsoResolve = options.dryRun ? [] : options.alsoResolve;
+  if (
+    valid.length === 0 && invalid.length === 0 && alsoResolve.length === 0
+  ) {
+    return { enabled: false };
+  }
 
   const stats: PinnedBillsStats = {
     enabled: true,
@@ -1060,15 +1076,18 @@ const resolvePinnedBills = async (
     inserted: [],
     not_found: [],
     errors: [],
+    also_resolved: null,
   };
-  if (valid.length === 0) return stats;
+  if (valid.length === 0 && alsoResolve.length === 0) return stats;
 
   // Present means present in *this* session: a same-numbered bill from an
   // earlier session must not satisfy the pin.
-  const { data: existing, error: existingError } = await supabaseAdmin
-    .from("bills")
-    .select("bill_number, state_link")
-    .in("bill_number", valid);
+  const { data: existing, error: existingError } = valid.length > 0
+    ? await supabaseAdmin
+      .from("bills")
+      .select("bill_number, state_link")
+      .in("bill_number", valid)
+    : { data: [], error: null };
   if (existingError) throw existingError;
 
   const present = new Set<string>();
@@ -1091,7 +1110,7 @@ const resolvePinnedBills = async (
   }
   stats.already_present = valid.filter((number) => present.has(number));
   stats.missing = valid.filter((number) => !present.has(number));
-  if (stats.missing.length === 0) return stats;
+  if (stats.missing.length === 0 && alsoResolve.length === 0) return stats;
 
   // A dry run must not spend the lookup: the reservation cooldown would then
   // block the real run that follows it.
@@ -1145,6 +1164,10 @@ const resolvePinnedBills = async (
     return stats;
   }
 
+  stats.also_resolved = matchPinnedFromMasterList(
+    json.masterlist,
+    alsoResolve,
+  );
   const matches = matchPinnedFromMasterList(json.masterlist, stats.missing);
   const found = new Set(matches.map((match) => match.number));
   stats.not_found = stats.missing.filter((number) => !found.has(number));
@@ -1714,178 +1737,85 @@ const getPubinfoDiscoveryLookbackDays = (): number =>
 const pubinfoDiscoveryKey = (state: string, sessionId: number): string =>
   `pubinfo_discovery:${state.toLowerCase()}:${sessionId}`;
 
-/**
- * One gated getMasterList call resolving LegiScan bill ids for bill numbers
- * admitted by pubinfo discovery. Same guardrails as the pinned-bill lookup:
- * invocation call budget, reservation with cooldown, and no further LegiScan
- * traffic after an API-level error.
- */
-const resolveIdsFromMasterList = async (
+const loadDiscoveryState = async (
   supabaseAdmin: SupabaseAdminClient,
-  legiscanApiKey: string,
-  options: {
-    state: string;
-    sessionId: number;
-    pacer: CallPacer;
-    numbers: string[];
-    deadlineAt: number;
-  },
-): Promise<ResolveResult> => {
-  if (!pacerCanCall(options.pacer)) {
-    return { status: "skipped", reason: "invocation_call_budget_spent" };
-  }
-  let reservation: LegiScanReservation;
-  try {
-    reservation = await reserveLegiScanCall(
-      supabaseAdmin,
-      "getMasterList",
-      `${options.state}:${options.sessionId}`,
-      getMasterListCooldownSeconds(),
-      options.deadlineAt,
-    );
-  } catch (error) {
-    if (!(error instanceof LegiScanGateError)) throw error;
-    return { status: "aborted", reason: `gate_unavailable: ${error.message}` };
-  }
-  if (!reservation.allowed) {
-    return {
-      status: "skipped",
-      reason: reservation.reason ?? "reservation_denied",
-    };
-  }
-
-  const response = await pacedLegiScanFetch(
-    options.pacer,
-    `https://api.legiscan.com/?key=${legiscanApiKey}` +
-      `&op=getMasterList&id=${options.sessionId}`,
-  );
-  const json = await response.json().catch(() => null);
-  if (json?.status !== "OK" || !json?.masterlist) {
-    return {
-      status: "aborted",
-      reason: toNullableString(json?.alert?.message) ??
-        `LegiScan getMasterList returned ${json?.status ?? response.status}`,
-    };
-  }
+  key: string,
+): Promise<PubinfoDiscoveryState> => {
+  const { data, error } = await supabaseAdmin
+    .from("ingestion_cursors")
+    .select("cursor")
+    .eq("key", key)
+    .maybeSingle();
+  if (error) throw error;
+  const cursor = (data?.cursor ?? {}) as Partial<PubinfoDiscoveryState>;
   return {
-    status: "ok",
-    matches: matchPinnedFromMasterList(json.masterlist, options.numbers),
+    ...emptyDiscoveryState(),
+    scanned_through: typeof cursor.scanned_through === "string"
+      ? cursor.scanned_through
+      : null,
+    pending: Array.isArray(cursor.pending) ? cursor.pending : [],
+    awaiting: Array.isArray(cursor.awaiting) ? cursor.awaiting : [],
+    scored: cursor.scored && typeof cursor.scored === "object"
+      ? cursor.scored
+      : {},
+    last_run: cursor.last_run ?? null,
+    last_resolution: cursor.last_resolution ?? null,
   };
 };
 
-/**
- * Background pubinfo discovery (see pubinfoDiscovery.ts): score new bill
- * versions from the archive, then resolve ids for admitted bills and insert
- * them. Its stats are stored on its cursor row as `last_run`.
- */
-const runPubinfoDiscoveryTask = async (
+const saveDiscoveryState = async (
   supabaseAdmin: SupabaseAdminClient,
-  legiscanApiKey: string,
-  options: {
-    state: string;
-    sessionId: number;
-    yearStart: number;
-    yearEnd: number;
-    pacer: CallPacer;
-    legiscanAllowed: boolean;
-    deadlineAt: number;
-    pubinfoFetch: FetchLike;
-  },
-): Promise<PubinfoDiscoveryStats> => {
-  const key = pubinfoDiscoveryKey(options.state, options.sessionId);
-  const verifyRegex = buildVerifyRegex(getSearchPhrases());
-  let pubinfo: PubinfoIndex | null = null;
+  key: string,
+  value: PubinfoDiscoveryState,
+): Promise<void> => {
+  const { error } = await supabaseAdmin
+    .from("ingestion_cursors")
+    .upsert({
+      key,
+      cursor: value,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "key" });
+  if (error) throw error;
+};
 
-  return await runPubinfoDiscovery({
-    loadState: async () => {
-      const { data, error } = await supabaseAdmin
-        .from("ingestion_cursors")
-        .select("cursor")
-        .eq("key", key)
-        .maybeSingle();
-      if (error) throw error;
-      const cursor = (data?.cursor ?? {}) as Partial<PubinfoDiscoveryState>;
-      return {
-        ...emptyDiscoveryState(),
-        scanned_through: typeof cursor.scanned_through === "string"
-          ? cursor.scanned_through
-          : null,
-        pending: Array.isArray(cursor.pending) ? cursor.pending : [],
-        awaiting: Array.isArray(cursor.awaiting) ? cursor.awaiting : [],
-        scored: cursor.scored && typeof cursor.scored === "object"
-          ? cursor.scored
-          : {},
-      };
-    },
-    saveState: async (value) => {
-      const { error } = await supabaseAdmin
-        .from("ingestion_cursors")
-        .upsert({
-          key,
-          cursor: value,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: "key" });
-      if (error) throw error;
-    },
-    trackedPubinfoIds: async () => {
-      const tracked = new Set<string>();
-      for (let from = 0;; from += 1000) {
-        const { data, error } = await supabaseAdmin
-          .from("bills")
-          .select("state_link")
-          .order("id")
-          .range(from, from + 999);
-        if (error) throw error;
-        for (
-          const row of (data ?? []) as Array<{ state_link: string | null }>
-        ) {
-          const id = billIdFromStateLink(row.state_link);
-          if (id) tracked.add(id);
-        }
-        if (!data || data.length < 1000) break;
-      }
-      return tracked;
-    },
-    loadVersionDates: async () => {
-      try {
-        pubinfo = (await loadSessionPubinfoIndexCached(
-          ingestionCursorStore(supabaseAdmin),
-          options.yearStart,
-          options.pubinfoFetch,
-        )).index;
-      } catch (error) {
-        if (error instanceof PubinfoFetchError && error.challenged) {
-          throw new ChallengedError(error.message);
-        }
-        throw error;
-      }
-      return {
-        dates: pubinfo.latestDateByBill,
-        archive: `${
-          pubinfo.url.slice(pubinfo.url.lastIndexOf("/") + 1)
-        } ${pubinfo.version}`,
-      };
-    },
-    countMentions: async (bill) => {
-      if (!pubinfo) return null;
-      try {
-        const text = await readBillText(pubinfo, bill, options.pubinfoFetch);
-        return text === null ? null : countTopicMentions(text, verifyRegex);
-      } catch (error) {
-        if (error instanceof PubinfoFetchError && error.challenged) {
-          throw new ChallengedError(error.message);
-        }
-        throw error;
-      }
-    },
-    resolveIds: (numbers) =>
-      resolveIdsFromMasterList(supabaseAdmin, legiscanApiKey, {
-        state: options.state,
-        sessionId: options.sessionId,
-        pacer: options.pacer,
-        numbers,
-        deadlineAt: options.deadlineAt,
-      }),
+/** pubinfo ids of every bill in public.bills. */
+const loadTrackedPubinfoIds = async (
+  supabaseAdmin: SupabaseAdminClient,
+): Promise<Set<string>> => {
+  const tracked = new Set<string>();
+  for (let from = 0;; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("bills")
+      .select("state_link")
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw error;
+    for (const row of (data ?? []) as Array<{ state_link: string | null }>) {
+      const id = billIdFromStateLink(row.state_link);
+      if (id) tracked.add(id);
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return tracked;
+};
+
+/**
+ * Foreground half of pubinfo discovery: insert the admitted bills whose
+ * LegiScan ids this run's getMasterList lookup returned (`matches`, or null
+ * when no lookup was made), and update the waiting list.
+ */
+const resolveAwaitingBills = async (
+  supabaseAdmin: SupabaseAdminClient,
+  options: {
+    key: string;
+    state: PubinfoDiscoveryState;
+    matches: MasterListMatch[] | null;
+    yearStart: number | null;
+    yearEnd: number | null;
+  },
+): Promise<ResolutionStats> => {
+  const stats = await applyResolvedIds(options.state, options.matches, {
+    trackedPubinfoIds: () => loadTrackedPubinfoIds(supabaseAdmin),
     isExcluded: (title) => isExcludedVehicle(title),
     insertBills: async (rows: DiscoveredRow[]) => {
       const seeds: BillSeedRow[] = rows.map(({ match }) => ({
@@ -1912,15 +1842,70 @@ const runPubinfoDiscoveryTask = async (
       const insertedIds = new Set(
         ((data ?? []) as Array<{ id: number }>).map((row) => row.id),
       );
-      return rows.filter((row) => insertedIds.has(row.match.bill_id)).map((
-        row,
-      ) => row.bill);
+      return rows
+        .filter((row) => insertedIds.has(row.match.bill_id))
+        .map((row) => row.bill);
     },
-    onInserted: async (count) => {
-      await enqueueSummarySyncs(
-        supabaseAdmin,
-        getSummarySyncInvocationCount(count),
-      );
+    now: () => Date.now(),
+  });
+  await saveDiscoveryState(supabaseAdmin, options.key, options.state);
+  return stats;
+};
+
+/**
+ * Background half of pubinfo discovery (see pubinfoDiscovery.ts): score new
+ * bill versions from the archive and queue the ones that pass for an id
+ * lookup. Makes no LegiScan call. Its stats are stored on its cursor row as
+ * `last_run`.
+ */
+const runPubinfoDiscoveryTask = async (
+  supabaseAdmin: SupabaseAdminClient,
+  options: {
+    key: string;
+    yearStart: number;
+    yearEnd: number;
+    deadlineAt: number;
+    pubinfoFetch: FetchLike;
+  },
+): Promise<PubinfoDiscoveryStats> => {
+  const verifyRegex = buildVerifyRegex(getSearchPhrases());
+  let pubinfo: PubinfoIndex | null = null;
+
+  return await runPubinfoDiscovery({
+    loadState: () => loadDiscoveryState(supabaseAdmin, options.key),
+    saveState: (value) => saveDiscoveryState(supabaseAdmin, options.key, value),
+    trackedPubinfoIds: () => loadTrackedPubinfoIds(supabaseAdmin),
+    loadVersions: async () => {
+      try {
+        pubinfo = (await loadSessionPubinfoIndexCached(
+          ingestionCursorStore(supabaseAdmin),
+          options.yearStart,
+          options.pubinfoFetch,
+        )).index;
+      } catch (error) {
+        if (error instanceof PubinfoFetchError && error.challenged) {
+          throw new ChallengedError(error.message);
+        }
+        throw error;
+      }
+      return {
+        versions: pubinfo.latestVersionByBill,
+        archive: `${
+          pubinfo.url.slice(pubinfo.url.lastIndexOf("/") + 1)
+        } ${pubinfo.version}`,
+      };
+    },
+    countMentions: async (bill) => {
+      if (!pubinfo) return null;
+      try {
+        const text = await readBillText(pubinfo, bill, options.pubinfoFetch);
+        return text === null ? null : countTopicMentions(text, verifyRegex);
+      } catch (error) {
+        if (error instanceof PubinfoFetchError && error.challenged) {
+          throw new ChallengedError(error.message);
+        }
+        throw error;
+      }
     },
     now: () => Date.now(),
   }, {
@@ -1930,7 +1915,6 @@ const runPubinfoDiscoveryTask = async (
     perRun: getPubinfoDiscoveryPerRun(),
     lookbackDays: getPubinfoDiscoveryLookbackDays(),
     deadlineAt: options.deadlineAt,
-    legiscanAllowed: options.legiscanAllowed,
   });
 };
 
@@ -2069,6 +2053,22 @@ serve(async (req) => {
     const callsReservedForDataset =
       datasetCursorComplete || datasetPassDisabled || datasetTooLarge ? 0 : 1;
 
+    // Bills admitted by pubinfo discovery on an earlier run still need their
+    // LegiScan ids; their numbers join the pinned-bill getMasterList lookup.
+    const pubinfoDiscoveryActive = pubinfoDiscoveryEnabled() &&
+      !options.dry_run;
+    const discoveryKey = pubinfoDiscoveryKey(state, sessionId);
+    let discoveryState: PubinfoDiscoveryState | null = null;
+    if (pubinfoDiscoveryActive) {
+      try {
+        discoveryState = await loadDiscoveryState(supabaseAdmin, discoveryKey);
+      } catch (error) {
+        console.error("pubinfo discovery state unavailable", {
+          error: String(error),
+        });
+      }
+    }
+
     // Pinned bills go first so they get this invocation's call budget ahead of
     // the sweep.
     const pinnedBills = await resolvePinnedBills(
@@ -2083,8 +2083,31 @@ serve(async (req) => {
         pacer,
         reserveCalls: callsReservedForDataset,
         legiscanCalls,
+        alsoResolve: discoveryState ? awaitingNumbers(discoveryState) : [],
       },
     );
+
+    // Insert what the lookup resolved (and expire what has waited too long)
+    // before anything else can return: this is foreground work, so it is in
+    // sequence with every other LegiScan call of the invocation.
+    let pubinfoResolution: ResolutionStats | null = null;
+    if (discoveryState && discoveryState.awaiting.length > 0) {
+      try {
+        pubinfoResolution = await resolveAwaitingBills(supabaseAdmin, {
+          key: discoveryKey,
+          state: discoveryState,
+          matches: "also_resolved" in pinnedBills
+            ? pinnedBills.also_resolved
+            : null,
+          yearStart,
+          yearEnd,
+        });
+      } catch (error) {
+        console.error("pubinfo discovery resolution failed", {
+          error: String(error),
+        });
+      }
+    }
 
     if ("aborted" in pinnedBills && pinnedBills.aborted) {
       return jsonResponse({
@@ -2093,6 +2116,7 @@ serve(async (req) => {
           : "LegiScan returned an API error; stopped all LegiScan calls for this run.",
         session_id: sessionId,
         pinned_bills: pinnedBills,
+        pubinfo_resolution: pubinfoResolution,
         legiscan: {
           dataset_list_source: datasetListSource,
           calls: legiscanCalls,
@@ -2119,22 +2143,19 @@ serve(async (req) => {
     // After the response, in one background task so requests to the
     // Legislature's host stay sequential:
     //   1. queued search candidates are verified against pubinfo and inserted;
-    //   2. pubinfo discovery scores new bill versions and admits matches.
-    // Both enqueue sync-updated-bills for what they insert. Step 2 makes at
-    // most one LegiScan call (getMasterList), and none when the sweep already
-    // stopped on a LegiScan error or the gate.
+    //   2. pubinfo discovery scores new bill versions and queues matches for
+    //      the next run's id lookup.
+    // Neither makes a LegiScan call, so they run even when the sweep stopped
+    // on a LegiScan error or the gate, and never overlap the dataset pass's
+    // LegiScan requests.
     const verifySearchQueue = "verification" in searchDiscovery &&
       searchDiscovery.verification === "background";
-    const discoverFromPubinfo = pubinfoDiscoveryEnabled() && !options.dry_run;
-    if (verifySearchQueue || discoverFromPubinfo) {
+    if (verifySearchQueue || pubinfoDiscoveryActive) {
       if (yearStart === null || yearEnd === null) {
         console.warn("Background discovery skipped: session has no years");
       } else {
         const sessionYearStart = yearStart;
         const sessionYearEnd = yearEnd;
-        const legiscanAllowed = !("aborted" in searchDiscovery &&
-          (searchDiscovery.aborted === "legiscan_error" ||
-            searchDiscovery.aborted === "gate_unavailable"));
         scheduleBackground("background discovery", async () => {
           const backgroundStartedAt = Date.now();
           const pubinfoFetch = pacedFetch(fetch);
@@ -2149,21 +2170,14 @@ serve(async (req) => {
             });
             console.log("Search verification finished", result);
           }
-          if (discoverFromPubinfo) {
-            const result = await runPubinfoDiscoveryTask(
-              supabaseAdmin,
-              legiscanApiKey,
-              {
-                state,
-                sessionId,
-                yearStart: sessionYearStart,
-                yearEnd: sessionYearEnd,
-                pacer,
-                legiscanAllowed,
-                deadlineAt: backgroundStartedAt + BACKGROUND_TOTAL_BUDGET_MS,
-                pubinfoFetch,
-              },
-            );
+          if (pubinfoDiscoveryActive) {
+            const result = await runPubinfoDiscoveryTask(supabaseAdmin, {
+              key: discoveryKey,
+              yearStart: sessionYearStart,
+              yearEnd: sessionYearEnd,
+              deadlineAt: backgroundStartedAt + BACKGROUND_TOTAL_BUDGET_MS,
+              pubinfoFetch,
+            });
             console.log("pubinfo discovery finished", result);
           }
         });
@@ -2173,9 +2187,9 @@ serve(async (req) => {
     // Pinned bills carry metadata only; `sync-updated-bills` fetches their text
     // and summaries. Enqueue here so they still drive the downstream pipeline on
     // the (now common) runs where the dataset pass is skipped.
-    const discoveredCount = "inserted" in pinnedBills
-      ? pinnedBills.inserted.length
-      : 0;
+    const discoveredCount =
+      ("inserted" in pinnedBills ? pinnedBills.inserted.length : 0) +
+      (pubinfoResolution?.inserted ?? 0);
     const discoverySummarySync = discoveredCount > 0
       ? await enqueueSummarySyncs(
         supabaseAdmin,
@@ -2187,6 +2201,7 @@ serve(async (req) => {
       jsonResponse({
         ...body,
         pinned_bills: pinnedBills,
+        pubinfo_resolution: pubinfoResolution,
         search_discovery: searchDiscovery,
         discovery_summary_sync: discoverySummarySync,
       }, status);

@@ -17,6 +17,7 @@ select public.ingestion_health();
 -- Discovery state after a run: last_run stats, queue sizes, bills waiting
 -- for a LegiScan id.
 select cursor->'last_run' as last_run,
+       cursor->'last_resolution' as last_resolution,
        cursor->>'scanned_through' as scanned_through,
        jsonb_array_length(coalesce(cursor->'pending', '[]'::jsonb)) as pending,
        cursor->'awaiting' as awaiting,
