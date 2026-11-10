@@ -44,6 +44,8 @@ export type PubinfoIndex = {
   version: string;
   // bill id as in leginfo URLs, e.g. "202520260AB1568" -> latest version's lob
   latestLobByBill: Map<string, string>;
+  // bill id -> action date (YYYY-MM-DD) of that latest version
+  latestDateByBill: Map<string, string>;
   entries: Map<string, ZipEntry>;
 };
 
@@ -153,7 +155,9 @@ const unquote = (value: string): string =>
  * version is the newest date; version numbers count down (99 = introduced),
  * so a same-day tie goes to the lower number.
  */
-export const parseBillVersionTable = (text: string): Map<string, string> => {
+export const parseBillVersions = (
+  text: string,
+): Map<string, { lob: string; date: string }> => {
   const latest = new Map<
     string,
     { date: string; versionNum: number; lob: string }
@@ -174,8 +178,16 @@ export const parseBillVersionTable = (text: string): Map<string, string> => {
       latest.set(billId, { date, versionNum, lob });
     }
   }
-  return new Map(Array.from(latest, ([id, v]) => [id, v.lob]));
+  return new Map(
+    Array.from(
+      latest,
+      ([id, v]) => [id, { lob: v.lob, date: v.date.slice(0, 10) }],
+    ),
+  );
 };
+
+export const parseBillVersionTable = (text: string): Map<string, string> =>
+  new Map(Array.from(parseBillVersions(text), ([id, v]) => [id, v.lob]));
 
 /** CAML bill XML to plain text: tags and entities dropped, whitespace folded. */
 export const camlToText = (xml: string): string =>
@@ -229,7 +241,7 @@ export const isBotChallenge = (
 
 // --- I/O --------------------------------------------------------------------
 
-type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 // Per request. The largest read is the ~20 MB central directory.
 const PUBINFO_REQUEST_TIMEOUT_MS = 45_000;
@@ -402,10 +414,12 @@ const buildPubinfoIndex = async (
   const tableText = new TextDecoder().decode(
     await readEntryBytes(fetchImpl, url, indexEntry),
   );
+  const versions = parseBillVersions(tableText);
   return {
     url,
     version: archive.version,
-    latestLobByBill: parseBillVersionTable(tableText),
+    latestLobByBill: new Map(Array.from(versions, ([id, v]) => [id, v.lob])),
+    latestDateByBill: new Map(Array.from(versions, ([id, v]) => [id, v.date])),
     entries,
   };
 };
@@ -429,8 +443,8 @@ export const loadPubinfoIndex = async (
 
 type CachedIndex = {
   version: string;
-  // bill id -> [lob name, offset, compressed size, method]
-  bills: Record<string, [string, number, number, number]>;
+  // bill id -> [lob name, offset, compressed size, method, version date]
+  bills: Record<string, [string, number, number, number, string]>;
 };
 
 export const serializePubinfoIndex = (index: PubinfoIndex): CachedIndex => {
@@ -438,7 +452,13 @@ export const serializePubinfoIndex = (index: PubinfoIndex): CachedIndex => {
   for (const [billId, lob] of index.latestLobByBill) {
     const entry = index.entries.get(lob);
     if (!entry) continue;
-    bills[billId] = [lob, entry.offset, entry.compressedSize, entry.method];
+    bills[billId] = [
+      lob,
+      entry.offset,
+      entry.compressedSize,
+      entry.method,
+      index.latestDateByBill.get(billId) ?? "",
+    ];
   }
   return { version: index.version, bills };
 };
@@ -453,21 +473,26 @@ export const deserializePubinfoIndex = (
     return null;
   }
   const latestLobByBill = new Map<string, string>();
+  const latestDateByBill = new Map<string, string>();
   const entries = new Map<string, ZipEntry>();
+  // Rows written before version dates were cached have four fields; such a
+  // cache is treated as a miss so the dates are rebuilt once.
   for (const [billId, row] of Object.entries(value.bills ?? {})) {
-    if (!Array.isArray(row) || row.length !== 4) continue;
-    const [name, offset, compressedSize, method] = row;
+    if (!Array.isArray(row) || row.length !== 5) continue;
+    const [name, offset, compressedSize, method, date] = row;
     if (
       typeof name !== "string" || !BILL_VERSION_LOB.test(name) ||
-      ![offset, compressedSize, method].every(Number.isSafeInteger)
+      ![offset, compressedSize, method].every(Number.isSafeInteger) ||
+      typeof date !== "string"
     ) {
       continue;
     }
     latestLobByBill.set(billId, name);
+    latestDateByBill.set(billId, date);
     entries.set(name, { name, offset, compressedSize, method });
   }
   return latestLobByBill.size > 0
-    ? { url, version, latestLobByBill, entries }
+    ? { url, version, latestLobByBill, latestDateByBill, entries }
     : null;
 };
 

@@ -20,6 +20,7 @@ import {
   camlBillToHtml,
   ingestionCursorStore,
   loadSessionPubinfoIndexCached,
+  pacedFetch,
   type PubinfoIndex,
   readBillXml,
 } from "../_shared/pubinfo.ts";
@@ -1566,7 +1567,9 @@ serve(async (req) => {
     // Every pubinfo request's timeout is capped by what is left of the run, so
     // a slow archive host cannot carry the invocation past its ceiling and
     // strand leases (the same bound the leginfo scrape has).
-    const pubinfoFetch = (url: string, init?: RequestInit) => {
+    // pacedFetch spaces every request this run makes to the Legislature's
+    // host, including a bill's header and payload reads (policy section 5).
+    const pubinfoFetch = pacedFetch((url: string, init?: RequestInit) => {
       const msLeft = runDeadlineAt - Date.now();
       if (msLeft <= 0) {
         return Promise.reject(
@@ -1579,7 +1582,7 @@ serve(async (req) => {
           Math.max(1_000, Math.min(LEGINFO_FETCH_TIMEOUT_MS, msLeft)),
         ),
       });
-    };
+    });
     const pubinfoIndexFor = (year: number) => {
       let pending = pubinfoIndexes.get(year);
       if (!pending) {

@@ -114,7 +114,8 @@ fallback is to process a fixed slice of tracked bills per run.
    wrapper (migration + verification SQL); `sync-updated-bills` skips `getBill`
    when the bill already has status. Writes only source fields, never
    summaries (`AGENTS.md` §11).
-3. **Discovery from pubinfo.** Each day, score bill versions whose action date
+3. **Discovery from pubinfo.** *Implemented together with the phase 4 health
+   checks and the weekly `getSearch` cadence.* Each day, score bill versions whose action date
    is newer than a cursor with the existing `countTopicMentions` threshold.
    Depends on decision A.
 4. **LegiScan to fallback.** After a week of `legiscan_api_call_log` data:
