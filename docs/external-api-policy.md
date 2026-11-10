@@ -142,8 +142,15 @@ quota.
   challenged (206 to Supabase on 2026-11-09). The nightly
   `pubinfo_<session year>.zip` (~1.2 GB) supports HTTP range requests, so
   `supabase/functions/_shared/pubinfo.ts` reads one bill's latest text with a
-  few small requests after a once-per-run ~20 MB index load. Search
-  verification in `bulk-import-dataset` uses it.
+  few small requests. The ~20 MB index is built once per archive version and
+  cached as a ~330 KB slice in `ingestion_cursors` (`pubinfo_index:<file>`),
+  so parallel workers pay one HEAD request each. Search verification in
+  `bulk-import-dataset` and bill text in `sync-updated-bills` both use it.
+  Sync tries pubinfo first, then the leginfo scrape, then LegiScan
+  `getBillText`; LegiScan `getBill` is still called once for a bill that has
+  never had status metadata. Amendment marks are processing instructions whose
+  deleted text lives in the mark itself, so pubinfo text is the bill as
+  amended, without struck passages.
 
 Both are public government sites, not APIs — keep requests sequential and
 spaced (≥ 250 ms), send an identifying `User-Agent`, and never download a whole

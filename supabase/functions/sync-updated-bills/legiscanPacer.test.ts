@@ -7,6 +7,7 @@ import {
 import {
   createLegiScanPacer,
   legiScanBudgetLeft,
+  legiScanCallsFit,
   legiScanPairFits,
   legiScanWaitMs,
   POLICY_MAX_LEGISCAN_CALLS_PER_INVOCATION,
@@ -48,4 +49,11 @@ Deno.test("a bill starts only when getBill and getBillText both fit", () => {
   assert(legiScanBudgetLeft(pacer));
   recordLegiScanCall(pacer, 12_000);
   assertFalse(legiScanBudgetLeft(pacer));
+});
+
+Deno.test("a metadata-only getBill needs one slot, not a pair", () => {
+  const pacer = createLegiScanPacer(undefined, undefined);
+  for (let i = 0; i < 5; i += 1) recordLegiScanCall(pacer, i * 2000);
+  assert(legiScanCallsFit(pacer, 1));
+  assertFalse(legiScanCallsFit(pacer, 2));
 });

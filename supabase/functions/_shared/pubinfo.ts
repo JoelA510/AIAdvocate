@@ -39,6 +39,8 @@ export type ZipEntry = {
 
 export type PubinfoIndex = {
   url: string;
+  // content-length + Last-Modified of the archive the index was built from.
+  version: string;
   // bill id as in leginfo URLs, e.g. "202520260AB1568" -> latest version's lob
   latestLobByBill: Map<string, string>;
   entries: Map<string, ZipEntry>;
@@ -228,6 +230,9 @@ export const isBotChallenge = (
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+// Per request. The largest read is the ~20 MB central directory.
+const PUBINFO_REQUEST_TIMEOUT_MS = 45_000;
+
 const fetchRange = async (
   fetchImpl: FetchLike,
   url: string,
@@ -236,6 +241,7 @@ const fetchRange = async (
 ): Promise<Uint8Array> => {
   const response = await fetchImpl(url, {
     headers: { Range: `bytes=${start}-${end}`, "User-Agent": USER_AGENT },
+    signal: AbortSignal.timeout(PUBINFO_REQUEST_TIMEOUT_MS),
   });
   if (response.status !== 206) {
     const body = await response.text().catch(() => "");
@@ -300,14 +306,15 @@ const readEntryBytes = async (
   throw new Error(`unsupported zip method ${entry.method}`);
 };
 
-/** Steps 1-3: three range requests, ~21 MB for the 2025-26 session. */
-export const loadPubinfoIndex = async (
+/** The archive's size and version, from one HEAD request. */
+export const headPubinfoArchive = async (
   url: string,
   fetchImpl: FetchLike = fetch,
-): Promise<PubinfoIndex> => {
+): Promise<{ length: number; version: string }> => {
   const head = await fetchImpl(url, {
     method: "HEAD",
     headers: { "User-Agent": USER_AGENT },
+    signal: AbortSignal.timeout(PUBINFO_REQUEST_TIMEOUT_MS),
   });
   const length = Number(head.headers.get("content-length"));
   if (!head.ok || !Number.isSafeInteger(length) || length <= 0) {
@@ -321,7 +328,18 @@ export const loadPubinfoIndex = async (
       challenged,
     );
   }
+  return {
+    length,
+    version: `${length}:${head.headers.get("last-modified") ?? ""}`,
+  };
+};
 
+const buildPubinfoIndex = async (
+  url: string,
+  archive: { length: number; version: string },
+  fetchImpl: FetchLike,
+): Promise<PubinfoIndex> => {
+  const { length } = archive;
   const tailStart = Math.max(0, length - TAIL_BYTES);
   const tail = await fetchRange(fetchImpl, url, tailStart, length - 1);
   const cd = parseEndOfCentralDirectory(tail);
@@ -347,7 +365,208 @@ export const loadPubinfoIndex = async (
   const tableText = new TextDecoder().decode(
     await readEntryBytes(fetchImpl, url, indexEntry),
   );
-  return { url, latestLobByBill: parseBillVersionTable(tableText), entries };
+  return {
+    url,
+    version: archive.version,
+    latestLobByBill: parseBillVersionTable(tableText),
+    entries,
+  };
+};
+
+/** Steps 1-3: a HEAD plus three range requests, ~21 MB for 2025-26. */
+export const loadPubinfoIndex = async (
+  url: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<PubinfoIndex> =>
+  buildPubinfoIndex(url, await headPubinfoArchive(url, fetchImpl), fetchImpl);
+
+// --- shared index cache ------------------------------------------------------
+//
+// The daily refresh starts several sync-updated-bills workers at once, plus
+// bulk-import-dataset. Each building its own index would pull ~20 MB from the
+// Legislature's server per worker per run. Only the latest version of each
+// bill is needed (~5k bills, ~300 KB as JSON), so the first worker after the
+// nightly rebuild stores that slice, keyed by the archive's size and
+// Last-Modified, and everyone else pays one HEAD request. A stale cache is
+// still safe to read: readEntryBytes checks each entry's local header name.
+
+type CachedIndex = {
+  version: string;
+  // bill id -> [lob name, offset, compressed size, method]
+  bills: Record<string, [string, number, number, number]>;
+};
+
+export const serializePubinfoIndex = (index: PubinfoIndex): CachedIndex => {
+  const bills: CachedIndex["bills"] = {};
+  for (const [billId, lob] of index.latestLobByBill) {
+    const entry = index.entries.get(lob);
+    if (!entry) continue;
+    bills[billId] = [lob, entry.offset, entry.compressedSize, entry.method];
+  }
+  return { version: index.version, bills };
+};
+
+export const deserializePubinfoIndex = (
+  url: string,
+  cached: unknown,
+  version: string,
+): PubinfoIndex | null => {
+  const value = cached as Partial<CachedIndex> | null;
+  if (!value || value.version !== version || typeof value.bills !== "object") {
+    return null;
+  }
+  const latestLobByBill = new Map<string, string>();
+  const entries = new Map<string, ZipEntry>();
+  for (const [billId, row] of Object.entries(value.bills ?? {})) {
+    if (!Array.isArray(row) || row.length !== 4) continue;
+    const [name, offset, compressedSize, method] = row;
+    if (
+      typeof name !== "string" || !BILL_VERSION_LOB.test(name) ||
+      ![offset, compressedSize, method].every(Number.isSafeInteger)
+    ) {
+      continue;
+    }
+    latestLobByBill.set(billId, name);
+    entries.set(name, { name, offset, compressedSize, method });
+  }
+  return latestLobByBill.size > 0
+    ? { url, version, latestLobByBill, entries }
+    : null;
+};
+
+export type PubinfoCacheStore = {
+  get(key: string): Promise<unknown>;
+  set(key: string, value: unknown): Promise<void>;
+  // Build ownership, so one worker builds after a nightly rebuild while the
+  // others wait for its cache entry. tryLock must be atomic: true for exactly
+  // one caller until unlock or until the lock is older than ttlMs.
+  tryLock?(key: string, ttlMs: number): Promise<boolean>;
+  unlock?(key: string): Promise<void>;
+};
+
+/** ingestion_cursors-backed cache store for the service-role client. */
+export const ingestionCursorStore = (
+  // deno-lint-ignore no-explicit-any
+  supabaseAdmin: any,
+): PubinfoCacheStore => ({
+  async get(key) {
+    const { data, error } = await supabaseAdmin
+      .from("ingestion_cursors")
+      .select("cursor")
+      .eq("key", key)
+      .maybeSingle();
+    if (error) throw new Error(error.message ?? String(error));
+    return data?.cursor ?? null;
+  },
+  async set(key, value) {
+    const nowIso = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from("ingestion_cursors")
+      .upsert({ key, cursor: value, updated_at: nowIso }, {
+        onConflict: "key",
+      });
+    if (error) throw new Error(error.message ?? String(error));
+  },
+  // A lock is a row whose primary key is the lock key: the insert succeeds for
+  // exactly one caller. A lock older than ttlMs (a worker killed mid-build) is
+  // cleared first.
+  async tryLock(key, ttlMs) {
+    const now = Date.now();
+    await supabaseAdmin
+      .from("ingestion_cursors")
+      .delete()
+      .eq("key", key)
+      .lt("updated_at", new Date(now - ttlMs).toISOString());
+    const { error } = await supabaseAdmin
+      .from("ingestion_cursors")
+      .insert({
+        key,
+        cursor: { locked_at: new Date(now).toISOString() },
+        updated_at: new Date(now).toISOString(),
+      });
+    if (!error) return true;
+    if (error.code === "23505") return false;
+    throw new Error(error.message ?? String(error));
+  },
+  async unlock(key) {
+    await supabaseAdmin.from("ingestion_cursors").delete().eq("key", key);
+  },
+});
+
+export const pubinfoCacheKey = (url: string): string =>
+  `pubinfo_index:${url.slice(url.lastIndexOf("/") + 1)}`;
+
+/**
+ * The index for `url`, from the shared cache when it matches the archive's
+ * current version, otherwise built from the archive and written back. Cache
+ * read/write failures fall back to a fresh build; they never fail the call.
+ */
+const BUILD_LOCK_TTL_MS = 90_000;
+
+export const loadPubinfoIndexCached = async (
+  store: PubinfoCacheStore,
+  url: string,
+  fetchImpl: FetchLike = fetch,
+  options: { waitForBuildMs?: number; pollMs?: number } = {},
+): Promise<{ index: PubinfoIndex; fromCache: boolean }> => {
+  const archive = await headPubinfoArchive(url, fetchImpl);
+  const key = pubinfoCacheKey(url);
+  const lockKey = `${key}:build_lock`;
+  const readCache = async (): Promise<PubinfoIndex | null> => {
+    try {
+      return deserializePubinfoIndex(
+        url,
+        await store.get(key),
+        archive.version,
+      );
+    } catch (error) {
+      console.warn("pubinfo index cache read failed", { error: String(error) });
+      return null;
+    }
+  };
+
+  const cached = await readCache();
+  if (cached) return { index: cached, fromCache: true };
+
+  // Cold cache, typically the first run after the nightly rebuild, when the
+  // refresh starts several workers at once. One takes the build lock; the
+  // rest poll for its entry instead of each pulling ~20 MB. A waiter that
+  // never sees the entry (owner killed, store down) builds for itself.
+  let owner = false;
+  if (store.tryLock) {
+    try {
+      owner = await store.tryLock(lockKey, BUILD_LOCK_TTL_MS);
+    } catch (error) {
+      console.warn("pubinfo build lock unavailable", { error: String(error) });
+    }
+    if (!owner) {
+      const waitUntil = Date.now() + (options.waitForBuildMs ?? 30_000);
+      const pollMs = options.pollMs ?? 2_000;
+      while (Date.now() < waitUntil) {
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+        const built = await readCache();
+        if (built) return { index: built, fromCache: true };
+      }
+    }
+  }
+
+  try {
+    const index = await buildPubinfoIndex(url, archive, fetchImpl);
+    try {
+      await store.set(key, serializePubinfoIndex(index));
+    } catch (error) {
+      console.warn("pubinfo index cache write failed", {
+        error: String(error),
+      });
+    }
+    return { index, fromCache: false };
+  } finally {
+    if (owner) {
+      await store.unlock?.(lockKey).catch((error) =>
+        console.warn("pubinfo build unlock failed", { error: String(error) })
+      );
+    }
+  }
 };
 
 /**
@@ -359,12 +578,61 @@ export const readBillText = async (
   billId: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<string | null> => {
+  const xml = await readBillXml(index, billId, fetchImpl);
+  return xml === null ? null : camlToText(xml);
+};
+
+/** The latest version's CAML XML, or null when the archive has none yet. */
+export const readBillXml = async (
+  index: PubinfoIndex,
+  billId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<string | null> => {
   const lob = index.latestLobByBill.get(billId);
   if (!lob) return null;
   const entry = index.entries.get(lob);
   if (!entry) return null;
-  const xml = new TextDecoder().decode(
+  return new TextDecoder().decode(
     await readEntryBytes(fetchImpl, index.url, entry),
   );
-  return camlToText(xml);
+};
+
+const firstElement = (xml: string, tag: string): string | null => {
+  const match = new RegExp(
+    `<caml:${tag}\\b[^>]*>([\\s\\S]*?)</caml:${tag}>`,
+  ).exec(xml);
+  return match ? match[1] : null;
+};
+
+/**
+ * The readable part of a CAML bill -- title, Legislative Counsel's digest and
+ * the bill itself, the same content leginfo's bill page shows -- as HTML with
+ * CAML structure mapped to block elements, for an HTML-to-text pass. The
+ * Description block (ids, version history) is left out. Null when the document
+ * has no bill body.
+ */
+export const camlBillToHtml = (xml: string): string | null => {
+  const bill = firstElement(xml, "Bill");
+  if (bill === null) return null;
+  const title = firstElement(xml, "Title");
+  const digest = firstElement(xml, "DigestText");
+  const parts = [
+    title === null ? "" : `<div>${title}</div>`,
+    digest === null
+      ? ""
+      : `<div>LEGISLATIVE COUNSEL'S DIGEST</div><div>${digest}</div>`,
+    `<div>${bill}</div>`,
+  ];
+  return parts.join("")
+    // Amendment marks are processing instructions. A deletion carries the
+    // struck text in its data attribute (<?xm-deletion_mark data="..."?>) and
+    // an insertion brackets the new text, so dropping every PI yields the
+    // bill as amended -- without the struck passages that leginfo's page and
+    // LegiScan's HTML both keep as plain text. PI content cannot contain "?>".
+    .replace(/<\?[\s\S]*?\?>/g, "")
+    // Fragment is inline (a code name inside an action line); every other CAML
+    // element in a bill body is a block: sections, section numbers, action
+    // lines, law sections, content.
+    .replace(/<\/?caml:Fragment\b[^>]*>/g, "")
+    .replace(/<(\/?)caml:[A-Za-z]+\b[^>]*>/g, "<$1div>");
 };

@@ -8,12 +8,18 @@ import JSZip from "npm:jszip";
 
 import {
   billIdFromStateLink,
+  camlBillToHtml,
   camlToText,
+  deserializePubinfoIndex,
   isBotChallenge,
   loadPubinfoIndex,
+  loadPubinfoIndexCached,
   parseBillVersionTable,
+  pubinfoCacheKey,
+  type PubinfoCacheStore,
   PubinfoFetchError,
   readBillText,
+  serializePubinfoIndex,
 } from "./pubinfo.ts";
 
 // Row shape copied from the real 2025 BILL_VERSION_TBL.dat (2026-11-09).
@@ -231,4 +237,220 @@ Deno.test("ordinary failures are not treated as a challenge", () => {
       '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>',
     ),
   );
+});
+
+Deno.test("camlBillToHtml keeps title, digest and bill; drops metadata", () => {
+  const xml = '<?xml version="1.0"?><caml:MeasureDoc>' +
+    "<caml:Description><caml:Id>20250AB__156896AMD</caml:Id>" +
+    "<caml:History><caml:Action><caml:ActionText>INTRODUCED</caml:ActionText>" +
+    "</caml:Action></caml:History>" +
+    "<caml:Title>Sex offenses: registration.</caml:Title>" +
+    "<caml:DigestText><p>Existing law requires a sex offender to register.</p>" +
+    "</caml:DigestText></caml:Description>" +
+    '<caml:Bill id="bill"><caml:Preamble>The people enact:</caml:Preamble>' +
+    "<caml:BillSection><caml:Num>SECTION 1.</caml:Num>" +
+    "<caml:ActionLine>Section 290.5 of the <caml:Fragment>Penal Code" +
+    "</caml:Fragment> is amended</caml:ActionLine></caml:BillSection>" +
+    "</caml:Bill></caml:MeasureDoc>";
+  const html = camlBillToHtml(xml)!;
+  assert(html.includes("Sex offenses: registration."));
+  assert(html.includes("LEGISLATIVE COUNSEL'S DIGEST"));
+  assert(
+    html.includes("<p>Existing law requires a sex offender to register.</p>"),
+  );
+  // Inline fragment stays mid-sentence; CAML blocks become divs.
+  assert(html.includes("Section 290.5 of the Penal Code is amended"));
+  assert(html.includes("<div>SECTION 1.</div>"));
+  assertFalse(html.includes("caml:"));
+  assertFalse(html.includes("INTRODUCED"));
+  assertFalse(html.includes("20250AB__156896AMD"));
+  assertEquals(camlBillToHtml("<caml:MeasureDoc></caml:MeasureDoc>"), null);
+});
+
+Deno.test("camlBillToHtml yields the bill as amended: struck text dropped", () => {
+  // Marks as in AB2749's 2026 amendment.
+  const xml = "<caml:Bill><p>intent to purchase commercial sex." +
+    '<?xm-deletion_mark data=" This intent is evidenced by acting in a manner"?>' +
+    "<?xm-insertion_mark_start?> It does not require a completed communication." +
+    "<?xm-insertion_mark_end?></p></caml:Bill>";
+  const html = camlBillToHtml(xml)!;
+  assert(html.includes("It does not require a completed communication."));
+  assertFalse(html.includes("This intent is evidenced"));
+  assertFalse(html.includes("<?"));
+});
+
+Deno.test("the index cache round-trips and rejects stale or junk entries", async () => {
+  const archive = await buildArchive();
+  const index = await loadPubinfoIndex(
+    "https://example.test/p.zip",
+    rangeServer(() => archive),
+  );
+  const cached = serializePubinfoIndex(index);
+  const restored = deserializePubinfoIndex(index.url, cached, index.version)!;
+  assertEquals(restored.latestLobByBill, index.latestLobByBill);
+  assertEquals(
+    restored.entries.get("BILL_VERSION_TBL_3.lob"),
+    index.entries.get("BILL_VERSION_TBL_3.lob"),
+  );
+  // A different archive version is a miss.
+  assertEquals(deserializePubinfoIndex(index.url, cached, "other"), null);
+  assertEquals(deserializePubinfoIndex(index.url, null, index.version), null);
+  assertEquals(
+    deserializePubinfoIndex(index.url, {
+      version: index.version,
+      bills: {
+        X: ["../etc/passwd", 1, 1, 8],
+        Y: ["BILL_VERSION_TBL_9.lob", "a", 1, 8],
+      },
+    }, index.version),
+    null,
+  );
+});
+
+const memoryStore = (fail = false) => {
+  const data = new Map<string, unknown>();
+  const store: PubinfoCacheStore = {
+    get: (key) =>
+      fail
+        ? Promise.reject(new Error("db down"))
+        : Promise.resolve(data.get(key)),
+    set: (key, value) => {
+      if (fail) return Promise.reject(new Error("db down"));
+      data.set(key, value);
+      return Promise.resolve();
+    },
+  };
+  return { data, store };
+};
+
+Deno.test("cached load: the second worker pays one HEAD, not the 20 MB", async () => {
+  const archive = await buildArchive();
+  const url = "https://example.test/pubinfo_2025.zip";
+  const { data, store } = memoryStore();
+
+  const first: string[] = [];
+  const a = await loadPubinfoIndexCached(
+    store,
+    url,
+    rangeServer(() => archive, first),
+  );
+  assertEquals(a.fromCache, false);
+  assert(first.length > 1);
+  assert(data.has(pubinfoCacheKey(url)));
+
+  const second: string[] = [];
+  const b = await loadPubinfoIndexCached(
+    store,
+    url,
+    rangeServer(() => archive, second),
+  );
+  assertEquals(b.fromCache, true);
+  assertEquals(second, ["HEAD"]);
+  // The cached index still reads real text.
+  assertEquals(
+    await readBillText(b.index, "202520260AB1568", rangeServer(() => archive)),
+    "A registered sex offender & more.",
+  );
+});
+
+Deno.test("cached load rebuilds when the archive changes and survives a broken store", async () => {
+  const archive = await buildArchive();
+  const url = "https://example.test/pubinfo_2025.zip";
+  const { store } = memoryStore();
+  await loadPubinfoIndexCached(store, url, rangeServer(() => archive));
+
+  // Nightly rebuild: different size => different version => full build.
+  const rebuilt = new JSZip();
+  const source = await JSZip.loadAsync(archive);
+  rebuilt.file("PAD.dat", "pad");
+  for (const name of Object.keys(source.files)) {
+    rebuilt.file(name, await source.files[name].async("uint8array"));
+  }
+  const next = await rebuilt.generateAsync({
+    type: "uint8array",
+    compression: "DEFLATE",
+  });
+  assert(next.length !== archive.length);
+  const c = await loadPubinfoIndexCached(store, url, rangeServer(() => next));
+  assertEquals(c.fromCache, false);
+
+  // A failing cache store never fails the load.
+  const broken = memoryStore(true).store;
+  const d = await loadPubinfoIndexCached(
+    broken,
+    url,
+    rangeServer(() => archive),
+  );
+  assertEquals(d.fromCache, false);
+  assertEquals(
+    d.index.latestLobByBill.get("202520260AB2749"),
+    "BILL_VERSION_TBL_4.lob",
+  );
+});
+
+Deno.test("cold cache: five concurrent workers build the index once", async () => {
+  const archive = await buildArchive();
+  const url = "https://example.test/pubinfo_2025.zip";
+  const data = new Map<string, unknown>();
+  const locks = new Set<string>();
+  const store: PubinfoCacheStore = {
+    get: (key) => Promise.resolve(data.get(key)),
+    set: (key, value) => {
+      data.set(key, value);
+      return Promise.resolve();
+    },
+    tryLock: (key) => {
+      if (locks.has(key)) return Promise.resolve(false);
+      locks.add(key);
+      return Promise.resolve(true);
+    },
+    unlock: (key) => {
+      locks.delete(key);
+      return Promise.resolve();
+    },
+  };
+  // Count central-directory-sized reads: only a build makes them.
+  let builds = 0;
+  const server = rangeServer(() => archive);
+  const counting = async (u: string, init?: RequestInit) => {
+    const range = new Headers(init?.headers).get("Range") ?? "";
+    if (range.endsWith(`-${archive.length - 1}`)) builds += 1;
+    // Slow the build down so the waiters really overlap it.
+    if (range) await new Promise((r) => setTimeout(r, 5));
+    return server(u, init);
+  };
+
+  const results = await Promise.all(
+    Array.from(
+      { length: 5 },
+      () => loadPubinfoIndexCached(store, url, counting, { pollMs: 10 }),
+    ),
+  );
+  assertEquals(builds, 1);
+  assertEquals(results.filter((r) => !r.fromCache).length, 1);
+  assertEquals(locks.size, 0);
+  for (const r of results) {
+    assertEquals(
+      r.index.latestLobByBill.get("202520260AB1568"),
+      "BILL_VERSION_TBL_3.lob",
+    );
+  }
+});
+
+Deno.test("a waiter that never sees the cache builds for itself", async () => {
+  const archive = await buildArchive();
+  const store: PubinfoCacheStore = {
+    get: () => Promise.resolve(null),
+    set: () => Promise.resolve(),
+    tryLock: () => Promise.resolve(false), // someone else "owns" it forever
+    unlock: () => Promise.resolve(),
+  };
+  const result = await loadPubinfoIndexCached(
+    store,
+    "https://example.test/pubinfo_2025.zip",
+    rangeServer(() => archive),
+    { waitForBuildMs: 30, pollMs: 10 },
+  );
+  assertEquals(result.fromCache, false);
+  assertEquals(result.index.latestLobByBill.size, 2);
 });

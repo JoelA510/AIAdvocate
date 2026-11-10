@@ -48,10 +48,15 @@ export const createLegiScanPacer = (
 export const legiScanBudgetLeft = (pacer: LegiScanPacer): boolean =>
   pacer.calls < pacer.maxCalls;
 
+export const legiScanCallsFit = (
+  pacer: LegiScanPacer,
+  calls: number,
+): boolean => pacer.calls + calls <= pacer.maxCalls;
+
 // getBill and getBillText are reserved as a pair: starting a bill that can only
 // afford getBill spends a reservation and still yields no text.
 export const legiScanPairFits = (pacer: LegiScanPacer): boolean =>
-  pacer.calls + 2 <= pacer.maxCalls;
+  legiScanCallsFit(pacer, 2);
 
 export const legiScanWaitMs = (pacer: LegiScanPacer, now: number): number =>
   pacer.lastCallAt === null

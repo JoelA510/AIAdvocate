@@ -12,7 +12,8 @@ import {
 } from "../_shared/legiscanGate.ts";
 import {
   billIdFromStateLink,
-  loadPubinfoIndex,
+  ingestionCursorStore,
+  loadPubinfoIndexCached,
   PubinfoFetchError,
   type PubinfoIndex,
   pubinfoUrlForSession,
@@ -1541,7 +1542,10 @@ const runQueuedVerification = async (
   let pubinfo: PubinfoIndex | null = null;
   if (queue.length > 0 && verifyPerRun > 0) {
     try {
-      pubinfo = await loadPubinfoIndex(pubinfoUrlForSession(options.yearStart));
+      pubinfo = (await loadPubinfoIndexCached(
+        ingestionCursorStore(supabaseAdmin),
+        pubinfoUrlForSession(options.yearStart),
+      )).index;
     } catch (error) {
       if (error instanceof PubinfoFetchError && error.challenged) {
         stats.blocked += 1;
