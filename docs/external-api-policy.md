@@ -156,6 +156,17 @@ Both are public government sites, not APIs — keep requests sequential and
 spaced (≥ 250 ms), send an identifying `User-Agent`, and never download a whole
 pubinfo archive from an Edge Function.
 
+### Monitoring
+
+Both free sources and the LegiScan fallback degrade quietly, so a daily
+database-side check (`public.report_ingestion_health()`, pg_cron
+`ingestion-health` at 11:30 UTC, migration `20261110120000`) flags: a stale or
+blocked search verification, an unavailable pubinfo index, bills older than two
+days without text or summary, and no LegiScan search in 48 hours. Problems are
+written to `cron_job_errors` (job `ingestion-health`) and, when the Vault secret
+`ingestion_alert_sentry_dsn` is set, sent to Sentry as one issue per kind of
+failure. Verification queries: `supabase/verification/20261110_ingestion_health.sql`.
+
 ## 6. OpenStates
 
 - Endpoint: `https://openstates.org/graphql` (GraphQL v1), key on `X-API-KEY`.
