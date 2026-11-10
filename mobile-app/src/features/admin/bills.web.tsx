@@ -20,24 +20,6 @@ import { useAuth } from "../../providers/AuthProvider";
 import Toast from "react-native-toast-message";
 import { ThemedView } from "../../../components/ThemedView";
 
-// Helper function for audit logging
-const logAdminAction = async (userId: string, action: string, billId?: number, details?: any) => {
-  try {
-    // insert() resolves with { error } instead of throwing on DB failures
-    const { error } = await supabase.from("admin_audit_log").insert({
-      user_id: userId,
-      action,
-      bill_id: billId,
-      details: details ? JSON.stringify(details) : null,
-    });
-    if (error) {
-      console.warn("Failed to log admin action:", error);
-    }
-  } catch (err) {
-    console.warn("Failed to log admin action:", err);
-  }
-};
-
 type AdminBill = {
   id: number;
   bill_number: string;
@@ -282,14 +264,7 @@ export default function AdminBillsScreen() {
         setSelectedBill(updatedBill);
         setBills((prev) => prev.map((b) => (b.id === selectedBill.id ? updatedBill : b)));
 
-        // Log English Summary Update
-        await logAdminAction(session.user.id, "update_bill_summary_en", selectedBill.id, {
-          title: editTitle,
-          simple: editSimple,
-          medium: editMedium,
-          complex: editComplex,
-          db_verified: true,
-        });
+        // The edit is recorded in admin_audit_log by update_bill_summary itself.
       } else {
         // Use RPC for secure translation update
         const { error: transError } = await supabase.rpc("update_bill_translation_secure", {
@@ -317,15 +292,8 @@ export default function AdminBillsScreen() {
           },
         }));
 
-        // Log Translation Update
-        await logAdminAction(session.user.id, "update_bill_translation", selectedBill.id, {
-          language: selectedLanguage,
-          title: editTitle,
-          simple: editSimple,
-          medium: editMedium,
-          complex: editComplex,
-          verified: isVerified,
-        });
+        // The edit is recorded in admin_audit_log by
+        // update_bill_translation_secure itself.
       }
 
       Toast.show({ type: "success", text1: "Saved successfully" });
