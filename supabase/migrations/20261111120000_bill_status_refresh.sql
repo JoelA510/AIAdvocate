@@ -26,6 +26,12 @@
 --   -- and re-run invoke_edge_function from 20260709161000 to drop the
 --   -- allowlist entry (harmless to leave).
 
+-- Adding a stored generated column rewrites the table and rebuilds its
+-- indexes. The vector index on bills.embedding needed 61 MB against the
+-- default 32 MB maintenance_work_mem; production was applied with this
+-- setting on 2026-11-10 after the first attempt failed and rolled back.
+SET maintenance_work_mem = '96MB';
+
 ALTER TABLE public.bills
   ADD COLUMN IF NOT EXISTS pubinfo_bill_id text
   GENERATED ALWAYS AS (
@@ -130,3 +136,5 @@ SELECT cron.schedule(
   '40 10 * * *',
   $cron$SELECT public.invoke_edge_function('refresh-bill-status', 'bill-status-refresh')$cron$
 );
+
+RESET maintenance_work_mem;
