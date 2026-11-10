@@ -171,13 +171,33 @@ pubinfo archive from an Edge Function.
   `state_link`, unique) is the Legislature's id for the row; `bills.id`
   remains LegiScan's.
 
+- **Discovery from pubinfo.** After `bulk-import-dataset` responds, a
+  background task scores every bill version published since its last run
+  (`bulk-import-dataset/pubinfoDiscovery.ts`) with the same phrases and
+  mention threshold as search verification. Tracked bills, special-session
+  bills and versions already scored are skipped; a version is identified by
+  its action date and version number, and is re-examined for 5 days after its
+  action date because it can reach the archive late. The background task makes
+  **no LegiScan call**. An admitted bill waits in `awaiting`; on the next run
+  its number joins the pinned-bill `getMasterList` lookup in the foreground
+  (one call for both, in sequence with the run's other LegiScan calls, same
+  gate, budget and cooldown), which resolves its LegiScan `bill_id`
+  (`bills.id`), and the bill is inserted. State and stats are on the
+  `pubinfo_discovery:<state>:<session>` row of `ingestion_cursors` (`last_run`
+  for scoring, `last_resolution` for the id lookup). Scoring runs after search
+  verification in the same task, on one paced fetch, so requests to the
+  Legislature's host stay sequential and ≥ 250 ms apart.
+
 ### Monitoring
 
 Both free sources and the LegiScan fallback degrade quietly, so a daily
 database-side check (`public.report_ingestion_health()`, pg_cron
 `ingestion-health` at 11:30 UTC, migration `20261110120000`) flags: a stale or
 blocked search verification, an unavailable pubinfo index, bills older than two
-days without text or summary, and no LegiScan search in 48 hours. Problems are
+days without text or summary, no LegiScan search in 9 days, a status refresh
+or pubinfo discovery run that is stale, blocked or failing, a pubinfo status
+value with no mapping, and admitted bills waiting over a week for a LegiScan
+id (migration `20261112120000`). Problems are
 written to `cron_job_errors` (job `ingestion-health`) and, when the Vault secret
 `ingestion_alert_sentry_dsn` is set, sent to Sentry as one issue per kind of
 failure. Verification queries: `supabase/verification/20261110_ingestion_health.sql`.
@@ -214,14 +234,17 @@ env-configurable, so an incident can be contained without a redeploy:
 | `BULK_IMPORT_SEARCH_DISCOVERY` | `true` | Kill switch for the full-text sweep |
 | `LEGISCAN_SEARCH_DELAY_MS` | `1500` | Gap between any two LegiScan calls in an invocation (never below 1000) |
 | `LEGISCAN_SEARCH_MAX_CALLS_PER_RUN` | `6` | Hard cap on all LegiScan calls per invocation (never above 6) |
-| `LEGISCAN_SEARCH_COOLDOWN_SECONDS` | `72000` | Per (phrase, page) cooldown |
+| `LEGISCAN_SEARCH_COOLDOWN_SECONDS` | `561600` (6.5 days) | Per (phrase, page) cooldown. The sweep is a weekly cross-check since pubinfo discovery took over |
 | `LEGISCAN_DAILY_QUERY_LIMIT` | `900` | Daily budget ceiling |
 | `LEGISCAN_MONTHLY_QUERY_LIMIT` | `25000` | Monthly budget ceiling (below the 30k limit) |
 | `BULK_IMPORT_DATASET_PASS` | `true` | Kill switch for the dataset download pass |
 | `BULK_IMPORT_VERIFY_PER_RUN` | `30` | Search candidates verified against pubinfo text per run (background task) |
 | `BULK_IMPORT_VERIFY_MIN_MENTIONS` | `5` | Topic-phrase mentions in a bill's text needed to admit it |
 | `BULK_IMPORT_PINNED_BILLS` | unset | Bill numbers to ingest directly, e.g. `AB1705\|AB1568` (max 25) |
-| `LEGISCAN_MASTERLIST_COOLDOWN_SECONDS` | `86400` | Cooldown for the pinned-bill `getMasterList` lookup (never below 3600) |
+| `LEGISCAN_MASTERLIST_COOLDOWN_SECONDS` | `72000` | Cooldown for the one `getMasterList` lookup shared by pinned bills and pubinfo discovery (never below 3600) |
+| `BULK_IMPORT_PUBINFO_DISCOVERY` | `true` | Kill switch for discovery from the pubinfo archive |
+| `BULK_IMPORT_PUBINFO_DISCOVERY_PER_RUN` | `60` | Bill versions scored per run (background task) |
+| `BULK_IMPORT_PUBINFO_DISCOVERY_LOOKBACK_DAYS` | `7` | How far back the first run looks; later runs continue from where the last stopped |
 | `LEGISCAN_SYNC_DELAY_MS` | `1500` | `sync-updated-bills`: gap between its LegiScan calls (never below 1000) |
 | `LEGISCAN_SYNC_MAX_CALLS_PER_RUN` | `6` | `sync-updated-bills`: LegiScan calls per invocation (never above 6) |
 
