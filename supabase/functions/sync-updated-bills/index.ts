@@ -18,9 +18,8 @@ import {
   billIdFromStateLink,
   camlBillToHtml,
   ingestionCursorStore,
-  loadPubinfoIndexCached,
+  loadSessionPubinfoIndexCached,
   type PubinfoIndex,
-  pubinfoUrlForSession,
   readBillXml,
 } from "../_shared/pubinfo.ts";
 import {
@@ -1583,9 +1582,9 @@ serve(async (req) => {
     const pubinfoIndexFor = (year: number) => {
       let pending = pubinfoIndexes.get(year);
       if (!pending) {
-        pending = loadPubinfoIndexCached(
+        pending = loadSessionPubinfoIndexCached(
           ingestionCursorStore(supabaseAdmin),
-          pubinfoUrlForSession(year),
+          year,
           pubinfoFetch,
           {
             waitForBuildMs: Math.max(

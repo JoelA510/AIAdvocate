@@ -66,7 +66,7 @@ completion within its 150 s wall clock.
 ## 3. pubinfo facts, verified 2026-11-09
 
 - Host `downloads.leginfo.legislature.ca.gov`. It returns 206 to Supabase egress, while `leginfo.legislature.ca.gov` returns a 403 Cloudflare challenge. The download host is also served by Cloudflare (`server: cloudflare`), so it could be challenged in future; see §7.
-- `pubinfo_2025.zip` (1.29 GB, zip64, rebuilt nightly around 05:26 UTC) supports HTTP Range.
+- `pubinfo_2025.zip` (1.29 GB, zip64) supports HTTP Range. **Correction:** it is rebuilt on Sundays only, not nightly; `pubinfo_daily_<Day>.zip` is the daily full archive. See `docs/plans/2026-11-10-pubinfo-primary-plan.md`.
 - Its central directory is 19.6 MB with 205,284 entries, including 19,437 `BILL_VERSION_TBL_<n>.lob` entries and `BILL_TBL.dat`, `BILL_HISTORY_TBL.dat`, `BILL_VERSION_TBL.dat`, `BILL_SUMMARY_VOTE_TBL.dat` and `BILL_DETAIL_VOTE_TBL.dat`.
 - Sizes:
 
