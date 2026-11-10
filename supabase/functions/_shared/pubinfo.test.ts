@@ -16,6 +16,7 @@ import {
   loadPubinfoIndex,
   loadPubinfoIndexCached,
   loadSessionPubinfoIndexCached,
+  pacedFetch,
   parseBillVersionTable,
   pubinfoCacheKey,
   type PubinfoCacheStore,
@@ -627,4 +628,23 @@ Deno.test("a challenge on a daily archive is not retried against the session arc
   );
   assert(error.challenged);
   assertEquals(requests, ["HEAD pubinfo_daily_Tue.zip"]);
+});
+
+Deno.test("pacedFetch spaces every request, including concurrent ones", async () => {
+  const starts: number[] = [];
+  const paced = pacedFetch(() => {
+    starts.push(Date.now());
+    return Promise.resolve(new Response("ok"));
+  }, 40);
+  // Fired together, as an entry's header and payload reads would be if the
+  // caller did not await; a failing request must not stall the queue.
+  await Promise.all([paced("a"), paced("b"), paced("c")]);
+  assertEquals(starts.length, 3);
+  // Timers may fire a millisecond early.
+  assert(starts[1] - starts[0] >= 38, `gap ${starts[1] - starts[0]}`);
+  assert(starts[2] - starts[1] >= 38, `gap ${starts[2] - starts[1]}`);
+
+  const failing = pacedFetch(() => Promise.reject(new Error("boom")), 1);
+  await assertRejects(() => failing("x"), Error, "boom");
+  await assertRejects(() => failing("y"), Error, "boom");
 });

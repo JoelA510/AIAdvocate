@@ -230,7 +230,7 @@ Deno.test("refresh writes changed bills once, and nothing on the next run", asyn
   assertEquals(h.updates.get(1)!.status_date, "2026-05-26");
   assertEquals(h.updates.get(1)!.history!.length, 2);
   assertEquals(h.updates.get(2)!.status, "6");
-  // No hearings in the archive: calendar is not part of the write.
+  // No hearing table in the archive: calendar is not part of the write.
   assertFalseKey(h.updates.get(1)!, "calendar");
   assertEquals(h.saved.length, 1);
   assert(stats.errors.some((e) => e.includes("bill 666: write failed")));
@@ -326,13 +326,14 @@ Deno.test("diffBillStatus never blanks stored data with an empty pubinfo list", 
     progress: [{ date: "2026-01-12", event: 1 }],
     calendar: [{ date: "2026-03-03", type: "Hearing" }],
   };
+  // Hearing table unavailable (calendar null): nothing is blanked.
   assertEquals(
     diffBillStatus(stored, {
       status: "2",
       status_date: null,
       history: [],
       progress: [],
-      calendar: [],
+      calendar: null,
     }),
     null,
   );
@@ -342,8 +343,31 @@ Deno.test("diffBillStatus never blanks stored data with an empty pubinfo list", 
       status_date: "2026-09-30",
       history: [],
       progress: [],
-      calendar: [],
+      calendar: null,
     }),
     { status: "4", status_date: "2026-09-30" },
   );
+});
+
+Deno.test("a hearing removed from a loaded hearing table clears the calendar", () => {
+  const stored: TrackedBill = {
+    id: 1,
+    state_link: null,
+    status: "1",
+    status_date: "2026-01-12",
+    history: [],
+    progress: [],
+    calendar: [{ date: "2026-12-01", type: "Hearing" }],
+  };
+  const next = {
+    status: "1",
+    status_date: "2026-01-12",
+    history: [],
+    progress: [],
+    calendar: [],
+  };
+  assertEquals(diffBillStatus(stored, next), { calendar: [] });
+  // Already empty (or never set): no write.
+  assertEquals(diffBillStatus({ ...stored, calendar: [] }, next), null);
+  assertEquals(diffBillStatus({ ...stored, calendar: null }, next), null);
 });

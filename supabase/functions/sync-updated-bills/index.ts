@@ -6,6 +6,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { isStatusRefreshHealthy } from "./statusRefresh.ts";
 import { getOptionalOpenAiKey, getServiceKey } from "../_shared/utils.ts";
 import {
   createLegiScanPacer,
@@ -835,9 +836,6 @@ const LEGINFO_FETCH_TIMEOUT_MS = 45_000;
 // Building the pubinfo index from scratch takes ~11 s; a cached one ~1 s. Don't
 // start either this close to the run deadline.
 const PUBINFO_MIN_RUN_TIME_LEFT_MS = 20_000;
-// refresh-bill-status runs daily; two missed runs and sync goes back to
-// asking LegiScan getBill for a new bill's status.
-const STATUS_REFRESH_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
 const extractLeginfoBillText = (html: string): string | null => {
   const anchorMatch = LEGINFO_ANCHOR_PATTERN.exec(html);
@@ -1617,10 +1615,10 @@ serve(async (req) => {
       return pending;
     };
     // refresh-bill-status fills status, dates, history and hearings from
-    // pubinfo for every tracked bill once a day. While it is running (its
-    // last run is recent and matched bills), a bill whose text came from
-    // pubinfo needs no LegiScan getBill. Checked once per run; any doubt
-    // keeps the getBill path.
+    // pubinfo for every tracked bill once a day. While it is healthy (see
+    // isStatusRefreshHealthy), a bill whose text came from pubinfo needs no
+    // LegiScan getBill. Checked once per run; any doubt keeps the getBill
+    // path.
     let statusRefreshActive: Promise<boolean> | null = null;
     const isStatusRefreshActive = (): Promise<boolean> => {
       statusRefreshActive ??= (async () => {
@@ -1631,15 +1629,7 @@ serve(async (req) => {
             .eq("key", "bill_status_refresh")
             .maybeSingle();
           if (error || !data) return false;
-          const cursor = data.cursor as {
-            finished_at?: string;
-            matched?: number;
-            blocked?: boolean;
-          } | null;
-          const finishedAt = Date.parse(cursor?.finished_at ?? "");
-          return Number.isFinite(finishedAt) &&
-            Date.now() - finishedAt < STATUS_REFRESH_MAX_AGE_MS &&
-            (cursor?.matched ?? 0) > 0 && cursor?.blocked !== true;
+          return isStatusRefreshHealthy(data.cursor, Date.now());
         } catch {
           return false;
         }

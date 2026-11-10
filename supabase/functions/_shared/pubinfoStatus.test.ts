@@ -281,6 +281,16 @@ Deno.test("builds history, progress, status date and hearings for tracked bills 
   assertEquals(died.status, "6");
   assertEquals(died.status_date, null);
   assertEquals(died.history, []);
+  // The hearing table loaded and lists none for this bill.
+  assertEquals(died.calendar, []);
+
+  // Without a hearing table, "no hearings" is unknown, not empty.
+  const { hearing: _hearing, ...withoutHearings } = tables();
+  assertEquals(
+    buildBillStatuses(withoutHearings, new Set([AB])).statuses.get(AB)!
+      .calendar,
+    null,
+  );
 });
 
 Deno.test("a vetoed bill awaiting veto consideration stays vetoed", () => {

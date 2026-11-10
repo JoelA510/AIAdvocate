@@ -46,7 +46,10 @@ export type PubinfoBillStatus = {
   status_date: string | null;
   history: HistoryEntry[];
   progress: ProgressEntry[];
-  calendar: CalendarEntry[];
+  // null when COMMITTEE_HEARING_TBL was missing or empty, so "no hearings"
+  // cannot be told apart from "table unavailable"; [] means the table loaded
+  // and lists none for this bill.
+  calendar: CalendarEntry[] | null;
 };
 
 type Row = (string | null)[];
@@ -268,6 +271,7 @@ export const buildBillStatuses = (
       room: tidy(row[4]),
     });
   }
+  const hearingsLoaded = (tables.hearing ?? "").trim().length > 0;
   const hearingsByBill = new Map<string, Map<string, CalendarEntry>>();
   forEachDatRow(tables.hearing ?? "", (row) => {
     if (row.length < 5 || row[0] === null) return;
@@ -302,11 +306,13 @@ export const buildBillStatuses = (
     const entries = (historyByBill.get(billId) ?? []).sort((a, b) =>
       a.sequence - b.sequence || a.date.localeCompare(b.date)
     );
-    const calendar = Array.from(hearingsByBill.get(billId)?.values() ?? [])
-      .sort((a, b) =>
-        a.date.localeCompare(b.date) ||
-        (a.time ?? "").localeCompare(b.time ?? "")
-      );
+    const calendar = !hearingsLoaded
+      ? null
+      : Array.from(hearingsByBill.get(billId)?.values() ?? [])
+        .sort((a, b) =>
+          a.date.localeCompare(b.date) ||
+          (a.time ?? "").localeCompare(b.time ?? "")
+        );
     const progress = progressFrom(
       entries,
       isHouseResolution(row[3]) ? 4 : 2,

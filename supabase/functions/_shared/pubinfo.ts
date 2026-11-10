@@ -259,6 +259,32 @@ const fetchRange = async (
   return new Uint8Array(await response.arrayBuffer());
 };
 
+// docs/external-api-policy.md section 5: requests to the Legislature's hosts
+// are sequential and at least 250 ms apart. Wraps a fetch so every request
+// made through it, including an entry's header and payload reads, is spaced.
+const PUBINFO_REQUEST_GAP_MS = 250;
+
+export const pacedFetch = (
+  fetchImpl: FetchLike,
+  gapMs = PUBINFO_REQUEST_GAP_MS,
+): FetchLike => {
+  let nextAt = 0;
+  let queue: Promise<unknown> = Promise.resolve();
+  return (url, init) => {
+    const run = queue.then(async () => {
+      const wait = nextAt - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      try {
+        return await fetchImpl(url, init);
+      } finally {
+        nextAt = Date.now() + gapMs;
+      }
+    });
+    queue = run.catch(() => undefined);
+    return run;
+  };
+};
+
 const inflateRaw = async (data: Uint8Array): Promise<Uint8Array> => {
   const stream = new Blob([new Uint8Array(data)]).stream().pipeThrough(
     new DecompressionStream("deflate-raw"),
@@ -347,8 +373,9 @@ export const headPubinfoArchive = async (
 const buildPubinfoIndex = async (
   url: string,
   archive: Pick<ArchiveHead, "length" | "version">,
-  fetchImpl: FetchLike,
+  unpacedFetch: FetchLike,
 ): Promise<PubinfoIndex> => {
+  const fetchImpl = pacedFetch(unpacedFetch);
   const { length } = archive;
   const tailStart = Math.max(0, length - TAIL_BYTES);
   const tail = await fetchRange(fetchImpl, url, tailStart, length - 1);
@@ -775,7 +802,6 @@ export const camlBillToHtml = (xml: string): string | null => {
 // so the central directory is read directly instead of through the lob cache.
 
 const MAX_TABLE_BYTES = 8 * 1024 * 1024;
-const TABLE_REQUEST_GAP_MS = 250;
 
 /**
  * The text of each named .dat table in the archive. A table missing from the
@@ -785,8 +811,9 @@ export const loadPubinfoTables = async (
   url: string,
   head: Pick<ArchiveHead, "length">,
   names: string[],
-  fetchImpl: FetchLike = fetch,
+  unpacedFetch: FetchLike = fetch,
 ): Promise<Map<string, string>> => {
+  const fetchImpl = pacedFetch(unpacedFetch);
   const wanted = new Set(names);
   const tailStart = Math.max(0, head.length - TAIL_BYTES);
   const tail = await fetchRange(fetchImpl, url, tailStart, head.length - 1);
@@ -806,7 +833,6 @@ export const loadPubinfoTables = async (
     if (entry.compressedSize > MAX_TABLE_BYTES) {
       throw new Error(`pubinfo table ${name} too large`);
     }
-    await new Promise((resolve) => setTimeout(resolve, TABLE_REQUEST_GAP_MS));
     tables.set(
       name,
       new TextDecoder().decode(await readEntryBytes(fetchImpl, url, entry)),

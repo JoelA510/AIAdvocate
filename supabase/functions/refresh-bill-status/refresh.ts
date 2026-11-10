@@ -13,6 +13,7 @@ import {
 } from "../_shared/pubinfo.ts";
 import {
   buildBillStatuses,
+  type CalendarEntry,
   type PubinfoBillStatus,
   STATUS_TABLES,
 } from "../_shared/pubinfoStatus.ts";
@@ -28,10 +29,9 @@ export type TrackedBill = {
 };
 
 export type StatusUpdate = Partial<
-  Pick<
-    PubinfoBillStatus,
-    "status" | "status_date" | "history" | "progress" | "calendar"
-  >
+  Pick<PubinfoBillStatus, "status" | "status_date" | "history" | "progress"> & {
+    calendar: CalendarEntry[];
+  }
 >;
 
 export type RefreshStats = {
@@ -72,8 +72,9 @@ const same = (a: unknown, b: unknown) =>
 
 /**
  * The fields to write for one bill, or null when nothing changed. Empty
- * pubinfo history, progress or calendar never replaces stored data: a table
- * missing from one day's archive must not blank what the app shows.
+ * pubinfo history or progress never replaces stored data, and neither does a
+ * calendar from an archive whose hearing table was missing: a table absent
+ * from one day's archive must not blank what the app shows.
  */
 export const diffBillStatus = (
   bill: TrackedBill,
@@ -90,7 +91,9 @@ export const diffBillStatus = (
   if (next.progress.length > 0 && !same(bill.progress, next.progress)) {
     changes.progress = next.progress;
   }
-  if (next.calendar.length > 0 && !same(bill.calendar, next.calendar)) {
+  // The calendar can be emptied (a canceled hearing must stop showing and
+  // stop triggering reminders), but only when the hearing table itself loaded.
+  if (next.calendar !== null && !same(bill.calendar ?? [], next.calendar)) {
     changes.calendar = next.calendar;
   }
   return Object.keys(changes).length > 0 ? changes : null;
