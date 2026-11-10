@@ -160,6 +160,17 @@ Both are public government sites, not APIs — keep requests sequential and
 spaced (≥ 250 ms), send an identifying `User-Agent`, and never download a whole
 pubinfo archive from an Edge Function.
 
+- **Bill status from pubinfo.** `refresh-bill-status` (pg_cron
+  `bill-status-refresh`, 10:40 UTC) reads `BILL_TBL`, `BILL_HISTORY_TBL`,
+  `COMMITTEE_HEARING_TBL`, `LOCATION_CODE_TBL` and `COMMITTEE_AGENDA_TBL` from
+  the same archive (about 6 MB a day) and writes `status`, `status_date`,
+  `history`, `progress` and `calendar` for every tracked bill, in LegiScan's
+  shapes (`_shared/pubinfoStatus.ts`). It makes no LegiScan calls. While its
+  last run is under 48 hours old, `sync-updated-bills` skips `getBill` for a
+  bill whose text came from pubinfo. `bills.pubinfo_bill_id` (generated from
+  `state_link`, unique) is the Legislature's id for the row; `bills.id`
+  remains LegiScan's.
+
 ### Monitoring
 
 Both free sources and the LegiScan fallback degrade quietly, so a daily
