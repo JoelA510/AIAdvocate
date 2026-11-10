@@ -37,7 +37,7 @@ selects bills needing summary work.
 | #94 | Fetched text persisted before summarising; per-invocation LegiScan pacer (`sync-updated-bills/legiscanPacer.ts`) |
 | #95 | Shared LegiScan rate gate: `reserve_legiscan_api_call_gated` / `claim_legiscan_slot` (migration `20261109120000`). Search verification reads pubinfo in a background task (`EdgeRuntime.waitUntil`). Admission requires `BULK_IMPORT_VERIFY_MIN_MENTIONS` (default 5) topic mentions. |
 | #96 | `sync-updated-bills` takes text from pubinfo first. Shared pubinfo index cache with build lock. `getBill` runs alone for status metadata; a bill that misses it stays queued (`summary_ok = false`) and retries without OpenAI. |
-| alerting PR | `public.ingestion_health()` / `report_ingestion_health()`, pg_cron `ingestion-health` 11:30 UTC, optional Sentry via Vault `ingestion_alert_sentry_dsn` (migration `20261110120000`) |
+| #97 | `public.ingestion_health()` / `report_ingestion_health()`, pg_cron `ingestion-health` 11:30 UTC, optional Sentry via Vault `ingestion_alert_sentry_dsn` (migration `20261110120000`) |
 
 ### Measured, 2026-11-09/10
 
