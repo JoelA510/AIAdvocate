@@ -95,8 +95,7 @@ serve(async (req) => {
     return json(stats, failed ? 502 : 200);
   } catch (error) {
     console.error("refresh-bill-status failed", error);
-    return json({
-      error: error instanceof Error ? error.message : String(error),
-    }, 500);
+    // Details stay in the function log.
+    return json({ error: "refresh-bill-status failed" }, 500);
   }
 });
