@@ -139,10 +139,14 @@ quota.
   scrape in `sync-updated-bills` still runs first but no longer succeeds from
   production, which is why the LegiScan fallback became the normal path (§3).
 - **`downloads.leginfo.legislature.ca.gov` bulk data ("pubinfo")** is not
-  challenged (206 to Supabase on 2026-11-09). The nightly
-  `pubinfo_<session year>.zip` (~1.2 GB) supports HTTP range requests, so
-  `supabase/functions/_shared/pubinfo.ts` reads one bill's latest text with a
-  few small requests. The ~20 MB index is built once per archive version and
+  challenged (206 to Supabase on 2026-11-09). `pubinfo_<session year>.zip`
+  (~1.2 GB) is rebuilt only on Sundays; `pubinfo_daily_<Day>.zip` carries the
+  same bill data for the current session and is rebuilt daily. Both support
+  HTTP range requests, so `supabase/functions/_shared/pubinfo.ts` reads one
+  bill's latest text with a few small requests, from the freshest daily
+  archive (today's or yesterday's, by Last-Modified, at most 3 days old) and
+  otherwise from the session archive. The index (4-20 MB) is built once per
+  archive version and
   cached as a ~330 KB slice in `ingestion_cursors` (`pubinfo_index:<file>`),
   so parallel workers pay one HEAD request each. Search verification in
   `bulk-import-dataset` and bill text in `sync-updated-bills` both use it.

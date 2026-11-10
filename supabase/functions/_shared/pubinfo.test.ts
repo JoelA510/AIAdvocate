@@ -10,10 +10,12 @@ import {
   billIdFromStateLink,
   camlBillToHtml,
   camlToText,
+  dailyArchiveCandidates,
   deserializePubinfoIndex,
   isBotChallenge,
   loadPubinfoIndex,
   loadPubinfoIndexCached,
+  loadSessionPubinfoIndexCached,
   parseBillVersionTable,
   pubinfoCacheKey,
   type PubinfoCacheStore,
@@ -453,4 +455,176 @@ Deno.test("a waiter that never sees the cache builds for itself", async () => {
   );
   assertEquals(result.fromCache, false);
   assertEquals(result.index.latestLobByBill.size, 2);
+});
+
+// --- archive selection -------------------------------------------------------
+
+// One host with several archives; each has its own bytes and Last-Modified.
+const multiServer = (
+  files: Record<string, { bytes: Uint8Array; lastModified: string } | number>,
+  requests: string[] = [],
+) =>
+(url: string, init?: RequestInit): Promise<Response> => {
+  const name = url.slice(url.lastIndexOf("/") + 1);
+  const file = files[name];
+  requests.push(`${init?.method ?? "GET"} ${name}`);
+  if (file === undefined) {
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  }
+  if (typeof file === "number") {
+    return Promise.resolve(
+      new Response("Just a moment...", {
+        status: file,
+        headers: { "cf-mitigated": "challenge" },
+      }),
+    );
+  }
+  if (init?.method === "HEAD") {
+    return Promise.resolve(
+      new Response(null, {
+        status: 200,
+        headers: {
+          "content-length": String(file.bytes.length),
+          "last-modified": file.lastModified,
+        },
+      }),
+    );
+  }
+  return rangeServer(() => file.bytes)(url, init);
+};
+
+const archiveWith = async (billId: string, text: string) => {
+  const zip = new JSZip();
+  zip.file(
+    "BILL_VERSION_TBL.dat",
+    row(billId, 99, "2026-11-09", "BILL_VERSION_TBL_1.lob"),
+  );
+  zip.file("BILL_VERSION_TBL_1.lob", caml(`<p>${text}</p>`));
+  return await zip.generateAsync({
+    type: "uint8array",
+    compression: "DEFLATE",
+  });
+};
+
+Deno.test("daily candidates follow the Capitol's weekday, not UTC's", () => {
+  // 2026-11-10 03:00 UTC is still Monday evening in Sacramento.
+  assertEquals(
+    dailyArchiveCandidates(new Date("2026-11-10T03:00:00Z")).map((u) =>
+      u.slice(u.lastIndexOf("/") + 1)
+    ),
+    ["pubinfo_daily_Mon.zip", "pubinfo_daily_Sun.zip"],
+  );
+  // Sunday wraps to Saturday.
+  assertEquals(
+    dailyArchiveCandidates(new Date("2026-11-08T20:00:00Z")).map((u) =>
+      u.slice(u.lastIndexOf("/") + 1)
+    ),
+    ["pubinfo_daily_Sun.zip", "pubinfo_daily_Sat.zip"],
+  );
+});
+
+Deno.test("session load prefers the fresher daily over today's week-old file", async () => {
+  // Tuesday afternoon: pubinfo_daily_Tue.zip is still last week's build.
+  const now = new Date("2026-11-10T22:00:00Z");
+  const files = {
+    "pubinfo_daily_Tue.zip": {
+      bytes: await archiveWith("202520260AB1", "last week"),
+      lastModified: "Wed, 04 Nov 2026 05:23:00 GMT",
+    },
+    "pubinfo_daily_Mon.zip": {
+      bytes: await archiveWith("202520260AB1", "monday build"),
+      lastModified: "Tue, 10 Nov 2026 05:23:00 GMT",
+    },
+    "pubinfo_2025.zip": {
+      bytes: await archiveWith("202520260AB1", "sunday build"),
+      lastModified: "Mon, 09 Nov 2026 05:26:00 GMT",
+    },
+  };
+  const requests: string[] = [];
+  const { data, store } = memoryStore();
+  const { index } = await loadSessionPubinfoIndexCached(
+    store,
+    2025,
+    multiServer(files, requests),
+    { now },
+  );
+  assert(index.url.endsWith("pubinfo_daily_Mon.zip"));
+  assertEquals(
+    await readBillText(index, "202520260AB1", multiServer(files)),
+    "monday build",
+  );
+  // One HEAD per candidate, none for the session archive, no second HEAD.
+  assertEquals(requests.filter((r) => r.startsWith("HEAD")), [
+    "HEAD pubinfo_daily_Tue.zip",
+    "HEAD pubinfo_daily_Mon.zip",
+  ]);
+  // All dailies share one cache row.
+  assertEquals([...data.keys()], ["pubinfo_index:pubinfo_daily.zip"]);
+});
+
+Deno.test("session load falls back when dailies are stale, missing or for another session", async () => {
+  const now = new Date("2026-11-10T22:00:00Z");
+  const session = {
+    bytes: await archiveWith("202520260AB1", "session archive"),
+    lastModified: "Mon, 09 Nov 2026 05:26:00 GMT",
+  };
+  const load = async (files: Parameters<typeof multiServer>[0]) => {
+    const { index } = await loadSessionPubinfoIndexCached(
+      memoryStore().store,
+      2025,
+      multiServer(files),
+      { now },
+    );
+    return index.url.slice(index.url.lastIndexOf("/") + 1);
+  };
+
+  // Missing (404) and stale (older than 3 days).
+  assertEquals(
+    await load({
+      "pubinfo_daily_Mon.zip": {
+        bytes: await archiveWith("202520260AB1", "old"),
+        lastModified: "Tue, 03 Nov 2026 05:23:00 GMT",
+      },
+      "pubinfo_2025.zip": session,
+    }),
+    "pubinfo_2025.zip",
+  );
+  // After a rollover the daily holds only the new session's bills.
+  assertEquals(
+    await load({
+      "pubinfo_daily_Mon.zip": {
+        bytes: await archiveWith("202720280AB1", "new session"),
+        lastModified: "Tue, 10 Nov 2026 05:23:00 GMT",
+      },
+      "pubinfo_2025.zip": session,
+    }),
+    "pubinfo_2025.zip",
+  );
+  // A corrupt daily (not a zip) falls back too.
+  assertEquals(
+    await load({
+      "pubinfo_daily_Mon.zip": {
+        bytes: new Uint8Array(2048),
+        lastModified: "Tue, 10 Nov 2026 05:23:00 GMT",
+      },
+      "pubinfo_2025.zip": session,
+    }),
+    "pubinfo_2025.zip",
+  );
+});
+
+Deno.test("a challenge on a daily archive is not retried against the session archive", async () => {
+  const requests: string[] = [];
+  const error = await assertRejects(
+    () =>
+      loadSessionPubinfoIndexCached(
+        memoryStore().store,
+        2025,
+        multiServer({ "pubinfo_daily_Tue.zip": 403 }, requests),
+        { now: new Date("2026-11-10T22:00:00Z") },
+      ),
+    PubinfoFetchError,
+  );
+  assert(error.challenged);
+  assertEquals(requests, ["HEAD pubinfo_daily_Tue.zip"]);
 });

@@ -13,10 +13,9 @@ import {
 import {
   billIdFromStateLink,
   ingestionCursorStore,
-  loadPubinfoIndexCached,
+  loadSessionPubinfoIndexCached,
   PubinfoFetchError,
   type PubinfoIndex,
-  pubinfoUrlForSession,
   readBillText,
 } from "../_shared/pubinfo.ts";
 import {
@@ -885,7 +884,7 @@ const setPendingState = async (
  * Outcome of confirming a candidate against the real bill text.
  *
  * `unavailable` is distinct from `rejected` so a transient failure (or a bill
- * the nightly pubinfo archive does not carry yet) retries later, while
+ * the pubinfo archive does not carry yet) retries later, while
  * `unverifiable` (no usable bill id -- a condition retrying can never fix)
  * drops the row instead of parking it in the queue forever. `blocked` (a
  * Cloudflare challenge) also keeps the row, but tells the caller to stop
@@ -1542,9 +1541,9 @@ const runQueuedVerification = async (
   let pubinfo: PubinfoIndex | null = null;
   if (queue.length > 0 && verifyPerRun > 0) {
     try {
-      pubinfo = (await loadPubinfoIndexCached(
+      pubinfo = (await loadSessionPubinfoIndexCached(
         ingestionCursorStore(supabaseAdmin),
-        pubinfoUrlForSession(options.yearStart),
+        options.yearStart,
       )).index;
     } catch (error) {
       if (error instanceof PubinfoFetchError && error.challenged) {
@@ -1595,7 +1594,7 @@ const runQueuedVerification = async (
     }
 
     if (outcome === "unavailable") {
-      // Not in the nightly pubinfo archive yet, or a transient read failure.
+      // Not in the pubinfo archive yet, or a transient read failure.
       // Keep it queued and retry on a later run rather than dropping or
       // wrongly admitting it.
       stats.unavailable += 1;

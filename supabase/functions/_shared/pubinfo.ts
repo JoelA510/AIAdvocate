@@ -3,9 +3,10 @@
 // leginfo.legislature.ca.gov serves a Cloudflare challenge to cloud egress
 // (403 "Just a moment" to Supabase since at least 2026-10-27), so its bill pages
 // cannot be scraped. downloads.leginfo.legislature.ca.gov is not challenged
-// (206 to Supabase on 2026-11-09) and publishes the whole session nightly as
-// pubinfo_<year>.zip (~1.2 GB). The archive supports HTTP range requests, so a
-// single bill's text is reachable without downloading it:
+// (206 to Supabase on 2026-11-09) and publishes the whole session as
+// pubinfo_<year>.zip (~1.2 GB, rebuilt on Sundays) and pubinfo_daily_<Day>.zip
+// (rebuilt daily; see "archive selection" below). The archives support HTTP
+// range requests, so a single bill's text is reachable without downloading:
 //
 //   1. tail of the file          -> end-of-central-directory (zip64 aware)
 //   2. central directory (~20 MB) -> offset of every entry
@@ -275,7 +276,7 @@ const readEntryBytes = async (
   }
   // The local header's name/extra lengths can differ from the central
   // directory's, so read them before the data. The name is checked too: the
-  // archive is rebuilt nightly, and an index loaded before a rebuild would
+  // archive is rebuilt in place, and an index loaded before a rebuild would
   // otherwise read some other bill's text at the old offset.
   const nameLength = new TextEncoder().encode(entry.name).length;
   const header = await fetchRange(
@@ -306,11 +307,17 @@ const readEntryBytes = async (
   throw new Error(`unsupported zip method ${entry.method}`);
 };
 
+export type ArchiveHead = {
+  length: number;
+  version: string;
+  lastModifiedMs: number | null;
+};
+
 /** The archive's size and version, from one HEAD request. */
 export const headPubinfoArchive = async (
   url: string,
   fetchImpl: FetchLike = fetch,
-): Promise<{ length: number; version: string }> => {
+): Promise<ArchiveHead> => {
   const head = await fetchImpl(url, {
     method: "HEAD",
     headers: { "User-Agent": USER_AGENT },
@@ -328,15 +335,18 @@ export const headPubinfoArchive = async (
       challenged,
     );
   }
+  const lastModified = head.headers.get("last-modified") ?? "";
+  const lastModifiedMs = Date.parse(lastModified);
   return {
     length,
-    version: `${length}:${head.headers.get("last-modified") ?? ""}`,
+    version: `${length}:${lastModified}`,
+    lastModifiedMs: Number.isFinite(lastModifiedMs) ? lastModifiedMs : null,
   };
 };
 
 const buildPubinfoIndex = async (
   url: string,
-  archive: { length: number; version: string },
+  archive: Pick<ArchiveHead, "length" | "version">,
   fetchImpl: FetchLike,
 ): Promise<PubinfoIndex> => {
   const { length } = archive;
@@ -386,7 +396,7 @@ export const loadPubinfoIndex = async (
 // bulk-import-dataset. Each building its own index would pull ~20 MB from the
 // Legislature's server per worker per run. Only the latest version of each
 // bill is needed (~5k bills, ~300 KB as JSON), so the first worker after the
-// nightly rebuild stores that slice, keyed by the archive's size and
+// rebuild stores that slice, keyed by the archive's size and
 // Last-Modified, and everyone else pays one HEAD request. A stale cache is
 // still safe to read: readEntryBytes checks each entry's local header name.
 
@@ -437,7 +447,7 @@ export const deserializePubinfoIndex = (
 export type PubinfoCacheStore = {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown): Promise<void>;
-  // Build ownership, so one worker builds after a nightly rebuild while the
+  // Build ownership, so one worker builds after a rebuild while the
   // others wait for its cache entry. tryLock must be atomic: true for exactly
   // one caller until unlock or until the lock is older than ttlMs.
   tryLock?(key: string, ttlMs: number): Promise<boolean>;
@@ -493,8 +503,15 @@ export const ingestionCursorStore = (
   },
 });
 
+// The seven daily archives share one cache row: only the freshest is ever
+// read, and the stored version (size + Last-Modified) tells them apart.
 export const pubinfoCacheKey = (url: string): string =>
-  `pubinfo_index:${url.slice(url.lastIndexOf("/") + 1)}`;
+  `pubinfo_index:${
+    url.slice(url.lastIndexOf("/") + 1).replace(
+      /^pubinfo_daily_[A-Za-z]{3}\.zip$/,
+      "pubinfo_daily.zip",
+    )
+  }`;
 
 /**
  * The index for `url`, from the shared cache when it matches the archive's
@@ -507,9 +524,10 @@ export const loadPubinfoIndexCached = async (
   store: PubinfoCacheStore,
   url: string,
   fetchImpl: FetchLike = fetch,
-  options: { waitForBuildMs?: number; pollMs?: number } = {},
+  options: { waitForBuildMs?: number; pollMs?: number; head?: ArchiveHead } =
+    {},
 ): Promise<{ index: PubinfoIndex; fromCache: boolean }> => {
-  const archive = await headPubinfoArchive(url, fetchImpl);
+  const archive = options.head ?? await headPubinfoArchive(url, fetchImpl);
   const key = pubinfoCacheKey(url);
   const lockKey = `${key}:build_lock`;
   const readCache = async (): Promise<PubinfoIndex | null> => {
@@ -528,7 +546,7 @@ export const loadPubinfoIndexCached = async (
   const cached = await readCache();
   if (cached) return { index: cached, fromCache: true };
 
-  // Cold cache, typically the first run after the nightly rebuild, when the
+  // Cold cache, typically the first run after a rebuild, when the
   // refresh starts several workers at once. One takes the build lock; the
   // rest poll for its entry instead of each pulling ~20 MB. A waiter that
   // never sees the entry (owner killed, store down) builds for itself.
@@ -569,9 +587,111 @@ export const loadPubinfoIndexCached = async (
   }
 };
 
+// --- archive selection -------------------------------------------------------
+//
+// Per the Legislature's pubinfo_Readme.pdf, pubinfo_<year>.zip is rebuilt only
+// on Sundays. pubinfo_daily_<Day>.zip holds the same bill tables and lobs for
+// the current session, rebuilt every day (measured 2026-11-09: 1.16 GB, 4.1 MB
+// central directory against 19.6 MB, same Range support). Reading the session
+// archive alone left a bill introduced or amended on a Monday without text
+// until the next Sunday.
+
+const DAILY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAILY_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
+export const pubinfoDailyUrl = (day: string): string =>
+  `${PUBINFO_BASE_URL}/pubinfo_daily_${day}.zip`;
+
+/**
+ * The daily archives that can be the freshest at `now`: today's and
+ * yesterday's by the Capitol's clock. Today's file is last week's until the
+ * evening build replaces it, so the caller compares Last-Modified.
+ */
+export const dailyArchiveCandidates = (now: Date): string[] => {
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+  }).format(now);
+  const today = DAILY_NAMES.indexOf(weekday);
+  if (today < 0) return [];
+  return [DAILY_NAMES[today], DAILY_NAMES[(today + 6) % 7]].map(
+    pubinfoDailyUrl,
+  );
+};
+
+const sessionPrefix = (yearStart: number) => `${yearStart}${yearStart + 1}`;
+
+const indexCoversSession = (index: PubinfoIndex, yearStart: number) => {
+  const prefix = sessionPrefix(yearStart);
+  for (const billId of index.latestLobByBill.keys()) {
+    if (billId.startsWith(prefix)) return true;
+  }
+  return false;
+};
+
+/**
+ * The index for a session, from the freshest daily archive when one is
+ * recent and holds that session, otherwise from pubinfo_<yearStart>.zip.
+ * A daily archive that is missing, stale, unreadable or for another session
+ * (after a session rollover) falls back; a Cloudflare challenge does not,
+ * since the session archive is on the same host.
+ */
+export const loadSessionPubinfoIndexCached = async (
+  store: PubinfoCacheStore,
+  yearStart: number,
+  fetchImpl: FetchLike = fetch,
+  options: { waitForBuildMs?: number; pollMs?: number; now?: Date } = {},
+): Promise<{ index: PubinfoIndex; fromCache: boolean }> => {
+  const now = options.now ?? new Date();
+  let best: { url: string; head: ArchiveHead } | null = null;
+  for (const url of dailyArchiveCandidates(now)) {
+    try {
+      const head = await headPubinfoArchive(url, fetchImpl);
+      if (
+        head.lastModifiedMs !== null &&
+        now.getTime() - head.lastModifiedMs <= DAILY_MAX_AGE_MS &&
+        (best === null || head.lastModifiedMs > best.head.lastModifiedMs!)
+      ) {
+        best = { url, head };
+      }
+    } catch (error) {
+      if (error instanceof PubinfoFetchError && error.challenged) throw error;
+      console.warn("pubinfo daily archive unavailable", {
+        url,
+        error: String(error),
+      });
+    }
+  }
+
+  if (best) {
+    try {
+      const loaded = await loadPubinfoIndexCached(
+        store,
+        best.url,
+        fetchImpl,
+        { ...options, head: best.head },
+      );
+      if (indexCoversSession(loaded.index, yearStart)) return loaded;
+    } catch (error) {
+      if (error instanceof PubinfoFetchError && error.challenged) throw error;
+      console.warn("pubinfo daily index failed; using the session archive", {
+        url: best.url,
+        error: String(error),
+      });
+    }
+  }
+
+  return await loadPubinfoIndexCached(
+    store,
+    pubinfoUrlForSession(yearStart),
+    fetchImpl,
+    options,
+  );
+};
+
 /**
  * Step 4: plain text of the bill's latest version, or null when the archive
- * has no version for it yet (it is rebuilt nightly).
+ * has no version for it yet.
  */
 export const readBillText = async (
   index: PubinfoIndex,
