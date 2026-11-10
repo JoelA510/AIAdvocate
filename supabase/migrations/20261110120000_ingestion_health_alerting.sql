@@ -23,9 +23,11 @@
 --   verification_stale        queue non-empty, no verification run in 36 h
 --   verification_blocked      last run hit a Cloudflare challenge on pubinfo
 --   pubinfo_unavailable       last run could not load the pubinfo index
---   verification_no_progress  last run had a queue but verified nothing
+--   verification_no_progress  last run had a queue but resolved nothing
+--                             (no reads, or every read unavailable)
 --   bills_missing_text        bills older than 2 days with no text
---   bills_missing_summary     bills older than 2 days with no summary
+--   bills_missing_summary     bills older than 2 days missing any English
+--                             summary level (simple, medium, complex)
 --   legiscan_search_idle      no LegiScan getSearch reservation in 48 h
 --
 -- Setup after applying (optional; without it alerts go to cron_job_errors only):
@@ -96,17 +98,26 @@ BEGIN
         WHERE e.msg LIKE 'pubinfo index unavailable%' LIMIT 1));
   END IF;
 
+  -- A run that resolved nothing: no reads at all, or every read came back
+  -- `unavailable` (e.g. an archive format change). Rejections count as
+  -- progress. A Cloudflare challenge is reported by verification_blocked.
   IF COALESCE((last_run ->> 'queue_before')::integer, 0) > 0
-     AND COALESCE((last_run ->> 'attempted')::integer, 0) = 0 THEN
+     AND COALESCE((last_run ->> 'blocked')::integer, 0) = 0
+     AND COALESCE((last_run ->> 'verified')::integer, 0)
+       + COALESCE((last_run ->> 'rejected')::integer, 0) = 0 THEN
     problems := problems || jsonb_build_object(
       'code', 'verification_no_progress',
-      'detail', format('last run had %s queued and verified none',
-        last_run ->> 'queue_before'));
+      'detail', format('last run had %s queued, attempted %s, %s unavailable, resolved none',
+        last_run ->> 'queue_before',
+        COALESCE(last_run ->> 'attempted', '0'),
+        COALESCE(last_run ->> 'unavailable', '0')));
   END IF;
 
   SELECT
     count(*) FILTER (WHERE b.original_text IS NULL),
-    count(*) FILTER (WHERE NULLIF(BTRIM(b.summary_simple), '') IS NULL)
+    count(*) FILTER (WHERE NULLIF(BTRIM(b.summary_simple), '') IS NULL
+                        OR NULLIF(BTRIM(b.summary_medium), '') IS NULL
+                        OR NULLIF(BTRIM(b.summary_complex), '') IS NULL)
   INTO missing_text, missing_summary
   FROM public.bills AS b
   WHERE b.created_at < now() - interval '2 days';
@@ -119,7 +130,7 @@ BEGIN
   IF missing_summary > 0 THEN
     problems := problems || jsonb_build_object(
       'code', 'bills_missing_summary',
-      'detail', format('%s bills older than 2 days have no summary', missing_summary));
+      'detail', format('%s bills older than 2 days are missing a summary level', missing_summary));
   END IF;
 
   SELECT max(l.created_at) INTO last_search
