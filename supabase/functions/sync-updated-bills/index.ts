@@ -1563,12 +1563,39 @@ serve(async (req) => {
     // per run, shared across runs through the ingestion_cursors cache. A failed
     // load is remembered for the run so each bill doesn't retry it.
     const pubinfoIndexes = new Map<number, Promise<PubinfoIndex | null>>();
+    // Every pubinfo request's timeout is capped by what is left of the run, so
+    // a slow archive host cannot carry the invocation past its ceiling and
+    // strand leases (the same bound the leginfo scrape has).
+    const pubinfoFetch = (url: string, init?: RequestInit) => {
+      const msLeft = runDeadlineAt - Date.now();
+      if (msLeft <= 0) {
+        return Promise.reject(
+          new Error("run deadline reached before pubinfo request"),
+        );
+      }
+      return fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(
+          Math.max(1_000, Math.min(LEGINFO_FETCH_TIMEOUT_MS, msLeft)),
+        ),
+      });
+    };
     const pubinfoIndexFor = (year: number) => {
       let pending = pubinfoIndexes.get(year);
       if (!pending) {
         pending = loadPubinfoIndexCached(
           ingestionCursorStore(supabaseAdmin),
           pubinfoUrlForSession(year),
+          pubinfoFetch,
+          {
+            waitForBuildMs: Math.max(
+              0,
+              Math.min(
+                30_000,
+                runDeadlineAt - Date.now() - PUBINFO_MIN_RUN_TIME_LEFT_MS,
+              ),
+            ),
+          },
         ).then(({ index, fromCache }) => {
           console.log("- pubinfo index loaded", {
             year,
@@ -1599,7 +1626,7 @@ serve(async (req) => {
       const index = await pubinfoIndexFor(year);
       if (!index) return null;
       try {
-        const xml = await readBillXml(index, pubinfoBillId);
+        const xml = await readBillXml(index, pubinfoBillId, pubinfoFetch);
         const html = xml === null ? null : camlBillToHtml(xml);
         return html === null ? null : stripHtmlToText(html) || null;
       } catch (error) {
@@ -1916,6 +1943,16 @@ serve(async (req) => {
           });
         }
       }
+
+      // A bill discovery inserted has no status until getBill supplies it. If
+      // getBill could not run this time (budget, cooldown, an earlier LegiScan
+      // error), releasing the bill as done would let lease_next_bill drop it
+      // for good, without status. It is still summarised and published below;
+      // the release just leaves summary_ok false so a later run retries
+      // getBill, reusing the stored text and summaries (no OpenAI, no text
+      // fetch). Bills without text sort ahead of it in the queue.
+      const metadataPending = needsMetadata && !billDetailsFetched &&
+        legiscanDetailsEnabled && Boolean(legiscanApiKey);
 
       const { data: existingSpanish, error: existingSpanishError } =
         await supabaseAdmin
@@ -2545,7 +2582,9 @@ serve(async (req) => {
       console.log("✅ Processed bill", {
         bill_id: billData.bill_id,
         bill_number: billData.bill_number,
+        metadata_pending: metadataPending,
       });
+      return { metadataPending };
     };
 
     let stoppedForTimeBudget = false;
@@ -2619,12 +2658,14 @@ serve(async (req) => {
         attemptedIds.add(nextId);
 
         try {
-          await processBill(nextId);
+          const { metadataPending } = await processBill(nextId);
           const { error: releaseError } = await supabaseAdmin
             .rpc("release_bill_lease", {
               p_id: nextId,
               p_owner: owner,
-              p_ok: true,
+              // false keeps the bill queued for its status metadata; see
+              // metadataPending in processBill.
+              p_ok: !metadataPending,
             });
           if (releaseError) throw releaseError;
         } catch (err) {

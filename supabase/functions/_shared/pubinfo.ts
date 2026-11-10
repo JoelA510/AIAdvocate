@@ -437,6 +437,11 @@ export const deserializePubinfoIndex = (
 export type PubinfoCacheStore = {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown): Promise<void>;
+  // Build ownership, so one worker builds after a nightly rebuild while the
+  // others wait for its cache entry. tryLock must be atomic: true for exactly
+  // one caller until unlock or until the lock is older than ttlMs.
+  tryLock?(key: string, ttlMs: number): Promise<boolean>;
+  unlock?(key: string): Promise<void>;
 };
 
 /** ingestion_cursors-backed cache store for the service-role client. */
@@ -462,6 +467,30 @@ export const ingestionCursorStore = (
       });
     if (error) throw new Error(error.message ?? String(error));
   },
+  // A lock is a row whose primary key is the lock key: the insert succeeds for
+  // exactly one caller. A lock older than ttlMs (a worker killed mid-build) is
+  // cleared first.
+  async tryLock(key, ttlMs) {
+    const now = Date.now();
+    await supabaseAdmin
+      .from("ingestion_cursors")
+      .delete()
+      .eq("key", key)
+      .lt("updated_at", new Date(now - ttlMs).toISOString());
+    const { error } = await supabaseAdmin
+      .from("ingestion_cursors")
+      .insert({
+        key,
+        cursor: { locked_at: new Date(now).toISOString() },
+        updated_at: new Date(now).toISOString(),
+      });
+    if (!error) return true;
+    if (error.code === "23505") return false;
+    throw new Error(error.message ?? String(error));
+  },
+  async unlock(key) {
+    await supabaseAdmin.from("ingestion_cursors").delete().eq("key", key);
+  },
 });
 
 export const pubinfoCacheKey = (url: string): string =>
@@ -472,31 +501,72 @@ export const pubinfoCacheKey = (url: string): string =>
  * current version, otherwise built from the archive and written back. Cache
  * read/write failures fall back to a fresh build; they never fail the call.
  */
+const BUILD_LOCK_TTL_MS = 90_000;
+
 export const loadPubinfoIndexCached = async (
   store: PubinfoCacheStore,
   url: string,
   fetchImpl: FetchLike = fetch,
+  options: { waitForBuildMs?: number; pollMs?: number } = {},
 ): Promise<{ index: PubinfoIndex; fromCache: boolean }> => {
   const archive = await headPubinfoArchive(url, fetchImpl);
   const key = pubinfoCacheKey(url);
-  try {
-    const cached = deserializePubinfoIndex(
-      url,
-      await store.get(key),
-      archive.version,
-    );
-    if (cached) return { index: cached, fromCache: true };
-  } catch (error) {
-    console.warn("pubinfo index cache read failed", { error: String(error) });
+  const lockKey = `${key}:build_lock`;
+  const readCache = async (): Promise<PubinfoIndex | null> => {
+    try {
+      return deserializePubinfoIndex(
+        url,
+        await store.get(key),
+        archive.version,
+      );
+    } catch (error) {
+      console.warn("pubinfo index cache read failed", { error: String(error) });
+      return null;
+    }
+  };
+
+  const cached = await readCache();
+  if (cached) return { index: cached, fromCache: true };
+
+  // Cold cache, typically the first run after the nightly rebuild, when the
+  // refresh starts several workers at once. One takes the build lock; the
+  // rest poll for its entry instead of each pulling ~20 MB. A waiter that
+  // never sees the entry (owner killed, store down) builds for itself.
+  let owner = false;
+  if (store.tryLock) {
+    try {
+      owner = await store.tryLock(lockKey, BUILD_LOCK_TTL_MS);
+    } catch (error) {
+      console.warn("pubinfo build lock unavailable", { error: String(error) });
+    }
+    if (!owner) {
+      const waitUntil = Date.now() + (options.waitForBuildMs ?? 30_000);
+      const pollMs = options.pollMs ?? 2_000;
+      while (Date.now() < waitUntil) {
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+        const built = await readCache();
+        if (built) return { index: built, fromCache: true };
+      }
+    }
   }
 
-  const index = await buildPubinfoIndex(url, archive, fetchImpl);
   try {
-    await store.set(key, serializePubinfoIndex(index));
-  } catch (error) {
-    console.warn("pubinfo index cache write failed", { error: String(error) });
+    const index = await buildPubinfoIndex(url, archive, fetchImpl);
+    try {
+      await store.set(key, serializePubinfoIndex(index));
+    } catch (error) {
+      console.warn("pubinfo index cache write failed", {
+        error: String(error),
+      });
+    }
+    return { index, fromCache: false };
+  } finally {
+    if (owner) {
+      await store.unlock?.(lockKey).catch((error) =>
+        console.warn("pubinfo build unlock failed", { error: String(error) })
+      );
+    }
   }
-  return { index, fromCache: false };
 };
 
 /**

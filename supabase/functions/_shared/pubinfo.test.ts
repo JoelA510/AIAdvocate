@@ -387,3 +387,70 @@ Deno.test("cached load rebuilds when the archive changes and survives a broken s
     "BILL_VERSION_TBL_4.lob",
   );
 });
+
+Deno.test("cold cache: five concurrent workers build the index once", async () => {
+  const archive = await buildArchive();
+  const url = "https://example.test/pubinfo_2025.zip";
+  const data = new Map<string, unknown>();
+  const locks = new Set<string>();
+  const store: PubinfoCacheStore = {
+    get: (key) => Promise.resolve(data.get(key)),
+    set: (key, value) => {
+      data.set(key, value);
+      return Promise.resolve();
+    },
+    tryLock: (key) => {
+      if (locks.has(key)) return Promise.resolve(false);
+      locks.add(key);
+      return Promise.resolve(true);
+    },
+    unlock: (key) => {
+      locks.delete(key);
+      return Promise.resolve();
+    },
+  };
+  // Count central-directory-sized reads: only a build makes them.
+  let builds = 0;
+  const server = rangeServer(() => archive);
+  const counting = async (u: string, init?: RequestInit) => {
+    const range = new Headers(init?.headers).get("Range") ?? "";
+    if (range.endsWith(`-${archive.length - 1}`)) builds += 1;
+    // Slow the build down so the waiters really overlap it.
+    if (range) await new Promise((r) => setTimeout(r, 5));
+    return server(u, init);
+  };
+
+  const results = await Promise.all(
+    Array.from(
+      { length: 5 },
+      () => loadPubinfoIndexCached(store, url, counting, { pollMs: 10 }),
+    ),
+  );
+  assertEquals(builds, 1);
+  assertEquals(results.filter((r) => !r.fromCache).length, 1);
+  assertEquals(locks.size, 0);
+  for (const r of results) {
+    assertEquals(
+      r.index.latestLobByBill.get("202520260AB1568"),
+      "BILL_VERSION_TBL_3.lob",
+    );
+  }
+});
+
+Deno.test("a waiter that never sees the cache builds for itself", async () => {
+  const archive = await buildArchive();
+  const store: PubinfoCacheStore = {
+    get: () => Promise.resolve(null),
+    set: () => Promise.resolve(),
+    tryLock: () => Promise.resolve(false), // someone else "owns" it forever
+    unlock: () => Promise.resolve(),
+  };
+  const result = await loadPubinfoIndexCached(
+    store,
+    "https://example.test/pubinfo_2025.zip",
+    rangeServer(() => archive),
+    { waitForBuildMs: 30, pollMs: 10 },
+  );
+  assertEquals(result.fromCache, false);
+  assertEquals(result.index.latestLobByBill.size, 2);
+});
