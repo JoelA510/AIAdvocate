@@ -73,6 +73,15 @@ serve(async (req) => {
           .eq("id", id);
         if (error) throw new Error(error.message);
       },
+      loadStats: async () => {
+        const { data, error } = await supabaseAdmin
+          .from("ingestion_cursors")
+          .select("cursor")
+          .eq("key", STATS_CURSOR_KEY)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        return data?.cursor ?? null;
+      },
       saveStats: async (value: RefreshStats) => {
         const { error } = await supabaseAdmin
           .from("ingestion_cursors")

@@ -156,6 +156,12 @@
     "activeSection": { "title": "Active Bills" },
     "savedSection": { "title": "Saved Bills" }
   },
+  "freshness": {
+    "checked": "Checked against Legislature records {{date}}",
+    "quiet": "No tracked bill has had legislative action since {{date}}. The Legislature may be in recess.",
+    "stale": "Bill information may be out of date. Last checked against Legislature records {{date}}.",
+    "staleUnknown": "Bill information may be out of date. We could not confirm when it was last checked."
+  },
   "home": {
     "searchPlaceholder": "Search by keyword or bill…"
   },

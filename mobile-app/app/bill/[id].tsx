@@ -22,6 +22,7 @@ import SummarySlider from "../../src/components/SummarySlider";
 import FindYourRep from "../../src/components/FindYourRep";
 import RelatedBills from "../../src/components/RelatedBills";
 import EmptyState from "../../src/components/EmptyState";
+import DataFreshnessNote from "../../src/components/DataFreshnessNote";
 
 type TranslatedContent = Pick<
   Bill,
@@ -213,6 +214,8 @@ export default function BillDetailsScreen() {
               {display.title}
             </Text>
           )}
+
+          <DataFreshnessNote />
 
           <View style={styles.actionsContainer}>
             <Button icon="share-variant" mode="text" onPress={handleShare}>

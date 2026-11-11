@@ -136,6 +136,12 @@
     "activeSection": { "title": "Proyectos activos" },
     "savedSection": { "title": "Proyectos guardados" }
   },
+  "freshness": {
+    "checked": "Verificado con los registros de la Legislatura el {{date}}",
+    "quiet": "Ningún proyecto de ley que seguimos ha tenido actividad legislativa desde el {{date}}. Es posible que la Legislatura esté en receso.",
+    "stale": "La información de los proyectos de ley puede estar desactualizada. Última verificación con los registros de la Legislatura: {{date}}.",
+    "staleUnknown": "La información de los proyectos de ley puede estar desactualizada. No pudimos confirmar cuándo se verificó por última vez."
+  },
   "home": {
     "searchPlaceholder": "Busca por palabra clave o proyecto…"
   },
