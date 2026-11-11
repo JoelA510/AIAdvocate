@@ -1,5 +1,5 @@
 import React from "react";
-import { render, waitFor } from "@testing-library/react-native";
+import { act, render, waitFor } from "@testing-library/react-native";
 import { Provider as PaperProvider } from "react-native-paper";
 
 import DataFreshnessNote from "../DataFreshnessNote";
@@ -62,6 +62,30 @@ describe("DataFreshnessNote", () => {
     expect(await findByText(/^Bill information may be out of date\. Last checked/)).toBeTruthy();
     // A stale check says nothing about whether the Legislature is quiet.
     expect(queryByText(/may be in recess/)).toBeNull();
+  });
+
+  it("turns stale on its own while it stays mounted", async () => {
+    jest.useFakeTimers();
+    try {
+      // The same answer every time: the last good check does not move.
+      const lastChecked = iso(47 * HOUR);
+      rpc.mockResolvedValue({
+        data: { last_checked_at: lastChecked, latest_action_date: null },
+        error: null,
+      });
+      const { findByText } = await renderNote();
+      expect(await findByText(/^Checked against Legislature records/)).toBeTruthy();
+      const callsBefore = rpc.mock.calls.length;
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2 * HOUR);
+      });
+
+      expect(rpc.mock.calls.length).toBeGreaterThan(callsBefore);
+      expect(await findByText(/^Bill information may be out of date\. Last checked/)).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("warns without a date when no check is on record", async () => {

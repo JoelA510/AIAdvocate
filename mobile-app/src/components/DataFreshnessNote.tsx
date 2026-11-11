@@ -17,21 +17,29 @@ import {
   fetchDataFreshness,
 } from "@/lib/dataFreshness";
 
+export const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+
 export default function DataFreshnessNote() {
   const { t } = useTranslation();
   const theme = useTheme();
-  const { data } = useQuery({
+  // The update times are read so that every poll re-renders this component,
+  // including one that returns unchanged data or fails: the age below is
+  // measured against the clock, and a feed left open (or an app brought back
+  // from the background, where nothing else triggers a refetch) must cross the
+  // stale threshold on its own.
+  const { data, dataUpdatedAt, errorUpdatedAt } = useQuery({
     queryKey: DATA_FRESHNESS_QUERY_KEY,
     queryFn: fetchDataFreshness,
     // The value changes once a day.
-    staleTime: 10 * 60 * 1000,
+    staleTime: REFRESH_INTERVAL_MS,
+    refetchInterval: REFRESH_INTERVAL_MS,
   });
 
   // Loading, or the lookup failed: say nothing rather than guess. A failed
   // lookup is not evidence that the bill data is old.
   if (!data) return null;
 
-  const view = describeFreshness(data, Date.now());
+  const view = describeFreshness(data, Math.max(Date.now(), dataUpdatedAt, errorUpdatedAt));
   const stale = view.state === "stale";
 
   return (
