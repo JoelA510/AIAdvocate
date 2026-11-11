@@ -798,10 +798,14 @@ const firstElement = (xml: string, tag: string): string | null => {
  * the bill itself, the same content leginfo's bill page shows -- as HTML with
  * CAML structure mapped to block elements, for an HTML-to-text pass. The
  * Description block (ids, version history) is left out. Null when the document
- * has no bill body.
+ * has neither a bill nor a resolution body.
  */
 export const camlBillToHtml = (xml: string): string | null => {
-  const bill = firstElement(xml, "Bill");
+  // Bills (AB, SB) carry their body in caml:Bill; resolutions and
+  // constitutional amendments (ACR, SCR, AJR, SJR, HR, SR, ACA, SCA) in
+  // caml:Resolution. Reading only caml:Bill sent every resolution to the
+  // LegiScan fallback for its text.
+  const bill = firstElement(xml, "Bill") ?? firstElement(xml, "Resolution");
   if (bill === null) return null;
   const title = firstElement(xml, "Title");
   const digest = firstElement(xml, "DigestText");

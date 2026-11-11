@@ -648,3 +648,28 @@ Deno.test("pacedFetch spaces every request, including concurrent ones", async ()
   await assertRejects(() => failing("x"), Error, "boom");
   await assertRejects(() => failing("y"), Error, "boom");
 });
+
+Deno.test("camlBillToHtml reads resolutions, whose body is caml:Resolution", () => {
+  // Shape of 202520260ACR27 (2026-11-11): no caml:Bill element at all.
+  const xml = `<?xml version="1.0"?><caml:MeasureDoc>` +
+    `<caml:Description><caml:Id>20250ACR__002797CHP</caml:Id>` +
+    `<caml:Title>Relative to teen dating violence.</caml:Title></caml:Description>` +
+    `<caml:Resolution id="resolution">` +
+    `<caml:Whereas><caml:Content><p>WHEREAS, Teen dating violence is ` +
+    `preventable; and</p></caml:Content></caml:Whereas>` +
+    `<caml:Resolved><caml:Content><p>Resolved by the Assembly, the Senate ` +
+    `thereof concurring, That February is awareness month.</p></caml:Content>` +
+    `</caml:Resolved></caml:Resolution></caml:MeasureDoc>`;
+  const html = camlBillToHtml(xml);
+  assert(html !== null);
+  assert(html.includes("Relative to teen dating violence."));
+  assert(html.includes("WHEREAS, Teen dating violence is preventable; and"));
+  assert(html.includes("Resolved by the Assembly"));
+  assertFalse(html.includes("20250ACR__002797CHP"));
+  assertFalse(html.includes("caml:"));
+  // Neither body present: still null.
+  assertEquals(
+    camlBillToHtml("<caml:MeasureDoc><caml:Description/></caml:MeasureDoc>"),
+    null,
+  );
+});

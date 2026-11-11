@@ -67,8 +67,23 @@ const MAX_ERRORS = 10;
 const UPDATE_CONCURRENCY = 8;
 const MAX_SAMPLES = 5;
 
+// Key order must not matter: Postgres jsonb returns object keys in its own
+// order (by length, then bytewise), not the order they were written in.
+// Comparing plain JSON.stringify output rewrote every bill with a hearing on
+// every run (166 of 190 on 2026-11-11).
+const canonical = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(source).sort().map((key) => [key, canonical(source[key])]),
+    );
+  }
+  return value;
+};
+
 const same = (a: unknown, b: unknown) =>
-  JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  JSON.stringify(canonical(a ?? null)) === JSON.stringify(canonical(b ?? null));
 
 /**
  * The fields to write for one bill, or null when nothing changed. Empty
