@@ -65,7 +65,7 @@ Supabase (PostgREST • Edge Functions • Realtime • pgvector)
 | `votes-daily` | Incremental poller that syncs new vote events since the last run. | Scheduled via `supabase functions schedule create votes-daily ...` | Updates `job_state` (`votes-daily:last-run`). |
 | `find-your-rep` | Cached address → legislators lookup with OpenStates + LocationIQ. | Client invoked | Added provider ID matching so state reps surface even when names vary. |
 | `translate-bill` / `translate-bills` | On-demand translation helpers that reuse cached content when available. | Client invoked | Works alongside the nightly summary job. |
-| `summarize-simple` / `summarize-simple-backfill` | Legacy summarisation utilities retained for specialised queues. | Manual | Useful for targeted re-summarisation. |
+| `summarize-simple` / `summarize-simple-backfill` | Retired. Both are stubs that return 410; summaries come from `sync-updated-bills`. | None | Directories are kept so the stubs stay deployed. |
 | `send-push-notifications` | Service-role only function for Expo push fan-out. | Cron / manual | Requires vault-managed Expo credentials. |
 | `verify-app-check` | App Check handshake for the client. | Client invoked | JWT disabled per mobile requirements. |
 | `ingest-and-summarize` | Local mock harness demonstrating ingestion without external APIs. | Manual | Safe sandbox for new contributors. |

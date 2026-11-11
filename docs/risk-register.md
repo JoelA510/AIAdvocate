@@ -86,9 +86,8 @@ Severity: high.
   `20261113_lock_down_scheduler_rpcs.sql`, `20261114_admin_rpc_hardening.sql`,
   `20260730_get_bill_details_payload.sql`). It is run by hand at release.
 - **Open:**
-  1. One Edge Function authorization gap, tracked privately.
-  2. No per-session rate limit on the functions that call paid APIs.
-  3. The verification SQL does not run in CI.
+  1. No per-session rate limit on the functions that call paid APIs.
+  2. The verification SQL does not run in CI.
 
 ### R3. The admin surface is compromised
 
@@ -239,3 +238,4 @@ Severity: medium.
 | Date | What changed |
 | --- | --- |
 | 2026-11-11 | First written version, compiled from the repository. Corrected in review: representative lookup invites an address; the summary triggers skip the service role. |
+| 2026-11-11 | R2: the Edge Function authorization gap that was tracked privately is closed; the open item is removed. |
