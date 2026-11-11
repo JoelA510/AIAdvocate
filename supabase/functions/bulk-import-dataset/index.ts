@@ -15,10 +15,12 @@ import {
   type FetchLike,
   ingestionCursorStore,
   loadSessionPubinfoIndexCached,
+  normalizeStateLink,
   pacedFetch,
   PubinfoFetchError,
   type PubinfoIndex,
   readBillText,
+  toLegislatureMeasure,
 } from "../_shared/pubinfo.ts";
 import {
   applyResolvedIds,
@@ -796,8 +798,9 @@ const buildCaStateLink = (
   yearEnd: number | null,
 ): string | null => {
   if (!billNumber || yearStart === null || yearEnd === null) return null;
+  // billNumber is LegiScan's; leginfo wants the Legislature's (AR -> HR).
   return "https://leginfo.legislature.ca.gov/faces/billStatusClient.xhtml" +
-    `?bill_id=${yearStart}${yearEnd}0${billNumber}`;
+    `?bill_id=${yearStart}${yearEnd}0${toLegislatureMeasure(billNumber)}`;
 };
 
 const selectExistingBillIds = async (
@@ -1671,7 +1674,11 @@ const runQueuedVerification = async (
   if (verified.length > 0) {
     const insertBatchSize = getUpsertBatchSize();
     for (let i = 0; i < verified.length; i += insertBatchSize) {
-      const chunk = verified.slice(i, i + insertBatchSize);
+      // Rows queued before the AR -> HR mapping carry the LegiScan form.
+      const chunk = verified.slice(i, i + insertBatchSize).map((row) => ({
+        ...row,
+        state_link: normalizeStateLink(row.state_link),
+      }));
       // Insert-only: existing rows keep their summaries, status and text, which
       // `sync-updated-bills` owns.
       const { error } = await supabaseAdmin
