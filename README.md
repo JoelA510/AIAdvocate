@@ -255,7 +255,7 @@ AIAdvocate/
 
 ## Security & Privacy
 
-- No survivor-identifying information is collected. Anonymous auth tokens map only to Supabase session IDs.
+- The public app collects no name, email, or account. What is stored (saved bills, reactions, vote-alert subscriptions, and a push-notification token for users who allow notifications) is tied to an anonymous session. An address or ZIP typed into representative lookup is sent to a geocoding provider and is not tied to the session. Risks, controls, and open gaps are in [`docs/risk-register.md`](docs/risk-register.md).
 - Secrets live in environment variables or Supabase Vault; never hardcode keys in the client.
 - Edge functions redact third-party API payloads before logging. Only aggregate diagnostics flow into `cron_job_errors`.
 - Row-level security denies writes from `anon`/`authenticated` roles; mutations must go through RPCs/edge functions with explicit policies.
