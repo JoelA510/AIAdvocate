@@ -49,7 +49,10 @@ verify_jwt = true
 import_map = "./functions/find-your-rep/deno.json"
 
 [functions."summarize-simple"]
-verify_jwt = false
+# Retired (fail-closed 410 stub). Nothing invokes it (confirmed by repo
+# search); summaries come from sync-updated-bills. verify_jwt=true now that
+# it no longer needs to be reachable without a token.
+verify_jwt = true
 
 [functions."summarize-simple-backfill"]
 # Retired (fail-closed 410 stub): ran with no in-code auth, looping the
