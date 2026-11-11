@@ -37,6 +37,10 @@ export type StatusUpdate = Partial<
 export type RefreshStats = {
   started_at: string;
   finished_at: string | null;
+  // When a run last compared every tracked bill successfully: this run's
+  // finished_at if it did, otherwise carried over from the previous stats.
+  // public.get_data_freshness() shows it to readers as the last-checked date.
+  last_success_at: string | null;
   dry_run: boolean;
   tracked: number;
   without_pubinfo_id: number;
@@ -53,12 +57,26 @@ export type RefreshStats = {
   samples?: Array<{ id: number; bill: string; changes: StatusUpdate }>;
 };
 
+// The share of looked-up bills that must be found in the archive for a run to
+// count; the same floor sync-updated-bills applies (statusRefresh.ts).
+const MIN_COVERAGE = 0.9;
+
+/** Whether a run compared the tracked bills against the archive in full. */
+export const isCompleteRun = (stats: RefreshStats): boolean => {
+  const lookedUp = stats.tracked - stats.without_pubinfo_id;
+  return !stats.blocked && !stats.dry_run && stats.update_errors === 0 &&
+    lookedUp > 0 && stats.matched / lookedUp >= MIN_COVERAGE;
+};
+
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export type RefreshDeps = {
   listBills: () => Promise<TrackedBill[]>;
   updateBill: (id: number, changes: StatusUpdate) => Promise<void>;
   saveStats: (stats: RefreshStats) => Promise<void>;
+  // The stats the previous run saved, if any; used only to carry
+  // last_success_at across a run that did not succeed.
+  loadStats?: () => Promise<unknown>;
   fetchImpl?: FetchLike;
   now?: Date;
 };
@@ -131,6 +149,7 @@ export const refreshBillStatuses = async (
   const stats: RefreshStats = {
     started_at: now.toISOString(),
     finished_at: null,
+    last_success_at: null,
     dry_run: dryRun,
     tracked: 0,
     without_pubinfo_id: 0,
@@ -291,6 +310,26 @@ export const refreshBillStatuses = async (
 
   stats.finished_at = new Date().toISOString();
   if (!dryRun) {
+    if (isCompleteRun(stats)) {
+      stats.last_success_at = stats.finished_at;
+    } else {
+      try {
+        const previous = await deps.loadStats?.();
+        const carried = previous && typeof previous === "object"
+          ? (previous as Record<string, unknown>).last_success_at
+          : null;
+        stats.last_success_at =
+          typeof carried === "string" && Number.isFinite(Date.parse(carried))
+            ? carried
+            : null;
+      } catch (error) {
+        pushError(
+          `previous stats not read: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
     try {
       await deps.saveStats(stats);
     } catch (error) {

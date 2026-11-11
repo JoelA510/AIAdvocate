@@ -7,6 +7,7 @@ import { keepPreviousData, useQuery, type UseQueryOptions } from "@tanstack/reac
 
 import BillComponent, { type Bill } from "@/components/Bill";
 import BillSkeleton from "@/components/BillSkeleton";
+import DataFreshnessNote from "@/components/DataFreshnessNote";
 import EmptyState from "@/components/EmptyState";
 import { BILL_LIST_COLUMNS } from "@/lib/billColumns";
 import { fetchTranslationsForBills } from "@/lib/translation";
@@ -419,6 +420,7 @@ export default function BillsHomeScreen() {
         data={displayBills}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderBillItem}
+        ListHeaderComponent={DataFreshnessNote}
         // Each newly mounted card fires its own get_bill_details_for_user RPC
         // (cached per bill thereafter), so the initial render count sets the
         // size of the request burst on a cold feed, not just the layout cost.

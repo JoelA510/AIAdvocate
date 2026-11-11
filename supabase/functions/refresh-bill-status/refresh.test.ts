@@ -308,6 +308,56 @@ Deno.test("a Cloudflare challenge stops the run and is recorded", async () => {
   assert(h.saved[0].blocked);
 });
 
+Deno.test("last_success_at: set by a complete run, carried across a failed one", async () => {
+  const files = {
+    "pubinfo_daily_Mon.zip": {
+      bytes: await archive(dailyTables()),
+      lastModified: FRESH,
+    },
+  };
+  const ok = harness([tracked(1, "202520260AB1")]);
+  const good = await refreshBillStatuses({
+    ...ok.deps,
+    fetchImpl: server(files),
+    // A complete run does not need the previous stats.
+    loadStats: () => Promise.reject(new Error("should not be read")),
+  });
+  assertEquals(good.errors, []);
+  assert(good.finished_at !== null);
+  assertEquals(good.last_success_at, good.finished_at);
+  assertEquals(ok.saved[0].last_success_at, good.finished_at);
+
+  const blockedRun = (loadStats?: () => Promise<unknown>) => {
+    const h = harness([tracked(1, "202520260AB1")]);
+    return refreshBillStatuses({
+      ...h.deps,
+      fetchImpl: server({ "pubinfo_daily_Tue.zip": 403 }, []),
+      loadStats,
+    });
+  };
+  const carried = await blockedRun(() => Promise.resolve(good));
+  assert(carried.blocked);
+  assertEquals(carried.last_success_at, good.finished_at);
+
+  // Nothing to carry: stats from before the field existed, no stats at all,
+  // a value that is not a timestamp, or a read that fails.
+  for (
+    const previous of [
+      { finished_at: "2026-11-10T10:41:00Z" },
+      null,
+      { last_success_at: "yesterday" },
+      { last_success_at: 5 },
+    ]
+  ) {
+    const run = await blockedRun(() => Promise.resolve(previous));
+    assertEquals(run.last_success_at, null);
+  }
+  assertEquals((await blockedRun()).last_success_at, null);
+  const unreadable = await blockedRun(() => Promise.reject(new Error("db")));
+  assertEquals(unreadable.last_success_at, null);
+  assert(unreadable.errors.some((e) => e.includes("previous stats not read")));
+});
+
 Deno.test("no archive reachable: nothing written, bills counted as not found", async () => {
   const h = harness([tracked(1, "202520260AB1")]);
   const stats = await refreshBillStatuses({ ...h.deps, fetchImpl: server({}) });
