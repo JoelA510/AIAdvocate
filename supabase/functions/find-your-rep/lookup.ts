@@ -91,3 +91,16 @@ export function shouldWriteCacheResults(
 ) {
   return cacheType !== "zip" || representatives.length > 0;
 }
+
+/**
+ * The body returned to the app: the representatives and where they came
+ * from. The geocoded point stays on the server -- the app has no use for it,
+ * and for a street-address lookup it is the user's location.
+ */
+export function buildLookupResponse(
+  representatives: unknown[],
+  cacheable: boolean,
+  source: "cache" | "fresh",
+): { results: unknown[]; cacheable: boolean; source: "cache" | "fresh" } {
+  return { results: representatives, cacheable, source };
+}

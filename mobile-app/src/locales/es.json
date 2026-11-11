@@ -62,6 +62,7 @@
       "none": "No se encontraron representantes para esa ubicación."
     },
     "placeholder": "Ingresa dirección o código postal (p. ej., 94546)",
+    "privacyNote": "Lo que escribes se envía a un servicio de mapas para encontrar tus distritos. No se guardan las direcciones.",
     "searching": "Buscando…",
     "title": "Busca a tus representantes",
     "viewProfile": "Ver perfil"

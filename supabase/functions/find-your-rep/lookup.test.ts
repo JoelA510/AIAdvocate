@@ -6,6 +6,7 @@ import {
 
 import {
   buildLocationIqSearchUrl,
+  buildLookupResponse,
   normalizeQuery,
   representativesFromCache,
   shouldServeCachedResults,
@@ -71,4 +72,22 @@ Deno.test("representativesFromCache only returns arrays", () => {
   assertEquals(representativesFromCache(reps), reps);
   assertEquals(representativesFromCache(null), []);
   assertEquals(representativesFromCache({ id: "not-an-array" }), []);
+});
+
+Deno.test("the response carries the representatives and never the geocoded point", () => {
+  const reps = [{ id: "ocd-person/1", name: "A" }];
+  for (const source of ["cache", "fresh"] as const) {
+    const body = buildLookupResponse(reps, true, source);
+    assertEquals(Object.keys(body).sort(), ["cacheable", "results", "source"]);
+    assertEquals(body.results, reps);
+    assertEquals(body.source, source);
+    assertFalse("lat" in body);
+    assertFalse("lon" in body);
+  }
+  // An address lookup: not cacheable, still nothing but the three fields.
+  assertEquals(buildLookupResponse([], false, "fresh"), {
+    results: [],
+    cacheable: false,
+    source: "fresh",
+  });
 });

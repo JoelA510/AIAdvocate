@@ -340,6 +340,16 @@ export default function FindYourRep({ bill }: { bill?: Bill | null }) {
         placeholder={t("findYourRep.placeholder", "Enter address or ZIP (e.g., 94546)")}
         keyboardType={Platform.OS === "web" ? "default" : "default"}
       />
+      <Text
+        variant="bodySmall"
+        style={{ color: theme.colors.onSurfaceVariant, marginTop: 6 }}
+        testID="find-your-rep-privacy-note"
+      >
+        {t(
+          "findYourRep.privacyNote",
+          "What you enter is sent to a mapping service to find your districts. Street addresses are not stored.",
+        )}
+      </Text>
       <View style={{ height: 12 }} />
       <Button mode="contained" onPress={onSearch} disabled={loading}>
         {loading ? t("findYourRep.searching", "Searching…") : t("common.search", "Search")}

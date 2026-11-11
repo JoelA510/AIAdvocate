@@ -35,9 +35,12 @@ is stored is tied to an anonymous session id:
 | Representative lookups, by ZIP code or city | `location_lookup_cache` (7-day expiry) | Not tied to a session; avoids repeat geocoding |
 
 Representative lookup is the one place the app asks for a location: it invites
-an address or a ZIP code. What the user types is sent to a geocoding provider to
-be turned into coordinates. It is not tied to the session, and it is cached only
-when it is a ZIP code or reads as a city name (see R1).
+an address or a ZIP code, and says under the field that the entry goes to a
+mapping service. What the user types is sent to a geocoding provider to be
+turned into coordinates, which stay on the server. It is not tied to the
+session, and it is cached only when it is a ZIP code or reads as a city name;
+a street address is never stored. The cache is readable only by the server
+(see R1).
 
 Staff accounts on the web admin are the one place an email address exists.
 
@@ -56,15 +59,18 @@ Severity: high. The people this app serves can be harmed by a leak.
   (`mobile-app/src/lib/sentry.ts`). The language model receives bill text, never
   user-written text. Push messages carry only a bill number and title.
   Representative lookup sends coordinates, not the query, to the legislator
-  data provider.
+  data provider, does not return them to the app, and keeps its cache
+  (`location_lookup_cache`) readable by the service role only
+  (`20261116120000`).
 - **Signal:** none automated. Expired lookup rows are deleted by the
   `cleanup-location-cache` cron; `cron_job_errors` rows are deleted after 30
   days by `cleanup-cron-job-errors`.
 - **Open:**
-  1. Representative lookup invites a street address and sends what is typed to
-     the geocoding provider as typed; a query made only of letters is cached as
-     a city. Narrow what is sent and what is cached, and tell the user the
-     lookup goes to a third party.
+  1. Representative lookup still sends a street address to the geocoding
+     provider as typed, by decision (a ZIP alone gives approximate districts);
+     the user is told. A query made only of letters is cached as a city, so
+     text that is not a city can be cached for 7 days, readable only by the
+     server.
   2. No retention limit on `events` or on push tokens that have stopped working.
   3. No published privacy policy or data-retention statement.
   4. Nothing checks the "no identifying information" claim mechanically.
@@ -239,3 +245,4 @@ Severity: medium.
 | --- | --- |
 | 2026-11-11 | First written version, compiled from the repository. Corrected in review: representative lookup invites an address; the summary triggers skip the service role. |
 | 2026-11-11 | R2: the Edge Function authorization gap that was tracked privately is closed; the open item is removed. |
+| 2026-11-11 | R1: the lookup cache is no longer publicly readable, coordinates are no longer returned to the app, and the lookup field says the entry goes to a third party. Sending addresses and caching cities stay, by decision. |
