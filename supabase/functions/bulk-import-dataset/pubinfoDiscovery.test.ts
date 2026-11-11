@@ -93,6 +93,9 @@ const plan = (
 Deno.test("billNumberFromPubinfoId accepts the regular session only", () => {
   assertEquals(billNumberFromPubinfoId(id("AB1568"), 2025, 2026), "AB1568");
   assertEquals(billNumberFromPubinfoId(id("SCR10"), 2025, 2026), "SCR10");
+  // LegiScan's name for an Assembly house resolution.
+  assertEquals(billNumberFromPubinfoId(id("HR5"), 2025, 2026), "AR5");
+  assertEquals(billNumberFromPubinfoId(id("SR17"), 2025, 2026), "SR17");
   // First extraordinary session, another session, junk.
   assertEquals(billNumberFromPubinfoId("202520261AB1", 2025, 2026), null);
   assertEquals(billNumberFromPubinfoId("202320240AB1", 2025, 2026), null);

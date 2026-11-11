@@ -23,6 +23,8 @@ import {
   PubinfoFetchError,
   readBillText,
   serializePubinfoIndex,
+  toLegiScanMeasure,
+  toLegislatureMeasure,
 } from "./pubinfo.ts";
 
 // Row shape copied from the real 2025 BILL_VERSION_TBL.dat (2026-11-09).
@@ -671,5 +673,28 @@ Deno.test("camlBillToHtml reads resolutions, whose body is caml:Resolution", () 
   assertEquals(
     camlBillToHtml("<caml:MeasureDoc><caml:Description/></caml:MeasureDoc>"),
     null,
+  );
+});
+
+Deno.test("Assembly house resolutions: LegiScan says AR, the Legislature says HR", () => {
+  assertEquals(toLegislatureMeasure("AR117"), "HR117");
+  assertEquals(toLegiScanMeasure("HR117"), "AR117");
+  // Every other type is the same in both, including ones that start alike.
+  for (const number of ["AB1568", "ACR27", "AJR2", "ACA6", "SR17", "SB99"]) {
+    assertEquals(toLegislatureMeasure(number), number);
+    assertEquals(toLegiScanMeasure(number), number);
+  }
+  // A queued link built from the LegiScan number resolves to the pubinfo id.
+  assertEquals(
+    billIdFromStateLink(
+      "https://leginfo.legislature.ca.gov/faces/billStatusClient.xhtml?bill_id=202520260AR117",
+    ),
+    "202520260HR117",
+  );
+  assertEquals(
+    billIdFromStateLink(
+      "https://leginfo.legislature.ca.gov/faces/billStatusClient.xhtml?bill_id=202520260ACR27",
+    ),
+    "202520260ACR27",
   );
 });

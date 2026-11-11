@@ -19,6 +19,7 @@ import {
   PubinfoFetchError,
   type PubinfoIndex,
   readBillText,
+  toLegislatureMeasure,
 } from "../_shared/pubinfo.ts";
 import {
   applyResolvedIds,
@@ -796,8 +797,9 @@ const buildCaStateLink = (
   yearEnd: number | null,
 ): string | null => {
   if (!billNumber || yearStart === null || yearEnd === null) return null;
+  // billNumber is LegiScan's; leginfo wants the Legislature's (AR -> HR).
   return "https://leginfo.legislature.ca.gov/faces/billStatusClient.xhtml" +
-    `?bill_id=${yearStart}${yearEnd}0${billNumber}`;
+    `?bill_id=${yearStart}${yearEnd}0${toLegislatureMeasure(billNumber)}`;
 };
 
 const selectExistingBillIds = async (

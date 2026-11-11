@@ -209,12 +209,24 @@ export const camlToText = (xml: string): string =>
     .trim();
 
 /** "...?bill_id=202520260AB1568" -> "202520260AB1568", else null. */
+// LegiScan numbers Assembly house resolutions "AR<n>"; the Legislature (leginfo
+// and pubinfo) calls the same measures "HR<n>". Every other measure type has
+// the same prefix in both.
+export const toLegislatureMeasure = (number: string): string =>
+  number.replace(/^AR(\d+)$/, "HR$1");
+export const toLegiScanMeasure = (number: string): string =>
+  number.replace(/^HR(\d+)$/, "AR$1");
+
 export const billIdFromStateLink = (
   stateLink: string | null,
 ): string | null => {
   if (!stateLink) return null;
   try {
-    return new URL(stateLink).searchParams.get("bill_id");
+    const billId = new URL(stateLink).searchParams.get("bill_id");
+    // Links built from a LegiScan number before the AR/HR mapping existed.
+    return billId === null
+      ? null
+      : billId.replace(/^(\d{9})AR(\d+)$/, "$1HR$2");
   } catch {
     return null;
   }

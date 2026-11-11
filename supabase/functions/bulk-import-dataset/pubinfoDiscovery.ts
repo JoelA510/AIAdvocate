@@ -16,6 +16,7 @@
 //     and sharing the response with the pinned-bill lookup, then hands the
 //     matches here.
 
+import { toLegiScanMeasure } from "../_shared/pubinfo.ts";
 import type { MasterListMatch } from "./discovery.ts";
 
 // `version` identifies the bill version ("YYYY-MM-DD#<version_num>"): two
@@ -91,7 +92,11 @@ const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const addDays = (day: string, days: number) =>
   isoDay(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS);
 
-/** "202520260AB1568" -> "AB1568" for the regular session; else null. */
+/**
+ * "202520260AB1568" -> "AB1568" for the regular session; else null. The
+ * result is LegiScan's number, which is what bills.bill_number holds and what
+ * getMasterList is matched on: "202520260HR5" -> "AR5".
+ */
 export const billNumberFromPubinfoId = (
   pubinfoId: string,
   yearStart: number,
@@ -100,7 +105,7 @@ export const billNumberFromPubinfoId = (
   const prefix = `${yearStart}${yearEnd}0`;
   if (!pubinfoId.startsWith(prefix)) return null;
   const number = pubinfoId.slice(prefix.length);
-  return /^[A-Z]+\d+$/.test(number) ? number : null;
+  return /^[A-Z]+\d+$/.test(number) ? toLegiScanMeasure(number) : null;
 };
 
 const versionDate = (version: string): string => version.slice(0, 10);
