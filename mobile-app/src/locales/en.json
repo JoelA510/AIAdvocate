@@ -59,6 +59,7 @@
       "none": "No representatives found for that location."
     },
     "placeholder": "Enter address or ZIP (e.g., 94546)",
+    "privacyNote": "What you enter is sent to a mapping service to find your districts. Street addresses are not stored.",
     "searching": "Searching…",
     "title": "Find Your Representatives",
     "viewProfile": "View profile"

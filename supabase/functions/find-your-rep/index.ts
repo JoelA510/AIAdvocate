@@ -7,6 +7,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { resolveServiceKey } from "../_shared/utils.ts";
 import {
   buildLocationIqSearchUrl,
+  buildLookupResponse,
   type CacheType,
   normalizeQuery,
   ProviderRequestError,
@@ -179,11 +180,9 @@ serve(async (req) => {
             })
             .eq("lookup_key", lookupKey);
 
-          return jsonResponse({
-            results: cachedRepresentatives,
-            cacheable: true,
-            source: "cache",
-          });
+          return jsonResponse(
+            buildLookupResponse(cachedRepresentatives, true, "cache"),
+          );
         }
       }
     }
@@ -242,13 +241,9 @@ serve(async (req) => {
       }
     }
 
-    return jsonResponse({
-      results: representatives,
-      cacheable,
-      source: "fresh",
-      lat,
-      lon,
-    });
+    return jsonResponse(
+      buildLookupResponse(representatives, cacheable, "fresh"),
+    );
   } catch (error) {
     logLookupError(error);
     return jsonResponse({ error: LOOKUP_UNAVAILABLE_MESSAGE }, 500);
