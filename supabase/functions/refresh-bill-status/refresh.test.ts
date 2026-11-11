@@ -371,3 +371,59 @@ Deno.test("a hearing removed from a loaded hearing table clears the calendar", (
   assertEquals(diffBillStatus({ ...stored, calendar: [] }, next), null);
   assertEquals(diffBillStatus({ ...stored, calendar: null }, next), null);
 });
+
+Deno.test("jsonb key order is not a change", () => {
+  // As written by the refresh...
+  const next = {
+    status: "2",
+    status_date: "2026-05-26",
+    history: [{
+      date: "2026-01-12",
+      action: "Read first time.",
+      chamber: "A" as const,
+      sequence: 1,
+    }],
+    progress: [{ date: "2026-01-12", event: 1 }],
+    calendar: [{
+      date: "2026-03-03",
+      time: "09:00",
+      type: "Hearing" as const,
+      description: "Assembly Public Safety Hearing",
+      chamber: "A" as const,
+      location: "State Capitol, Room 126",
+    }],
+  };
+  // ...and as Postgres jsonb hands it back (keys by length, then bytewise).
+  const stored: TrackedBill = {
+    id: 1,
+    state_link: null,
+    status: "2",
+    status_date: "2026-05-26",
+    history: [{
+      date: "2026-01-12",
+      action: "Read first time.",
+      chamber: "A",
+      sequence: 1,
+    }],
+    progress: [{ date: "2026-01-12", event: 1 }],
+    calendar: [{
+      date: "2026-03-03",
+      time: "09:00",
+      type: "Hearing",
+      chamber: "A",
+      location: "State Capitol, Room 126",
+      description: "Assembly Public Safety Hearing",
+    }],
+  };
+  assertEquals(diffBillStatus(stored, next), null);
+  // A real difference is still seen, and array order still matters.
+  assertEquals(
+    Object.keys(
+      diffBillStatus(stored, {
+        ...next,
+        calendar: [{ ...next.calendar[0], time: "10:00" }],
+      })!,
+    ),
+    ["calendar"],
+  );
+});
