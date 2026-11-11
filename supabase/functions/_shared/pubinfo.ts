@@ -217,6 +217,12 @@ export const toLegislatureMeasure = (number: string): string =>
 export const toLegiScanMeasure = (number: string): string =>
   number.replace(/^HR(\d+)$/, "AR$1");
 
+/** A stored leginfo link with the AR form rewritten to the Legislature's HR. */
+export const normalizeStateLink = (stateLink: string | null): string | null =>
+  stateLink === null
+    ? null
+    : stateLink.replace(/(bill_id=\d{9})AR(\d+)/, "$1HR$2");
+
 export const billIdFromStateLink = (
   stateLink: string | null,
 ): string | null => {

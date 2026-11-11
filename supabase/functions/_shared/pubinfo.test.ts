@@ -16,6 +16,7 @@ import {
   loadPubinfoIndex,
   loadPubinfoIndexCached,
   loadSessionPubinfoIndexCached,
+  normalizeStateLink,
   pacedFetch,
   parseBillVersionTable,
   pubinfoCacheKey,
@@ -697,4 +698,18 @@ Deno.test("Assembly house resolutions: LegiScan says AR, the Legislature says HR
     ),
     "202520260ACR27",
   );
+});
+
+Deno.test("normalizeStateLink rewrites only the AR form of a stored link", () => {
+  const base =
+    "https://leginfo.legislature.ca.gov/faces/billStatusClient.xhtml?bill_id=";
+  assertEquals(
+    normalizeStateLink(`${base}202520260AR117`),
+    `${base}202520260HR117`,
+  );
+  assertEquals(
+    normalizeStateLink(`${base}202520260ACR27`),
+    `${base}202520260ACR27`,
+  );
+  assertEquals(normalizeStateLink(null), null);
 });

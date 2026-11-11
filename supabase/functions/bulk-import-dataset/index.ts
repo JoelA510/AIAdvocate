@@ -15,6 +15,7 @@ import {
   type FetchLike,
   ingestionCursorStore,
   loadSessionPubinfoIndexCached,
+  normalizeStateLink,
   pacedFetch,
   PubinfoFetchError,
   type PubinfoIndex,
@@ -1673,7 +1674,11 @@ const runQueuedVerification = async (
   if (verified.length > 0) {
     const insertBatchSize = getUpsertBatchSize();
     for (let i = 0; i < verified.length; i += insertBatchSize) {
-      const chunk = verified.slice(i, i + insertBatchSize);
+      // Rows queued before the AR -> HR mapping carry the LegiScan form.
+      const chunk = verified.slice(i, i + insertBatchSize).map((row) => ({
+        ...row,
+        state_link: normalizeStateLink(row.state_link),
+      }));
       // Insert-only: existing rows keep their summaries, status and text, which
       // `sync-updated-bills` owns.
       const { error } = await supabaseAdmin
