@@ -24,8 +24,8 @@ an audit result.
 ## 1. What the app holds about a person
 
 Public users sign in anonymously (`mobile-app/src/providers/AuthProvider.tsx`).
-The app asks for no name, email, phone number, or street address. What is
-stored is tied to an anonymous session id:
+The app asks for no name, email, or phone number, and creates no account. What
+is stored is tied to an anonymous session id:
 
 | Data | Where | Kept because |
 | --- | --- | --- |
@@ -33,6 +33,11 @@ stored is tied to an anonymous session id:
 | Push-notification token | `user_push_tokens` | Only for users who allow notifications |
 | Usage events (event type and bill id) | `events` | Aggregate usage |
 | Representative lookups, by ZIP code or city | `location_lookup_cache` (7-day expiry) | Not tied to a session; avoids repeat geocoding |
+
+Representative lookup is the one place the app asks for a location: it invites
+an address or a ZIP code. What the user types is sent to a geocoding provider to
+be turned into coordinates. It is not tied to the session, and it is cached only
+when it is a ZIP code or reads as a city name (see R1).
 
 Staff accounts on the web admin are the one place an email address exists.
 
@@ -56,9 +61,10 @@ Severity: high. The people this app serves can be harmed by a leak.
   `cleanup-location-cache` cron; `cron_job_errors` rows are deleted after 30
   days by `cleanup-cron-job-errors`.
 - **Open:**
-  1. The lookup query a user types is sent to the geocoding provider as typed,
-     and a query made only of letters is cached as a city. Narrow what is sent
-     and what is cached.
+  1. Representative lookup invites a street address and sends what is typed to
+     the geocoding provider as typed; a query made only of letters is cached as
+     a city. Narrow what is sent and what is cached, and tell the user the
+     lookup goes to a third party.
   2. No retention limit on `events` or on push tokens that have stopped working.
   3. No published privacy policy or data-retention statement.
   4. Nothing checks the "no identifying information" claim mechanically.
@@ -155,16 +161,24 @@ Severity: high. A summary is the first thing a user reads about a bill.
 - **Control:** a fixed prompt that forbids stating effects the text does not
   state, low temperature, and a strict output schema
   (`supabase/functions/sync-updated-bills/index.ts`). Database triggers reject
-  placeholder or too-short summaries and stop source refreshes from overwriting
-  a generated or admin-edited one (`guard_bill_summaries`,
-  `validate_bill_summary`). Admins can correct a summary or translation, with
-  an audit row. The app labels summaries as AI-generated.
+  placeholder or too-short summaries and block overwrites from client roles
+  (`guard_bill_summaries`, `validate_bill_summary`). Those triggers skip the
+  service role and admins (`20260430110000`), so they do not constrain the
+  ingestion worker, which runs as the service role. What keeps a source refresh
+  from replacing a summary is the worker's own code: the bill upsert keeps the
+  existing summary whenever the incoming one is null
+  (`20260501124000_fix_bill_translation_upsert_columns.sql`). Admins can correct
+  a summary or translation, with an audit row. The app labels summaries as
+  AI-generated.
 - **Signal:** `ai_job_log`; the `bills_missing_summary` health check, which
   checks presence only.
 - **Open:**
   1. No human review before a summary is published, and no check of accuracy.
-  2. No "not legal advice" notice in the app.
-  3. Translations are not validated beyond parsing.
+  2. Nothing in the database stops a service-role writer from replacing an
+     existing or admin-edited summary with a non-null one; the rule lives in
+     `AGENTS.md` and in the worker's code.
+  3. No "not legal advice" notice in the app.
+  4. Translations are not validated beyond parsing.
 
 ### R8. Notifications are sent in error or abused
 
@@ -224,4 +238,4 @@ Severity: medium.
 
 | Date | What changed |
 | --- | --- |
-| 2026-11-11 | First written version, compiled from the repository. |
+| 2026-11-11 | First written version, compiled from the repository. Corrected in review: representative lookup invites an address; the summary triggers skip the service role. |
