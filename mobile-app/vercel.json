@@ -2,9 +2,15 @@
   "installCommand": "yarn install --frozen-lockfile",
   "buildCommand": "npx expo export -p web",
   "outputDirectory": "dist",
+  "cleanUrls": true,
   "redirects": [
     { "source": "/(tabs)/index", "destination": "/", "permanent": true },
     { "source": "/(tabs)/index/", "destination": "/", "permanent": true },
     { "source": "/(tabs)/index/:rest*", "destination": "/", "permanent": true }
+  ],
+  "rewrites": [
+    { "source": "/bill/:id", "destination": "/bill/[id]" },
+    { "source": "/legislator/:id", "destination": "/legislator/[id]" },
+    { "source": "/advocacy/legislator/:id", "destination": "/advocacy/legislator/[id]" }
   ]
 }
