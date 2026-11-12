@@ -22,7 +22,9 @@ select
     where p.oid = 'public.get_data_freshness()'::regprocedure and a.grantee = 0
   ) as public_can; -- expect false
 
--- 3. The table behind it is still closed to clients.
+-- 3. The table behind it is still closed to clients. (False since
+--    20261117120000; before that the default grants were present and only
+--    the row-level security policy kept clients out.)
 select
   has_table_privilege('anon', 'public.ingestion_cursors', 'SELECT') as anon_reads_cursors,           -- expect false
   has_table_privilege('authenticated', 'public.ingestion_cursors', 'SELECT') as authenticated_reads; -- expect false

@@ -94,6 +94,11 @@ Severity: high.
 - **Open:**
   1. No per-session rate limit on the functions that call paid APIs.
   2. The verification SQL does not run in CI.
+  3. New tables in `public` still start with every privilege granted to the
+     client roles (the platform default). Internal tables were narrowed by
+     hand (`20261117120000`); a table added later needs the same, and
+     `supabase/verification/20261117_client_grants.sql` shows what each role
+     holds.
 
 ### R3. The admin surface is compromised
 
@@ -246,3 +251,4 @@ Severity: medium.
 | 2026-11-11 | First written version, compiled from the repository. Corrected in review: representative lookup invites an address; the summary triggers skip the service role. |
 | 2026-11-11 | R2: the Edge Function authorization gap that was tracked privately is closed; the open item is removed. |
 | 2026-11-11 | R1: the lookup cache is no longer publicly readable, coordinates are no longer returned to the app, and the lookup field says the entry goes to a third party. Sending addresses and caching cities stay, by decision. |
+| 2026-11-12 | R2: client roles lost their default grants on internal tables, write grants on `app_config`, and TRUNCATE/REFERENCES/TRIGGER everywhere. Open item 3 added for the default privileges on new tables. |
