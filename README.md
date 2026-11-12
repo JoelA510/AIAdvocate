@@ -255,6 +255,7 @@ AIAdvocate/
 
 ## Security & Privacy
 
+- Report suspected vulnerabilities privately using the instructions in [`SECURITY.md`](SECURITY.md). Do not put vulnerability details or personal data in public issues.
 - The public app collects no name, email, or account. What is stored (saved bills, reactions, vote-alert subscriptions, and a push-notification token for users who allow notifications) is tied to an anonymous session. An address or ZIP typed into representative lookup is sent to a geocoding provider and is not tied to the session. Risks, controls, and open gaps are in [`docs/risk-register.md`](docs/risk-register.md).
 - Secrets live in environment variables or Supabase Vault; never hardcode keys in the client.
 - Edge functions redact third-party API payloads before logging. Only aggregate diagnostics flow into `cron_job_errors`.
@@ -264,4 +265,4 @@ AIAdvocate/
 
 ## Support
 
-Questions, bug reports, or feature requests? Reach out to Love Never Fails or open a GitHub issue. Every improvement helps survivors stay informed, empowered, and safe.
+Questions, non-security bug reports, or feature requests? Reach out to Love Never Fails or open a GitHub issue without private information. For suspected vulnerabilities, follow [`SECURITY.md`](SECURITY.md). Every improvement helps survivors stay informed, empowered, and safe.

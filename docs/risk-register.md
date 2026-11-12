@@ -207,13 +207,14 @@ Severity: medium.
 Severity: medium.
 
 - **Control:** patched versions are pinned through `resolutions`; CI installs
-  from the frozen lockfile.
+  from the frozen lockfile. [`SECURITY.md`](../SECURITY.md) documents private
+  vulnerability reporting, scope, testing boundaries, and supported versions;
+  GitHub private vulnerability reporting was verified enabled on 2026-11-12.
 - **Signal:** none automated in this repository.
 - **Open:**
   1. CI does not run an advisory audit.
   2. No Dependabot configuration is committed.
   3. Some Edge Function imports are not pinned to an exact version.
-  4. No `SECURITY.md`.
 
 ### R10. The service becomes unavailable or data is lost
 
@@ -252,3 +253,4 @@ Severity: medium.
 | 2026-11-11 | R2: the Edge Function authorization gap that was tracked privately is closed; the open item is removed. |
 | 2026-11-11 | R1: the lookup cache is no longer publicly readable, coordinates are no longer returned to the app, and the lookup field says the entry goes to a third party. Sending addresses and caching cities stay, by decision. |
 | 2026-11-12 | R2: client roles lost their default grants on internal tables, write grants on `app_config`, and TRUNCATE/REFERENCES/TRIGGER everywhere. Open item 3 added for the default privileges on new tables. |
+| 2026-11-12 | R9: added SECURITY.md and README reporting links; verified GitHub private vulnerability reporting is enabled. Removed the missing-policy item; dependency audit and update gaps remain open. |
