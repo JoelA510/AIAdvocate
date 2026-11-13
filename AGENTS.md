@@ -74,6 +74,11 @@ Do not select or print raw `decrypted_secret` values.
 
 Use placeholders such as `<redacted>` in logs, docs, PR descriptions, and tests.
 
+Follow [SECURITY.md](SECURITY.md) for suspected vulnerabilities. Do not publish exploit
+details, session or push tokens, location data, or personal information in issues, PRs,
+CI logs, or artifacts. A draft PR in this public repo is not private. Use synthetic
+evidence and coordinate private disclosure with the maintainer.
+
 ## 4. Supabase and PostgreSQL rules
 
 Prefer checked-in Supabase migrations over dashboard-only SQL changes.
@@ -191,7 +196,12 @@ For scheduled Edge Function work, verify in this order:
 
 Do not treat cron “success” alone as ingestion success. A cron SQL wrapper can succeed while logging internal failures.
 
-## 6. Known production incident context
+## 6. Historical production incident context
+
+The observations below describe an earlier incident, not current production state.
+Before using sections 6–13 as a repair plan, verify the present symptom and relevant
+checked-in fixes. Do not replay an invocation or backfill solely because it appears here;
+production mutations still require the authorization in section 1.
 
 The bill-ingestion pipeline was stale for months. Read-only inspection previously found:
 
