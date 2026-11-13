@@ -104,7 +104,3 @@ export function getConfig(): AppConfig {
   }
   return config;
 }
-
-export function setConfig(overrides: AppConfig) {
-  config = { ...overrides };
-}

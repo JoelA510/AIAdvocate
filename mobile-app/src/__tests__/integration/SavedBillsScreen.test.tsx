@@ -35,7 +35,6 @@ jest.mock("../../lib/config", () => ({
     supabaseUrl: "https://test.supabase.co",
     supabaseAnonKey: "test-key",
   })),
-  setConfig: jest.fn(),
 }));
 jest.mock("expo-router", () => {
   const React = require("react");
