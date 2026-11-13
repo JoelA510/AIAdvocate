@@ -63,7 +63,8 @@ Severity: high. The people this app serves can be harmed by a leak.
   (`location_lookup_cache`) readable by the service role only
   (`20261116120000`). Reactions are readable only by their author; the app
   gets totals from a function that returns counts and the caller's own
-  reaction (`20261118120000`).
+  reaction (`20261118120000`) The list of anonymous user ids in
+  `profiles` is readable only row by row by its owner (`20261119120000`).
 - **Signal:** none automated. Expired lookup rows are deleted by the
   `cleanup-location-cache` cron; `cron_job_errors` rows are deleted after 30
   days by `cleanup-cron-job-errors`.
@@ -255,6 +256,6 @@ Severity: medium.
 | 2026-11-11 | R2: the Edge Function authorization gap that was tracked privately is closed; the open item is removed. |
 | 2026-11-11 | R1: the lookup cache is no longer publicly readable, coordinates are no longer returned to the app, and the lookup field says the entry goes to a third party. Sending addresses and caching cities stay, by decision. |
 | 2026-11-12 | R2: client roles lost their default grants on internal tables, write grants on `app_config`, and TRUNCATE/REFERENCES/TRIGGER everywhere. Open item 3 added for the default privileges on new tables. |
-| 2026-11-13 | R2: client access deny-by-default for new objects, unused client write grants removed, `profiles` limited to its owner, CI guard `check:migrations` added; open item 3 closed. |
 | 2026-11-13 | R1: reactions are no longer publicly readable; counts come from `get_bill_details_for_user`. R2: `app_config` is server-only and its unused placeholder rows are deleted. |
+| 2026-11-13 | R2: client access deny-by-default for new objects, unused client write grants removed, `profiles` (one row per anonymous user) readable only by its owner (R1), CI guard `check:migrations` added; open item 3 closed. |
 | 2026-11-12 | R9: added SECURITY.md and README reporting links; verified GitHub private vulnerability reporting is enabled. Removed the missing-policy item; dependency audit and update gaps remain open. |
