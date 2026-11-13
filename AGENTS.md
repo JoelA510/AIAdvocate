@@ -278,7 +278,7 @@ Supabase client initialization
 auth/JWT/custom-secret checks
 ```
 
-## 8. Current ingestion repair priorities
+## 8. Ingestion repair priorities (from the historical incident)
 
 For bill-ingestion repair work, use this order:
 
