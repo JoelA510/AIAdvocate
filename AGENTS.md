@@ -582,6 +582,8 @@ Do not claim production behavior is fixed unless production evidence exists. For
 Implemented but not runtime-verified.
 ```
 
+Read [code review rules](docs/code-review.md) when reviewing changes.
+
 ## 15. PR expectations
 
 For PRs, include:
