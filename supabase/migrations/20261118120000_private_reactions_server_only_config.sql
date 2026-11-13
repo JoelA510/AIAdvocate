@@ -109,6 +109,11 @@ AS $$
   ) AS c;
 $$;
 
+-- Grants as before: totals only, so the public key may call it.
+REVOKE ALL ON FUNCTION public.get_reaction_counts(bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_reaction_counts(bigint)
+  TO anon, authenticated, service_role;
+
 -- 1c. Rows are private to their author.
 DROP POLICY IF EXISTS "Public can view reactions" ON public.reactions;
 
