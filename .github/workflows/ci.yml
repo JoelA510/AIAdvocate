@@ -34,6 +34,9 @@ jobs:
       - name: Check external API usage guardrail
         run: yarn workspace mobile-app check:external-api
 
+      - name: Check migration access guardrail
+        run: yarn workspace mobile-app check:migrations
+
       - name: Run tests
         run: yarn workspace mobile-app test --ci --runInBand
 

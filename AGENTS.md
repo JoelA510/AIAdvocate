@@ -100,6 +100,48 @@ For destructive or high-risk DB work, provide a plan first:
 * verification queries
 * known risks
 
+## 4a. Database access model (deny by default)
+
+Since `20261119120000`, the client roles (`anon`, `authenticated`) get nothing
+on a new table, view, sequence or function in `public` until a migration
+grants it. `service_role` keeps full table access by default, so Edge
+Functions are unaffected. The public app signs in anonymously, so the app's
+requests run as `authenticated`; `anon` is only the not-yet-signed-in state.
+
+When a migration adds or changes a database object:
+
+* **Tables:** enable row-level security, write the policies, then grant the
+  client roles the least they need, all in the same migration (for example
+  `GRANT SELECT ON public.x TO anon, authenticated` for public reference
+  data). Grant writes only for a table the app writes directly; today that is
+  `events` and `user_push_tokens` (`authenticated` only).
+* **Functions:** state who may call it: `REVOKE ALL ... FROM PUBLIC, anon`
+  for internal ones, then `GRANT EXECUTE` to the roles that call it. Write the
+  grant again on `CREATE OR REPLACE` so the reader does not have to look it up.
+* **`SECURITY DEFINER`:** use it only when the function must read past
+  row-level security. Set `search_path = ''`, schema-qualify every reference,
+  and if it takes a user id, refuse anything but `auth.uid()`. It runs as the
+  owner, so the function body is the only access check.
+* **Views:** create them `WITH (security_invoker = true)` so row-level
+  security applies to the reader.
+* **User-generated rows** (`bookmarks`, `reactions`, `subscriptions`,
+  `user_push_tokens`, `events`, `profiles`) are readable only by their
+  author. Never add a public read policy to them. When the app needs totals,
+  return the totals from a `SECURITY DEFINER` function (see
+  `get_bill_details_for_user`), never the rows.
+* **`app_config` is server-only.** Only `SECURITY DEFINER` functions and the
+  service role read it. Client configuration comes from build-time
+  `EXPO_PUBLIC_*` values, and secrets belong in Vault or Edge Function
+  secrets, never in this table.
+
+Enforcement: `yarn workspace mobile-app check:migrations` runs in CI and
+fails a migration after `20261119120000` that creates a public table without
+row-level security, a public function without an explicit
+`GRANT`/`REVOKE`, a `SECURITY DEFINER` function without `SET search_path`,
+or a public view without `security_invoker`. It cannot judge whether a grant
+is right, so also run `supabase/verification/20261117_client_grants.sql`
+after the migration is applied and read what each role now holds.
+
 ## 5. Supabase Edge Function and scheduler rules
 
 ### External API access — read `docs/external-api-policy.md` first
@@ -447,7 +489,7 @@ When modifying `public.upsert_bill_and_translation(jsonb,jsonb)` or equivalent i
 
 ## 12. RLS and grant hardening
 
-RLS/grant changes are security-sensitive.
+RLS/grant changes are security-sensitive. Section 4a describes the access model new objects must follow.
 
 Before changing grants or policies:
 
@@ -475,6 +517,8 @@ cleanup_expired_location_cache
 ```
 
 Do not revoke access in the same PR as invocation restore unless the user asks for hardening in that PR.
+
+These internal functions already deny client roles; keep it that way when replacing them (state the grant again, per section 4a).
 
 ## 13. Backfill rules
 
@@ -515,10 +559,12 @@ Preferred validation order:
 3. Typecheck.
 4. Lint.
 5. Build.
-6. Migration validation / SQL smoke tests.
+6. Migration validation / SQL smoke tests, including `yarn workspace mobile-app check:migrations` for any new migration (section 4a).
 7. Manual verification SQL for production-only behavior.
 
 Always state which commands were run and which were not run.
+
+The guard scripts (`check:public-env`, `check:external-api`, `check:migrations` and the others) read tracked files. Stage new files with `git add` before running them, or a new file is silently skipped and fails only in CI. `check:public-env` rejects provider key names anywhere in tracked files, migrations and comments included; refer to such keys by prefix or description.
 
 Do not claim production behavior is fixed unless production evidence exists. For migrations/code changes without live verification, say:
 
@@ -628,6 +674,8 @@ For Supabase/RPC/ingestion changes:
 ```text
 [ ] Migration or code patch is checked in.
 [ ] SECURITY DEFINER functions touched by the change have explicit search_path.
+[ ] New or replaced tables, views and functions state their client access (section 4a) and check:migrations passes.
+[ ] Client grants were read back with supabase/verification/20261117_client_grants.sql after the migration was applied.
 [ ] No changed function depends on nonexistent Vault helpers.
 [ ] Required secret/config presence can be verified without exposing values.
 [ ] PostgREST schema-cache reload instruction is included when needed.
