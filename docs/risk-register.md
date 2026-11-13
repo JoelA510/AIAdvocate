@@ -63,7 +63,8 @@ Severity: high. The people this app serves can be harmed by a leak.
   (`location_lookup_cache`) readable by the service role only
   (`20261116120000`). Reactions are readable only by their author; the app
   gets totals from a function that returns counts and the caller's own
-  reaction (`20261118120000`).
+  reaction (`20261118120000`) The list of anonymous user ids in
+  `profiles` is readable only row by row by its owner (`20261119120000`).
 - **Signal:** none automated. Expired lookup rows are deleted by the
   `cleanup-location-cache` cron; `cron_job_errors` rows are deleted after 30
   days by `cleanup-cron-job-errors`.
@@ -88,7 +89,12 @@ Severity: high.
   views run as the caller (`20260812121000`). Ingestion, scheduler, and admin
   RPCs are locked down (`20260812122000`, `20261113120000`, `20261114120000`).
   Cron and admin Edge Functions authorize in code
-  (`supabase/functions/_shared/auth.ts`).
+  (`supabase/functions/_shared/auth.ts`). Client access is deny-by-default:
+  new tables, views, sequences and functions grant nothing to the client
+  roles until a migration does, client roles write only the tables the app
+  writes, and CI rejects a new migration that leaves a public object without
+  a stated access decision (`20261119120000`, `check:migrations`, AGENTS.md
+  section 4a).
 - **Signal:** verification SQL in `supabase/verification/` checks RLS coverage
   and grants (`20251021_vote_history.sql`,
   `20261113_lock_down_scheduler_rpcs.sql`, `20261114_admin_rpc_hardening.sql`,
@@ -96,11 +102,6 @@ Severity: high.
 - **Open:**
   1. No per-session rate limit on the functions that call paid APIs.
   2. The verification SQL does not run in CI.
-  3. New tables in `public` still start with every privilege granted to the
-     client roles (the platform default). Internal tables were narrowed by
-     hand (`20261117120000`); a table added later needs the same, and
-     `supabase/verification/20261117_client_grants.sql` shows what each role
-     holds.
 
 ### R3. The admin surface is compromised
 
@@ -256,4 +257,5 @@ Severity: medium.
 | 2026-11-11 | R1: the lookup cache is no longer publicly readable, coordinates are no longer returned to the app, and the lookup field says the entry goes to a third party. Sending addresses and caching cities stay, by decision. |
 | 2026-11-12 | R2: client roles lost their default grants on internal tables, write grants on `app_config`, and TRUNCATE/REFERENCES/TRIGGER everywhere. Open item 3 added for the default privileges on new tables. |
 | 2026-11-13 | R1: reactions are no longer publicly readable; counts come from `get_bill_details_for_user`. R2: `app_config` is server-only and its unused placeholder rows are deleted. |
+| 2026-11-13 | R2: client access deny-by-default for new objects, unused client write grants removed, `profiles` (one row per anonymous user) readable only by its owner (R1), CI guard `check:migrations` added; open item 3 closed. |
 | 2026-11-12 | R9: added SECURITY.md and README reporting links; verified GitHub private vulnerability reporting is enabled. Removed the missing-policy item; dependency audit and update gaps remain open. |

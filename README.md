@@ -86,6 +86,8 @@ Key tables & views:
 - `location_lookup_cache` – throttling layer for address → representative resolution.
 - `bookmarks`, `reactions`, `user_push_tokens` – user-generated signals powering engagement features.
 
+Access is deny-by-default: new tables, views and functions grant nothing to the client roles until a migration does, and user-generated rows are readable only by their author. See AGENTS.md section 4a before adding or changing a database object; CI enforces it with `yarn workspace mobile-app check:migrations`.
+
 Recent migrations (2024-09 through 2025-10) align RLS policies with Supabase guidance, ensure `v_rep_vote_history` grants, and harden audit coverage. Run `supabase/verification/20251021_vote_history.sql` after each deploy to confirm security posture and data availability.
 
 ---
