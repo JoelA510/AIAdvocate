@@ -1,0 +1,30 @@
+-- 20261121120000_drop_bills_embedding_ivfflat.sql
+--
+-- Related bills on a bill page often listed fewer than five bills, and
+-- sometimes none, although every bill has an embedding (2026-11-13: 222 of
+-- 222; across 30 bills get_related_bills returned 2.8 on average, minimum 0).
+--
+-- Cause: idx_bills_embed is an approximate IVFFlat index built with
+-- lists = 100 for a table of a few hundred rows (about two rows per list).
+-- get_related_bills orders by embedding <=> ... LIMIT 5, the planner uses the
+-- index, and with the default ivfflat.probes = 1 each query looks in a single
+-- list, so most neighbours are never seen. With probes = 100 the same call
+-- returned 5.
+--
+-- At this size an exact scan of every row is fast, so the index is dropped
+-- and get_related_bills returns the true five nearest bills. Nothing else
+-- uses the index: get_related_bills is the only function with a vector
+-- distance operator, and no client or Edge Function orders by embedding.
+-- Dropping it also removes the rebuild that needed extra memory in
+-- 20261111120000.
+--
+-- Revisit if the table grows into the tens of thousands of rows: an HNSW
+-- index (USING hnsw (embedding vector_cosine_ops)) avoids the probes
+-- problem.
+--
+-- Rollback (restores the previous, approximate behaviour):
+--   set maintenance_work_mem = '96MB';
+--   create index idx_bills_embed on public.bills
+--     using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+
+DROP INDEX IF EXISTS public.idx_bills_embed;

@@ -259,4 +259,5 @@ Severity: medium.
 | 2026-11-13 | R1: reactions are no longer publicly readable; counts come from `get_bill_details_for_user`. R2: `app_config` is server-only and its unused placeholder rows are deleted. |
 | 2026-11-13 | R2: client access deny-by-default for new objects, unused client write grants removed, `profiles` (one row per anonymous user) readable only by its owner (R1), CI guard `check:migrations` added; open item 3 closed. |
 | 2026-11-13 | R2: trigger functions no longer callable through the API; search_bills, get_related_bills and validate_bill_summary have a fixed search_path (`20261120120000`). |
+| 2026-11-13 | Related bills: the approximate index on `bills.embedding` was dropped because it returned fewer than five related bills, often none (`20261121120000`). |
 | 2026-11-12 | R9: added SECURITY.md and README reporting links; verified GitHub private vulnerability reporting is enabled. Removed the missing-policy item; dependency audit and update gaps remain open. |
