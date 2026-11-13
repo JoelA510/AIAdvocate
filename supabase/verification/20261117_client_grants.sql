@@ -13,7 +13,8 @@ where table_schema = 'public'
 group by grantee, table_name
 order by table_name, grantee;
 
--- 2. app_config: expect SELECT only for each client role.
+-- 2. app_config: expect no rows. (SELECT only between 20261117120000 and
+--    20261118120000, which made the table server-only.)
 select grantee, string_agg(privilege_type, ',' order by privilege_type) as privileges
 from information_schema.role_table_grants
 where table_schema = 'public' and table_name = 'app_config'

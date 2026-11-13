@@ -29,7 +29,7 @@ is stored is tied to an anonymous session id:
 
 | Data | Where | Kept because |
 | --- | --- | --- |
-| Saved bills, reactions, vote-alert subscriptions | `bookmarks`, `reactions`, `subscriptions` | The features need them |
+| Saved bills, reactions, vote-alert subscriptions | `bookmarks`, `reactions`, `subscriptions` | The features need them; each user can read only their own rows, and reaction counts are served as totals (`20261118120000`) |
 | Push-notification token | `user_push_tokens` | Only for users who allow notifications |
 | Usage events (event type and bill id) | `events` | Aggregate usage |
 | Representative lookups, by ZIP code or city | `location_lookup_cache` (7-day expiry) | Not tied to a session; avoids repeat geocoding |
@@ -61,7 +61,9 @@ Severity: high. The people this app serves can be harmed by a leak.
   Representative lookup sends coordinates, not the query, to the legislator
   data provider, does not return them to the app, and keeps its cache
   (`location_lookup_cache`) readable by the service role only
-  (`20261116120000`).
+  (`20261116120000`). Reactions are readable only by their author; the app
+  gets totals from a function that returns counts and the caller's own
+  reaction (`20261118120000`).
 - **Signal:** none automated. Expired lookup rows are deleted by the
   `cleanup-location-cache` cron; `cron_job_errors` rows are deleted after 30
   days by `cleanup-cron-job-errors`.
@@ -253,4 +255,5 @@ Severity: medium.
 | 2026-11-11 | R2: the Edge Function authorization gap that was tracked privately is closed; the open item is removed. |
 | 2026-11-11 | R1: the lookup cache is no longer publicly readable, coordinates are no longer returned to the app, and the lookup field says the entry goes to a third party. Sending addresses and caching cities stay, by decision. |
 | 2026-11-12 | R2: client roles lost their default grants on internal tables, write grants on `app_config`, and TRUNCATE/REFERENCES/TRIGGER everywhere. Open item 3 added for the default privileges on new tables. |
+| 2026-11-13 | R1: reactions are no longer publicly readable; counts come from `get_bill_details_for_user`. R2: `app_config` is server-only and its unused placeholder rows are deleted. |
 | 2026-11-12 | R9: added SECURITY.md and README reporting links; verified GitHub private vulnerability reporting is enabled. Removed the missing-policy item; dependency audit and update gaps remain open. |
