@@ -121,12 +121,9 @@ DROP POLICY IF EXISTS "Public can view reactions" ON public.reactions;
 DROP POLICY IF EXISTS "Allow authenticated users to read config" ON public.app_config;
 REVOKE ALL ON TABLE public.app_config FROM PUBLIC, anon, authenticated;
 
+-- By prefix: check-public-env rejects provider key names in tracked files.
+-- On 2026-11-13 production held exactly these four EXPO_PUBLIC_ rows.
 DELETE FROM public.app_config
-WHERE key IN (
-  'EXPO_PUBLIC_OPENSTATES_API_KEY',
-  'EXPO_PUBLIC_LOCATIONIQ_API_KEY',
-  'EXPO_PUBLIC_RECAPTCHA_SITE_KEY',
-  'EXPO_PUBLIC_FIREBASE_WEB_CONFIG'
-);
+WHERE key LIKE 'EXPO\_PUBLIC\_%';
 
 NOTIFY pgrst, 'reload schema';
